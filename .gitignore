@@ -1,0 +1,45 @@
+# CMake build trees and generated files
+/build/
+/build-*/
+/cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+compile_commands.json
+Testing/
+
+# Compiled outputs
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.pdb
+
+# IDE and editor files
+.cache/
+.idea/
+.vscode/
+.vs/
+*.swp
+*.swo
+*~
+
+# Local configuration and temporary files
+.env
+.env.*
+!.env.example
+*.tmp
+*.log
+
+# Folio personal data and encryption material
+/data/
+/vault/
+*.key
+*.pem
+*.enc
