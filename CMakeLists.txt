@@ -1,10 +1,15 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(Folio VERSION 0.1.0 LANGUAGES CXX)
+project(Folio VERSION 0.1.0 LANGUAGES C CXX)
 
 include(CTest)
 
 add_library(folio_core STATIC
+  src/core/id.cpp
+  src/core/log.cpp
+  src/core/memo.cpp
+  src/core/todo.cpp
+  src/core/types.cpp
   src/core/version.cpp
 )
 add_library(Folio::Core ALIAS folio_core)
@@ -15,6 +20,15 @@ target_include_directories(folio_core
 )
 target_compile_features(folio_core PUBLIC cxx_std_20)
 set_target_properties(folio_core PROPERTIES CXX_EXTENSIONS OFF)
+
+add_subdirectory(thirdparty/libsodium-cmake)
+target_link_libraries(folio_core PRIVATE folio_sodium)
+
+set(UUID_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(UUID_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(UUID_USING_CXX20_SPAN ON CACHE BOOL "" FORCE)
+add_subdirectory(thirdparty/uuidv4 EXCLUDE_FROM_ALL)
+target_link_libraries(folio_core PRIVATE stduuid)
 
 set(FTXUI_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(FTXUI_BUILD_DOCS OFF CACHE BOOL "" FORCE)

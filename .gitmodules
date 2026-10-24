@@ -4,3 +4,9 @@
 [submodule "thirdparty/ftxui"]
 	path = thirdparty/ftxui
 	url = https://github.com/ArthurSonzogni/FTXUI.git
+[submodule "thirdparty/uuidv4"]
+	path = thirdparty/uuidv4
+	url = https://github.com/mariusbancila/stduuid.git
+[submodule "thirdparty/libsodium"]
+	path = thirdparty/libsodium
+	url = https://github.com/jedisct1/libsodium.git

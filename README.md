@@ -1,17 +1,19 @@
 # Folio
 
-Folio is a cross-platform personal logging application with a terminal user interface. Its core library is independent of the TUI so other frontends can reuse it.
+Folio is a cross-platform personal logging application with a terminal user interface. Its core library is independent of the TUI so other frontends can reuse it. Log, Memo, and Todo are the three primary Core structures. Core currently includes in-memory models for all three, with Subtask owned by Todo, plus shared types such as Tag and Collection.
 
 ## Technology
 
 - C++20 and CMake 3.20 or newer
 - FTXUI for the terminal interface
 - GoogleTest and GoogleMock for tests
+- stduuid for UUIDv4 identifiers
+- libsodium for UUIDv4 randomness and future cryptographic work
 - Git submodules for dependencies
 
 ## Requirements
 
-Install CMake, Git, and a C++20 compiler. On Windows, use a Visual Studio installation with the C++ workload; on macOS, install Xcode Command Line Tools; on Linux, install a C++ compiler and its standard library development package. The terminal must support interactive input for the application.
+Install CMake, Git, and C and C++20 compilers. On Windows, use a Visual Studio installation with the C++ workload; on macOS, install Xcode Command Line Tools; on Linux, install C and C++ compilers and their development packages. The terminal must support interactive input for the application.
 
 ## Checkout
 
@@ -23,6 +25,10 @@ cd folio
 ```
 
 For an existing checkout, run `git submodule update --init --recursive`.
+
+The pinned libsodium source is built from `thirdparty/libsodium` using Folio's CMake recipe in `thirdparty/libsodium-cmake/`; no system-wide libsodium installation is required.
+
+Core initializes libsodium on first use through `folio::core::ensure_sodium_initialized()`. `Id::generate()` calls this helper before requesting random bytes; other Core code can reuse it when needed.
 
 ## Configure and build
 

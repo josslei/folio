@@ -2,7 +2,7 @@
 
 ## Project Context & Structure
 
-Folio is a personal TUI application written in C++20, built with CMake and FTXUI, with GoogleTest, GoogleMock, and CTest for testing. The current skeleton provides an application-name Core function, a welcome screen with `q` to exit, and a smoke test. Personal logs, memos, TODOs, and privacy-aware storage are intended capabilities, not implemented subsystems.
+Folio is a personal TUI application written in C++20, built with CMake and FTXUI, with GoogleTest, GoogleMock, and CTest for testing. Log, Memo, and Todo are its three primary Core structures. Core currently provides an application-name function, in-memory Log, Memo, and Todo models, and shared types including Tag and Collection; privacy-aware storage remains planned. Subtasks belong to Todo. The TUI provides a welcome screen with `q` to exit.
 
 - `include/folio/core/`: public Core headers; `src/core/`: implementations.
 - `src/tui/`: terminal presentation and startup code for `folio`.
@@ -12,6 +12,8 @@ Folio is a personal TUI application written in C++20, built with CMake and FTXUI
 ## Architecture Rules
 
 Keep dependency direction `folio (TUI) -> folio_core`. Core must remain independent of FTXUI and all presentation frameworks, with APIs reusable by a future CLI or alternative frontend. Keep business logic, storage, encryption, and synchronization out of UI components. Prefer clear module boundaries and straightforward solutions; do not create speculative modules, interfaces, placeholder classes, or unnecessary abstractions.
+
+Call `folio::core::ensure_sodium_initialized()` before using libsodium in Core code. `Id::generate()` already calls this shared one-time helper.
 
 ## Development Workflow
 
@@ -35,11 +37,11 @@ Never commit passwords, private keys, tokens, or real personal records. Use synt
 
 ## Dependencies
 
-FTXUI and GoogleTest are Git submodules under `thirdparty/`. Do not modify vendored sources during normal development or update submodules unless the task calls for it. Justify new dependencies and keep test-only dependencies out of production targets.
+FTXUI, GoogleTest, stduuid, and libsodium are Git submodules under `thirdparty/`. The project-owned libsodium CMake recipe is in `thirdparty/libsodium-cmake/`. Libsodium supplies UUIDv4 randomness now and is reserved for later cryptographic work; encryption is not implemented. Do not modify vendored sources during normal development or update submodules unless the task calls for it. Keep the recipe aligned with the pinned libsodium version. Justify new dependencies and keep test-only dependencies out of production targets.
 
 ## Build, Run & Test
 
-Require CMake 3.20+, Git, and a C++20 compiler. Initialize dependencies with `git submodule update --init --recursive`.
+Require CMake 3.20+, Git, and C and C++20 compilers. Initialize dependencies with `git submodule update --init --recursive`.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON

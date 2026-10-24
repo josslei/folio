@@ -1,0 +1,40 @@
+#pragma once
+
+#include "folio/core/types.hpp"
+
+#include <string>
+#include <vector>
+
+namespace folio::core {
+
+class Log {
+ public:
+  Log(std::string title, std::string content, TimestampContext created,
+      DateContext local_creation_date);
+
+  [[nodiscard]] const Id& id() const noexcept;
+  [[nodiscard]] const std::string& title() const noexcept;
+  [[nodiscard]] const std::string& content() const noexcept;
+  [[nodiscard]] const TimestampContext& created() const noexcept;
+  [[nodiscard]] const TimestampContext& modified() const noexcept;
+  [[nodiscard]] const DateContext& log_date() const noexcept;
+  [[nodiscard]] const std::vector<Tag>& tags() const noexcept;
+  [[nodiscard]] Privacy privacy() const noexcept;
+
+  void edit(std::string title, std::string content, TimestampContext modified);
+  void set_log_date(DateContext date, TimestampContext modified);
+  void set_tags(std::vector<Tag> tags, TimestampContext modified);
+  void set_privacy(Privacy privacy, TimestampContext modified);
+
+ private:
+  const Id id_;
+  const TimestampContext created_;
+  TimestampContext modified_;
+  std::string title_;
+  std::string content_;
+  DateContext log_date_;
+  std::vector<Tag> tags_;
+  Privacy privacy_ = Privacy::Private;
+};
+
+}  // namespace folio::core
