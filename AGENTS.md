@@ -4,7 +4,7 @@
 
 Folio is a personal TUI application written in C++20, built with CMake and FTXUI, with GoogleTest, GoogleMock, and CTest for testing. Log, Memo, and Todo are its three primary Core structures. Core currently provides an application-name function, in-memory Log, Memo, and Todo models, and shared types including Tag and Directory; privacy-aware storage remains planned. Subtasks belong to Todo. The TUI provides a welcome screen with `q` to exit.
 
-- `include/folio/core/`: public Core headers; `src/core/`: implementations.
+- `include/folio/core/`: UI-facing public Core headers; `src/core/`: implementations; `src/core/internal/`: Core-only headers.
 - `src/tui/`: terminal presentation and startup code for `folio`.
 - `tests/`: `folio_core_tests` and CMake test registration.
 - `thirdparty/`: pinned dependency submodules.
@@ -12,6 +12,8 @@ Folio is a personal TUI application written in C++20, built with CMake and FTXUI
 ## Architecture Rules
 
 Keep dependency direction `folio (TUI) -> folio_core`. Core must remain independent of FTXUI and all presentation frameworks, with APIs reusable by a future CLI or alternative frontend. Keep business logic, storage, encryption, and synchronization out of UI components. Prefer clear module boundaries and straightforward solutions; do not create speculative modules, interfaces, placeholder classes, or unnecessary abstractions.
+
+Keep the Core library boundary explicit: declarations the UI may call belong under `include/folio/core/`. Core-only declarations belong under `src/core/internal/`; do not expose that directory through `folio_core`'s public include directories or include internal headers from public headers.
 
 Call `folio::core::ensure_sodium_initialized()` before using libsodium in Core code. `Id::generate()` already calls this shared one-time helper.
 

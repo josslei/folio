@@ -22,7 +22,24 @@ struct Subtask {
 
 class Todo {
  public:
-  Todo(std::string description, TimestampContext created);
+  struct Snapshot {
+    Id id;
+    TimestampContext created;
+    TimestampContext modified;
+    std::string description;
+    TodoStatus status;
+    TodoPriority priority;
+    std::optional<DueDate> due_date;
+    std::optional<Id> directory_id;
+    Privacy privacy;
+    std::vector<Subtask> subtasks;
+  };
+
+  Todo(std::string description, TimestampContext created,
+       Privacy privacy = Privacy::Normal);
+
+  [[nodiscard]] Snapshot snapshot() const;
+  [[nodiscard]] static Todo restore(const Snapshot& snapshot);
 
   [[nodiscard]] const Id& id() const noexcept;
   [[nodiscard]] const std::string& description() const noexcept;
@@ -40,7 +57,6 @@ class Todo {
   void set_priority(TodoPriority priority, TimestampContext modified);
   void set_due_date(std::optional<DueDate> due_date, TimestampContext modified);
   void set_directory_id(std::optional<Id> directory_id, TimestampContext modified);
-  void set_privacy(Privacy privacy, TimestampContext modified);
 
   void add_subtask(std::string content, TimestampContext modified);
   void set_subtask_content(std::size_t index, std::string content,
@@ -50,6 +66,8 @@ class Todo {
   void remove_subtask(std::size_t index, TimestampContext modified);
 
  private:
+  explicit Todo(const Snapshot& snapshot);
+
   const Id id_;
   const TimestampContext created_;
   TimestampContext modified_;
@@ -58,7 +76,7 @@ class Todo {
   TodoPriority priority_ = TodoPriority::None;
   std::optional<DueDate> due_date_;
   std::optional<Id> directory_id_;
-  Privacy privacy_ = Privacy::Normal;
+  const Privacy privacy_;
   std::vector<Subtask> subtasks_;
 };
 

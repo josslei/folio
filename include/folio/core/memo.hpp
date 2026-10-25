@@ -10,7 +10,22 @@ namespace folio::core {
 
 class Memo {
  public:
-  Memo(std::string title, std::string content, TimestampContext created);
+  struct Snapshot {
+    Id id;
+    TimestampContext created;
+    TimestampContext modified;
+    std::string title;
+    std::string content;
+    std::vector<Tag> tags;
+    std::optional<Id> directory_id;
+    Privacy privacy;
+  };
+
+  Memo(std::string title, std::string content, TimestampContext created,
+       Privacy privacy = Privacy::Normal);
+
+  [[nodiscard]] Snapshot snapshot() const;
+  [[nodiscard]] static Memo restore(const Snapshot& snapshot);
 
   [[nodiscard]] const Id& id() const noexcept;
   [[nodiscard]] const std::string& title() const noexcept;
@@ -24,9 +39,10 @@ class Memo {
   void edit(std::string title, std::string content, TimestampContext modified);
   void set_tags(std::vector<Tag> tags, TimestampContext modified);
   void set_directory_id(std::optional<Id> directory_id, TimestampContext modified);
-  void set_privacy(Privacy privacy, TimestampContext modified);
 
  private:
+  explicit Memo(const Snapshot& snapshot);
+
   const Id id_;
   const TimestampContext created_;
   TimestampContext modified_;
@@ -34,7 +50,7 @@ class Memo {
   std::string content_;
   std::vector<Tag> tags_;
   std::optional<Id> directory_id_;
-  Privacy privacy_ = Privacy::Normal;
+  const Privacy privacy_;
 };
 
 }  // namespace folio::core

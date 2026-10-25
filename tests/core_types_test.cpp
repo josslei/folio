@@ -31,6 +31,21 @@ TEST(DirectoryTest, RenamingPreservesIdentityAndUtf8Name) {
   EXPECT_EQ(directory.name(), "Caf\u00e9");
 }
 
+TEST(DirectoryTest, SnapshotRestorePreservesIdentityAndName) {
+  Directory directory("Caf\u00e9");
+  const auto original_id = directory.id();
+  const auto snapshot = directory.snapshot();
+
+  const auto restored = Directory::restore(snapshot);
+
+  EXPECT_EQ(restored.id(), original_id);
+  EXPECT_EQ(restored.name(), "Caf\u00e9");
+  EXPECT_EQ(restored.snapshot().id, snapshot.id);
+  EXPECT_EQ(restored.snapshot().name, snapshot.name);
+  EXPECT_EQ(directory.id(), original_id);
+  EXPECT_EQ(directory.name(), "Caf\u00e9");
+}
+
 TEST(CoreIdTest, GeneratedIdIsCanonicalUuidV4) {
   const auto id = Id::generate();
   const auto text = id.to_string();
@@ -76,7 +91,8 @@ TEST(CoreTypesTest, PreservesTimestampAndDateContextAndUtf8Tag) {
   EXPECT_EQ(tag, folio::core::Tag{tag.value});
   const folio::core::TimestampContext without_location{instant, "UTC", std::nullopt};
   EXPECT_FALSE(without_location.location.has_value());
-  EXPECT_NE(folio::core::Privacy::Normal, folio::core::Privacy::Private);
+  EXPECT_NE(folio::core::Privacy::Normal, folio::core::Privacy::Protected);
+  EXPECT_NE(folio::core::Privacy::Protected, folio::core::Privacy::Hidden);
 }
 
 }  // namespace

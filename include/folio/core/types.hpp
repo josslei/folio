@@ -11,7 +11,7 @@ namespace folio::core {
 
 void ensure_sodium_initialized();
 
-enum class Privacy { Normal, Private };
+enum class Privacy { Normal, Protected, Hidden };
 
 using Timestamp = std::chrono::system_clock::time_point;
 

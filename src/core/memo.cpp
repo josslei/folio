@@ -1,15 +1,40 @@
 #include "folio/core/memo.hpp"
+#include "internal/validation.hpp"
 
+#include <stdexcept>
 #include <utility>
 
 namespace folio::core {
 
-Memo::Memo(std::string title, std::string content, TimestampContext created)
+Memo::Memo(std::string title, std::string content, TimestampContext created,
+           Privacy privacy)
     : id_(Id::generate()),
       created_(std::move(created)),
       modified_(created_),
       title_(std::move(title)),
-      content_(std::move(content)) {}
+      content_(std::move(content)),
+      privacy_(privacy) {}
+
+Memo::Memo(const Snapshot& snapshot)
+    : id_(snapshot.id),
+      created_(snapshot.created),
+      modified_(snapshot.modified),
+      title_(snapshot.title),
+      content_(snapshot.content),
+      tags_(snapshot.tags),
+      directory_id_(snapshot.directory_id),
+      privacy_(snapshot.privacy) {
+  if (!detail::is_valid_privacy(privacy_)) {
+    throw std::invalid_argument("Memo snapshot privacy is invalid");
+  }
+}
+
+Memo::Snapshot Memo::snapshot() const {
+  return Snapshot{id_, created_, modified_, title_, content_, tags_, directory_id_,
+                  privacy_};
+}
+
+Memo Memo::restore(const Snapshot& snapshot) { return Memo(snapshot); }
 
 const Id& Memo::id() const noexcept { return id_; }
 const std::string& Memo::title() const noexcept { return title_; }
@@ -34,11 +59,6 @@ void Memo::set_tags(std::vector<Tag> tags, TimestampContext modified) {
 void Memo::set_directory_id(std::optional<Id> directory_id,
                             TimestampContext modified) {
   directory_id_ = std::move(directory_id);
-  modified_ = std::move(modified);
-}
-
-void Memo::set_privacy(Privacy privacy, TimestampContext modified) {
-  privacy_ = privacy;
   modified_ = std::move(modified);
 }
 

@@ -12,7 +12,7 @@ This document records the agreed direction for Folio persistence. It is a design
 
 ## Normal Data Formats and Layout
 
-Normal entries use `logs/`, `memos/`, and `todos/`, plus a logical Trash. Logs stay flat. Memo and Todo may use one level of physical user directories. Directory metadata is TOML. A Directory has a stable UUID; its display name is taken from the filesystem. Its metadata file is `.folio-dir.toml`.
+Normal entries use `logs/`, `memos/`, and `todos/`, plus a logical Trash. Logs stay flat. Memo and Todo may be organized into one level of physical folders corresponding to their logical Directories. A Directory is grouping metadata, not an entry alongside Log, Memo, or Todo. Its stable UUID is stored in TOML metadata, while its display name comes from the filesystem; the metadata file is `.folio-dir.toml`.
 
 Normal Logs and Memos are Markdown files with TOML front matter delimited by `+++`. Normal Todos and directory metadata are TOML. Use toml++; if adopted, pin it as a Git submodule under `thirdparty/`. Every structured file starts with `schema_version = 1`.
 
@@ -20,7 +20,7 @@ Normal filenames are `YYYY-MM-DD_HHMMSS_<uuid>.<ext>`, based on UTC creation tim
 
 ## Directory Reconciliation
 
-Memo and Todo support one physical directory level; Log does not. External filesystem changes are validated and reconciled. Storage must not silently overwrite data when it finds unexpected or conflicting filesystem state.
+Directory is the logical grouping that Memo and Todo may reference. Normal storage may represent that grouping with one physical folder level; Log has no Directory association. External filesystem changes are validated and reconciled. Storage must not silently overwrite data when it finds unexpected or conflicting filesystem state.
 
 ## Privacy and Vault
 
@@ -46,14 +46,17 @@ Recovery journals live under the configurable persistent state root and are dist
 
 ## Core Model Implications
 
-- `Directory` is a lightweight Core concept associated with Memo and Todo; filesystem layout and `.folio-dir.toml` handling belong to future storage code.
-- Change `Privacy` to `Normal`, `Protected`, and `Hidden`.
-- Add static restore factories that reconstruct stored IDs, creation and modification metadata, and all other persisted fields.
-- Do not expose ordinary post-creation privacy mutation.
-- Tag rename and deletion update references in Log and Memo.
-- Subtasks remain embedded in their parent Todo and are not independently indexed or persisted.
+### Primary Entry Models
 
-These are intended Core adjustments, not claims about the current API. Storage, Vault, and sync behavior must not be placed in TUI components.
+Log, Memo, and Todo are Folio's primary entry models. Each represents user-authored content or a task and owns its own entry data. Privacy levels are `Normal`, `Protected`, and `Hidden`; ordinary post-creation privacy mutation is not exposed. Tag rename and deletion update references in Log and Memo.
+
+### Organization and Embedded Data
+
+Directory is organizational metadata referenced optionally by Memo and Todo. It is not a primary entry model and has no Log association. Filesystem layout and `.folio-dir.toml` handling belong to storage code. Subtasks are part of Todo and are not independently indexed or persisted.
+
+### Snapshot and Restore Support
+
+Typed in-memory snapshots and static restore factories are available for Log, Memo, Todo, and Directory. They preserve IDs and stored state without defining a serialized format. This persistence support does not make Directory a peer entry type. Storage, Vault, and sync behavior must not be placed in TUI components.
 
 ## Git Boundaries
 
@@ -63,10 +66,10 @@ Use one Git repository with separate Normal and Vault branches checked out throu
 
 The public headers under `include/folio/core/` currently describe in-memory models and differ from this design in these ways:
 
-- `types.hpp` defines `Privacy { Normal, Private }`; it has no `Protected` or `Hidden` values.
+- `types.hpp` now defines `Privacy { Normal, Protected, Hidden }`, matching the design.
 - `Memo` and `Todo` now store optional Directory IDs; `Log` has no Directory field. Directory remains an in-memory logical model and has no filesystem access or `.folio-dir.toml` behavior.
 - Time data is represented by `TimestampContext` and `DateContext`; the design has not yet specified their serialized field names or exact TOML representation.
-- `Log`, `Memo`, and `Todo` expose privacy setters, and there are no static restore factories. Their constructors create new IDs and initialize creation/modification metadata rather than restoring stored state.
+- `Log`, `Memo`, `Todo`, and `Directory` expose typed in-memory snapshots and static restore factories. These preserve IDs and stored state without defining a serialized format. Privacy remains immutable after construction.
 - No storage, Vault, index, journal, migration, or filesystem reconciliation API is currently present. `Subtask` is currently embedded in `Todo`, consistent with the design.
 - `Tag` is a value type, but there is no shared tag rename/delete operation that updates Log and Memo references.
 - `DateContext` includes a calendar date, timezone, and optional location; `TimestampContext` includes an absolute timestamp, timezone, and optional location. The API therefore carries the relevant context, but the design still needs to define storage and privacy rules for each field.
