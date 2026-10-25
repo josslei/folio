@@ -5,6 +5,7 @@ project(Folio VERSION 0.1.0 LANGUAGES C CXX)
 include(CTest)
 
 add_library(folio_core STATIC
+  src/core/directory.cpp
   src/core/id.cpp
   src/core/log.cpp
   src/core/memo.cpp

@@ -18,12 +18,12 @@ class Memo {
   [[nodiscard]] const TimestampContext& created() const noexcept;
   [[nodiscard]] const TimestampContext& modified() const noexcept;
   [[nodiscard]] const std::vector<Tag>& tags() const noexcept;
-  [[nodiscard]] const std::optional<Id>& collection_id() const noexcept;
+  [[nodiscard]] const std::optional<Id>& directory_id() const noexcept;
   [[nodiscard]] Privacy privacy() const noexcept;
 
   void edit(std::string title, std::string content, TimestampContext modified);
   void set_tags(std::vector<Tag> tags, TimestampContext modified);
-  void set_collection_id(std::optional<Id> collection_id, TimestampContext modified);
+  void set_directory_id(std::optional<Id> directory_id, TimestampContext modified);
   void set_privacy(Privacy privacy, TimestampContext modified);
 
  private:
@@ -33,7 +33,7 @@ class Memo {
   std::string title_;
   std::string content_;
   std::vector<Tag> tags_;
-  std::optional<Id> collection_id_;
+  std::optional<Id> directory_id_;
   Privacy privacy_ = Privacy::Normal;
 };
 

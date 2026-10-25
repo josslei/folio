@@ -18,7 +18,7 @@ const TimestampContext& Todo::modified() const noexcept { return modified_; }
 TodoStatus Todo::status() const noexcept { return status_; }
 TodoPriority Todo::priority() const noexcept { return priority_; }
 const std::optional<DueDate>& Todo::due_date() const noexcept { return due_date_; }
-const std::optional<Id>& Todo::collection_id() const noexcept { return collection_id_; }
+const std::optional<Id>& Todo::directory_id() const noexcept { return directory_id_; }
 Privacy Todo::privacy() const noexcept { return privacy_; }
 const std::vector<Subtask>& Todo::subtasks() const noexcept { return subtasks_; }
 
@@ -46,9 +46,9 @@ void Todo::set_due_date(std::optional<DueDate> due_date, TimestampContext modifi
   modified_ = std::move(modified);
 }
 
-void Todo::set_collection_id(std::optional<Id> collection_id,
-                             TimestampContext modified) {
-  collection_id_ = std::move(collection_id);
+void Todo::set_directory_id(std::optional<Id> directory_id,
+                            TimestampContext modified) {
+  directory_id_ = std::move(directory_id);
   modified_ = std::move(modified);
 }
 

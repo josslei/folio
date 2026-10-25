@@ -47,18 +47,4 @@ struct Tag {
   bool operator==(const Tag&) const = default;
 };
 
-class Collection {
- public:
-  explicit Collection(std::string name);
-
-  [[nodiscard]] const Id& id() const noexcept;
-  [[nodiscard]] const std::string& name() const noexcept;
-
-  void set_name(std::string name);
-
- private:
-  const Id id_;
-  std::string name_;  // UTF-8.
-};
-
 }  // namespace folio::core

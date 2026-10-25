@@ -45,7 +45,7 @@ TEST(TodoTest, StartsWithDefaultsAndDistinctIdentity) {
   EXPECT_EQ(todo.status(), TodoStatus::Pending);
   EXPECT_EQ(todo.priority(), TodoPriority::None);
   EXPECT_FALSE(todo.due_date().has_value());
-  EXPECT_FALSE(todo.collection_id().has_value());
+  EXPECT_FALSE(todo.directory_id().has_value());
   EXPECT_EQ(todo.privacy(), Privacy::Normal);
   EXPECT_TRUE(todo.subtasks().empty());
 }
@@ -105,11 +105,11 @@ TEST(TodoTest, FieldChangesPreserveIdentityAndCreationContext) {
                                   "Europe/Paris", std::string("Paris")};
   Todo todo("First", created);
   const Id original_id = todo.id();
-  const Id collection_id = Id::generate();
+  const Id directory_id = Id::generate();
 
   todo.set_description("Caf\u00e9 errand", modified);
   todo.set_priority(TodoPriority::High, modified);
-  todo.set_collection_id(collection_id, modified);
+  todo.set_directory_id(directory_id, modified);
   todo.set_privacy(Privacy::Private, modified);
   todo.set_status(TodoStatus::Completed, modified);
 
@@ -122,12 +122,12 @@ TEST(TodoTest, FieldChangesPreserveIdentityAndCreationContext) {
   EXPECT_EQ(todo.modified().location, modified.location);
   EXPECT_EQ(todo.description(), "Caf\u00e9 errand");
   EXPECT_EQ(todo.priority(), TodoPriority::High);
-  EXPECT_EQ(todo.collection_id(), std::optional<Id>{collection_id});
+  EXPECT_EQ(todo.directory_id(), std::optional<Id>{directory_id});
   EXPECT_EQ(todo.privacy(), Privacy::Private);
   EXPECT_EQ(todo.status(), TodoStatus::Completed);
 
-  todo.set_collection_id(std::nullopt, modified);
-  EXPECT_FALSE(todo.collection_id().has_value());
+  todo.set_directory_id(std::nullopt, modified);
+  EXPECT_FALSE(todo.directory_id().has_value());
 }
 
 TEST(TodoTest, SubtasksStayOrderedAndParentCompletionDoesNotCompleteThem) {

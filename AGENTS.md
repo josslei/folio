@@ -2,7 +2,7 @@
 
 ## Project Context & Structure
 
-Folio is a personal TUI application written in C++20, built with CMake and FTXUI, with GoogleTest, GoogleMock, and CTest for testing. Log, Memo, and Todo are its three primary Core structures. Core currently provides an application-name function, in-memory Log, Memo, and Todo models, and shared types including Tag and Collection; privacy-aware storage remains planned. Subtasks belong to Todo. The TUI provides a welcome screen with `q` to exit.
+Folio is a personal TUI application written in C++20, built with CMake and FTXUI, with GoogleTest, GoogleMock, and CTest for testing. Log, Memo, and Todo are its three primary Core structures. Core currently provides an application-name function, in-memory Log, Memo, and Todo models, and shared types including Tag and Directory; privacy-aware storage remains planned. Subtasks belong to Todo. The TUI provides a welcome screen with `q` to exit.
 
 - `include/folio/core/`: public Core headers; `src/core/`: implementations.
 - `src/tui/`: terminal presentation and startup code for `folio`.

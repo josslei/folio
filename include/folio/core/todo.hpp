@@ -31,7 +31,7 @@ class Todo {
   [[nodiscard]] TodoStatus status() const noexcept;
   [[nodiscard]] TodoPriority priority() const noexcept;
   [[nodiscard]] const std::optional<DueDate>& due_date() const noexcept;
-  [[nodiscard]] const std::optional<Id>& collection_id() const noexcept;
+  [[nodiscard]] const std::optional<Id>& directory_id() const noexcept;
   [[nodiscard]] Privacy privacy() const noexcept;
   [[nodiscard]] const std::vector<Subtask>& subtasks() const noexcept;
 
@@ -39,7 +39,7 @@ class Todo {
   void set_status(TodoStatus status, TimestampContext modified);
   void set_priority(TodoPriority priority, TimestampContext modified);
   void set_due_date(std::optional<DueDate> due_date, TimestampContext modified);
-  void set_collection_id(std::optional<Id> collection_id, TimestampContext modified);
+  void set_directory_id(std::optional<Id> directory_id, TimestampContext modified);
   void set_privacy(Privacy privacy, TimestampContext modified);
 
   void add_subtask(std::string content, TimestampContext modified);
@@ -57,7 +57,7 @@ class Todo {
   TodoStatus status_ = TodoStatus::Pending;
   TodoPriority priority_ = TodoPriority::None;
   std::optional<DueDate> due_date_;
-  std::optional<Id> collection_id_;
+  std::optional<Id> directory_id_;
   Privacy privacy_ = Privacy::Normal;
   std::vector<Subtask> subtasks_;
 };

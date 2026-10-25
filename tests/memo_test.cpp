@@ -32,7 +32,7 @@ TEST(MemoTest, StartsUnfiledWithNormalPrivacyAndCreationContext) {
   EXPECT_EQ(memo.modified().timezone, created.timezone);
   EXPECT_EQ(memo.modified().location, created.location);
   EXPECT_TRUE(memo.tags().empty());
-  EXPECT_FALSE(memo.collection_id().has_value());
+  EXPECT_FALSE(memo.directory_id().has_value());
   EXPECT_EQ(memo.privacy(), Privacy::Normal);
 }
 
@@ -61,26 +61,26 @@ TEST(MemoTest, EditsPreserveIdentityAndCreationContext) {
   EXPECT_EQ(memo.privacy(), Privacy::Private);
 }
 
-TEST(MemoTest, CollectionCanBeAssignedReplacedAndCleared) {
+TEST(MemoTest, DirectoryCanBeAssignedReplacedAndCleared) {
   const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC",
                                  std::nullopt};
   const TimestampContext modified{Timestamp{std::chrono::seconds{200}}, "UTC",
                                   std::nullopt};
   Memo memo("Title", "", created);
   const Id original_id = memo.id();
-  const Id first_collection = Id::generate();
-  const Id second_collection = Id::generate();
+  const Id first_directory = Id::generate();
+  const Id second_directory = Id::generate();
 
-  memo.set_collection_id(first_collection, modified);
-  ASSERT_TRUE(memo.collection_id().has_value());
-  EXPECT_EQ(*memo.collection_id(), first_collection);
+  memo.set_directory_id(first_directory, modified);
+  ASSERT_TRUE(memo.directory_id().has_value());
+  EXPECT_EQ(*memo.directory_id(), first_directory);
 
-  memo.set_collection_id(second_collection, modified);
-  ASSERT_TRUE(memo.collection_id().has_value());
-  EXPECT_EQ(*memo.collection_id(), second_collection);
+  memo.set_directory_id(second_directory, modified);
+  ASSERT_TRUE(memo.directory_id().has_value());
+  EXPECT_EQ(*memo.directory_id(), second_directory);
 
-  memo.set_collection_id(std::nullopt, modified);
-  EXPECT_FALSE(memo.collection_id().has_value());
+  memo.set_directory_id(std::nullopt, modified);
+  EXPECT_FALSE(memo.directory_id().has_value());
   EXPECT_EQ(memo.id(), original_id);
   EXPECT_EQ(memo.created().timestamp, created.timestamp);
   EXPECT_EQ(memo.modified().timestamp, modified.timestamp);

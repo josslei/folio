@@ -1,3 +1,4 @@
+#include "folio/core/directory.hpp"
 #include "folio/core/types.hpp"
 
 #include <gtest/gtest.h>
@@ -9,25 +10,25 @@
 namespace {
 
 using folio::core::Id;
-using folio::core::Collection;
+using folio::core::Directory;
 
-TEST(CollectionTest, GeneratesDistinctIdsForNewCollections) {
-  const Collection first("Notes");
-  const Collection second("Tasks");
+TEST(DirectoryTest, GeneratesDistinctIdsForNewDirectories) {
+  const Directory first("Notes");
+  const Directory second("Tasks");
 
   EXPECT_NE(first.id(), second.id());
   EXPECT_TRUE(Id::parse(first.id().to_string()).has_value());
   EXPECT_TRUE(Id::parse(second.id().to_string()).has_value());
 }
 
-TEST(CollectionTest, RenamingPreservesIdentityAndUtf8Name) {
-  Collection collection("Notes");
-  const Id original_id = collection.id();
+TEST(DirectoryTest, RenamingPreservesIdentityAndUtf8Name) {
+  Directory directory("Notes");
+  const Id original_id = directory.id();
 
-  collection.set_name("Caf\u00e9");
+  directory.set_name("Caf\u00e9");
 
-  EXPECT_EQ(collection.id(), original_id);
-  EXPECT_EQ(collection.name(), "Caf\u00e9");
+  EXPECT_EQ(directory.id(), original_id);
+  EXPECT_EQ(directory.name(), "Caf\u00e9");
 }
 
 TEST(CoreIdTest, GeneratedIdIsCanonicalUuidV4) {
