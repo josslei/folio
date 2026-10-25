@@ -8,7 +8,7 @@ This document records the agreed direction for Folio persistence. It is a design
 - Entry files are authoritative. Indexes are derived, rebuildable data.
 - Every persistent structured format has a version. Newer Folio versions may migrate older formats; older versions need not read newer formats.
 - Storage, Vault, and future Git synchronization are separate concerns. Synchronization algorithms are outside this design phase.
-- Persistent roots, `state_root`, and `cache_root` are configurable, with platform-appropriate defaults. The state root is separate from Git-tracked data roots.
+- Startup configuration supplies `normal_root`, `vault_root`, `state_root`, and `cache_root` explicitly. No storage paths are hard-coded or defaulted by the filesystem layer. The state root is separate from the data roots.
 
 ## Normal Data Formats and Layout
 
@@ -82,7 +82,7 @@ The public headers under `include/folio/core/` currently describe in-memory mode
 - `Memo` and `Todo` now store optional Directory IDs; `Log` has no Directory field. Directory remains an in-memory logical model with no filesystem access or physical path mapping in Core; its v1 TOML metadata codec is in-memory only.
 - Time data is represented by `TimestampContext` and `DateContext`; the in-memory codec serializes them as RFC 3339 UTC timestamp strings and `YYYY-MM-DD` date strings, with timezone and optional location stored separately.
 - `Log`, `Memo`, `Todo`, and `Directory` expose typed in-memory snapshots, static restore factories, and v1 in-memory codecs. Privacy remains immutable after construction.
-- No storage, Vault, index, journal, migration, or filesystem reconciliation API is currently present. `Subtask` is currently embedded in `Todo`, consistent with the design.
+- Phase 3.1 provides path validation, Normal entry filename generation, and single-file atomic writing in a separate Storage library. It does not load configuration, create Vault storage, or provide repositories, indexes, journals, migrations, or filesystem reconciliation. `Subtask` is currently embedded in `Todo`, consistent with the design.
 - `Tag` is a value type, but there is no shared tag rename/delete operation that updates Log and Memo references.
 - `DateContext` includes a calendar date, timezone, and optional location; `TimestampContext` includes an absolute timestamp, timezone, and optional location. Privacy rules for these fields in indexes and public metadata remain defined by the Vault/index design.
 
