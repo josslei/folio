@@ -5,6 +5,7 @@ project(Folio VERSION 0.1.0 LANGUAGES C CXX)
 include(CTest)
 
 add_library(folio_core STATIC
+  src/core/codec.cpp
   src/core/directory.cpp
   src/core/id.cpp
   src/core/log.cpp
@@ -24,6 +25,9 @@ set_target_properties(folio_core PROPERTIES CXX_EXTENSIONS OFF)
 
 add_subdirectory(thirdparty/libsodium-cmake)
 target_link_libraries(folio_core PRIVATE folio_sodium)
+
+add_subdirectory(thirdparty/tomlplusplus EXCLUDE_FROM_ALL)
+target_link_libraries(folio_core PUBLIC tomlplusplus::tomlplusplus)
 
 set(UUID_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(UUID_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)

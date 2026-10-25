@@ -12,9 +12,21 @@ This document records the agreed direction for Folio persistence. It is a design
 
 ## Normal Data Formats and Layout
 
-Normal entries use `logs/`, `memos/`, and `todos/`, plus a logical Trash. Logs stay flat. Memo and Todo may be organized into one level of physical folders corresponding to their logical Directories. A Directory is grouping metadata, not an entry alongside Log, Memo, or Todo. Its stable UUID is stored in TOML metadata, while its display name comes from the filesystem; the metadata file is `.folio-dir.toml`.
+Normal entries use `logs/`, `memos/`, and `todos/`, plus a logical Trash. Logs stay flat. Memo and Todo may be organized into one level of physical folders corresponding to their logical Directories. A Directory is grouping metadata, not an entry alongside Log, Memo, or Todo. Its stable UUID and UTF-8 logical display name are stored in `.folio-dir.toml`. Folio-managed physical Directory names are ASCII UUIDs (`<uuid>/`); renaming a Directory changes only its logical name and does not change its physical path.
 
-Normal Logs and Memos are Markdown files with TOML front matter delimited by `+++`. Normal Todos and directory metadata are TOML. Use toml++; if adopted, pin it as a Git submodule under `thirdparty/`. Every structured file starts with `schema_version = 1`.
+Normal Logs and Memos are Markdown files with TOML front matter delimited by `+++`. Normal Todos and directory metadata are TOML. toml++ is pinned as a Git submodule under `thirdparty/` and is used by the in-memory TOML codec. Encoding and decoding produce/consume text and do not perform file I/O, encryption, or storage operations. Every structured document starts with `schema_version = 1`; unsupported versions are rejected.
+
+### Current v1 Codec Scope
+
+The codec covers common values (`Id`, `Tag`, `Privacy`, `TimestampContext`, `DateContext`, and `DueDate`), Todo and Directory TOML snapshots, and Log and Memo Markdown snapshots. It uses stable enum strings, UUID strings, UTC RFC 3339 timestamp strings, `YYYY-MM-DD` date strings, and omits absent optional fields. A due date is a `[due]` table whose `kind` is `Date` or `Datetime`; Todo subtasks preserve list order. Directory metadata contains `schema_version`, `id`, and its UTF-8 logical `name`. Encoders construct toml++ tables and arrays directly, without parsing fixed TOML templates at runtime.
+
+### Log and Memo Markdown v1
+
+Both front-matter schemas require `schema_version = 1`, `id`, `privacy`, `title`, `tags` (an ordered string array, possibly empty), `created`, and `modified`. Log additionally requires `log_date`; Memo permits an optional `directory_id`. Time/date contexts preserve their value, timezone, and optional location using the common codecs. `content` occurs exclusively in the Markdown body and is forbidden in front matter. Unknown fields, including extra fields inside contexts, are rejected rather than discarded. Missing fields, invalid values, malformed TOML, and unsupported versions produce recoverable codec errors.
+
+The opening delimiter must be `+++` at byte zero, followed by LF or CRLF. The first subsequent line containing exactly `+++`, terminated by LF or CRLF, closes front matter. That entire delimiter line, including its line ending, is framing; the body begins immediately afterward. No blank separator line is inserted or removed. A closing delimiter without a line ending is invalid, including for empty content. LF and CRLF framing may be mixed; bare CR framing, a BOM, delimiter whitespace, and a preamble are not accepted.
+
+Encoding emits LF framing and escapes metadata string newlines so that metadata cannot contain a standalone delimiter line. When writing front matter manually, a standalone `+++` line is reserved for framing, including within TOML multiline strings. All bytes after the closing line are opaque body content, including further `+++` lines, leading/trailing whitespace, mixed newline endings, and the absence of a final newline. Decoding never parses or normalizes Markdown. Snapshot serialization/restoration preserves identity and time contexts without generating IDs or consulting a clock.
 
 Normal filenames are `YYYY-MM-DD_HHMMSS_<uuid>.<ext>`, based on UTC creation time and ASCII characters only. Filenames do not change when a title or Log date changes. Ordering among entries created in the same second is unspecified.
 
@@ -54,9 +66,9 @@ Log, Memo, and Todo are Folio's primary entry models. Each represents user-autho
 
 Directory is organizational metadata referenced optionally by Memo and Todo. It is not a primary entry model and has no Log association. Filesystem layout and `.folio-dir.toml` handling belong to storage code. Subtasks are part of Todo and are not independently indexed or persisted.
 
-### Snapshot and Restore Support
+### Snapshot, Restore, and Codec Support
 
-Typed in-memory snapshots and static restore factories are available for Log, Memo, Todo, and Directory. They preserve IDs and stored state without defining a serialized format. This persistence support does not make Directory a peer entry type. Storage, Vault, and sync behavior must not be placed in TUI components.
+Typed in-memory snapshots and static restore factories are available for Log, Memo, Todo, and Directory. Snapshots preserve IDs and stored state and do not contain schema versions. The in-memory v1 codecs map common value types plus Todo and Directory snapshots to TOML, and Log and Memo snapshots to Markdown with TOML front matter; they do not perform file I/O or encryption. Directory remains organizational metadata rather than a primary entry type. Storage, Vault, and sync behavior must not be placed in TUI components.
 
 ## Git Boundaries
 
@@ -67,21 +79,21 @@ Use one Git repository with separate Normal and Vault branches checked out throu
 The public headers under `include/folio/core/` currently describe in-memory models and differ from this design in these ways:
 
 - `types.hpp` now defines `Privacy { Normal, Protected, Hidden }`, matching the design.
-- `Memo` and `Todo` now store optional Directory IDs; `Log` has no Directory field. Directory remains an in-memory logical model and has no filesystem access or `.folio-dir.toml` behavior.
-- Time data is represented by `TimestampContext` and `DateContext`; the design has not yet specified their serialized field names or exact TOML representation.
-- `Log`, `Memo`, `Todo`, and `Directory` expose typed in-memory snapshots and static restore factories. These preserve IDs and stored state without defining a serialized format. Privacy remains immutable after construction.
+- `Memo` and `Todo` now store optional Directory IDs; `Log` has no Directory field. Directory remains an in-memory logical model with no filesystem access or physical path mapping in Core; its v1 TOML metadata codec is in-memory only.
+- Time data is represented by `TimestampContext` and `DateContext`; the in-memory codec serializes them as RFC 3339 UTC timestamp strings and `YYYY-MM-DD` date strings, with timezone and optional location stored separately.
+- `Log`, `Memo`, `Todo`, and `Directory` expose typed in-memory snapshots, static restore factories, and v1 in-memory codecs. Privacy remains immutable after construction.
 - No storage, Vault, index, journal, migration, or filesystem reconciliation API is currently present. `Subtask` is currently embedded in `Todo`, consistent with the design.
 - `Tag` is a value type, but there is no shared tag rename/delete operation that updates Log and Memo references.
-- `DateContext` includes a calendar date, timezone, and optional location; `TimestampContext` includes an absolute timestamp, timezone, and optional location. The API therefore carries the relevant context, but the design still needs to define storage and privacy rules for each field.
+- `DateContext` includes a calendar date, timezone, and optional location; `TimestampContext` includes an absolute timestamp, timezone, and optional location. Privacy rules for these fields in indexes and public metadata remain defined by the Vault/index design.
 
 ## Decisions Needed Before the First Storage Milestone
 
 The architecture establishes boundaries and formats but does not yet define enough detail for interoperable persistence. Before implementing the first storage milestone, decide:
 
-- The exact serialized fields and types for Log, Memo, Todo, Directory metadata, and each index, including date/time encoding and timezone representation.
-- The Markdown front-matter/body boundary, TOML escaping/encoding rules, and how unknown fields are preserved or handled during migration.
-- The exact Normal and Vault directory tree, including physical naming and safe-relative-locator rules beyond the filename pattern and flat Vault top-level directories.
-- How a stable Directory UUID is associated with a physical Normal directory when its filesystem name changes, and how invalid or duplicate metadata is reconciled.
+- The exact index structures remain to be defined; entry and Directory v1 codec fields are documented above.
+- How unknown fields are preserved or handled during future migration; the current Log/Memo v1 decoder rejects them.
+- The exact Normal and Vault directory tree, including safe-relative-locator rules beyond the ASCII UUID Directory naming and filename patterns.
+- How invalid or duplicate Directory metadata is reconciled during filesystem scanning.
 - The transaction journal record format, sub-operation states, recovery decision rules, and platform-specific durability guarantees for atomic replacement.
 - What conditions trigger consistency checks and how callers observe/resolve the explicit recovery state.
 - The complete public-index visibility vocabulary and rules for each privacy level, including Hidden entries and locked/unlocked views.

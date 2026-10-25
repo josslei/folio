@@ -67,3 +67,17 @@ cmake --build build-release --config Release --parallel
 `--parallel` lets CMake use available CPU cores. To limit the number of concurrent build jobs, pass a number, such as `--parallel 4`.
 
 Use `-G "Visual Studio 17 2022"` or `-G Xcode` when selecting those generators. For single-configuration generators, set `CMAKE_BUILD_TYPE` to `Debug` or `Release`. The GoogleTest runtime is configured to match the MSVC runtime on Windows.
+
+### Serialized samples
+
+Generate serialized examples of all supported objects for visual review:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build --config Debug --parallel
+ctest --test-dir build -C Debug -R CoreCodecSamplesTest --output-on-failure
+```
+
+Inspect `build/serialization-samples/Debug/`: `log.md`, `memo.md`, `todo-date.toml`, `todo-datetime.toml`, `todo-minimal.toml`, `directory.toml`, and `common-values.toml`. The test regenerates and replaces these files using the codecs; they contain synthetic data and are generated output rather than fixtures or manual templates. `Protected` and `Hidden` are metadata values in these plaintext samples; no encryption is performed.
+
+For Release, configure and build with tests enabled in Release and use `-C Release`; output goes to `<build-directory>/serialization-samples/Release/`.
