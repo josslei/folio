@@ -37,6 +37,7 @@ target_link_libraries(folio_core PRIVATE stduuid)
 
 add_library(folio_storage STATIC
   src/storage/filesystem.cpp
+  src/storage/normal_repository.cpp
 )
 add_library(Folio::Storage ALIAS folio_storage)
 target_include_directories(folio_storage

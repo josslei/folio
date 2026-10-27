@@ -22,7 +22,8 @@ target_link_libraries(folio_core_tests PRIVATE
 include(GoogleTest)
 gtest_discover_tests(folio_core_tests)
 
-add_executable(folio_storage_tests storage_test.cpp)
+add_executable(folio_storage_tests storage_test.cpp normal_repository_test.cpp)
+target_include_directories(folio_storage_tests PRIVATE "${PROJECT_SOURCE_DIR}/src/storage")
 target_compile_features(folio_storage_tests PRIVATE cxx_std_20)
 set_target_properties(folio_storage_tests PROPERTIES CXX_EXTENSIONS OFF)
 target_link_libraries(folio_storage_tests PRIVATE Folio::Storage GTest::gtest_main)

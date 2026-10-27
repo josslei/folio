@@ -120,7 +120,8 @@ TEST(CoreCodecContextTest, RoundTripsContextsWithAndWithoutLocation) {
 }
 
 TEST(CoreCodecContextTest, PreservesSubsecondTimestampPrecision) {
-  const TimestampContext original{Timestamp{std::chrono::nanoseconds{987654321}},
+  const TimestampContext original{Timestamp{std::chrono::duration_cast<Timestamp::duration>(
+                                      std::chrono::microseconds{987654})},
                                  "UTC", std::nullopt};
   const auto decoded =
       codec::timestamp_context_from_toml(codec::to_toml(original));
@@ -428,7 +429,7 @@ id = "47183823-2574-4bfd-b411-99ed177d3e43"
 privacy = "Hidden"
 title = "旅の記録"
 tags = ["旅行", "", "notes", "旅行"]
-created = { timestamp = "1970-01-02T00:00:00.123456789Z", timezone = "Asia/Tokyo", location = "東京" }
+created = { timestamp = "1970-01-02T00:00:00.123456Z", timezone = "Asia/Tokyo", location = "東京" }
 modified = { timestamp = "1970-01-03T00:00:00Z", timezone = "Europe/Paris", location = "Paris" }
 )toml";
   text += is_log
@@ -439,8 +440,9 @@ modified = { timestamp = "1970-01-03T00:00:00Z", timezone = "Europe/Paris", loca
 
 Log::Snapshot markdown_log() {
   return {sample_id(),
-          {Timestamp{std::chrono::seconds{86400} +
-                     std::chrono::nanoseconds{123456789}}, "Asia/Tokyo", "東京"},
+          {Timestamp{std::chrono::duration_cast<Timestamp::duration>(
+              std::chrono::seconds{86400} +
+              std::chrono::microseconds{123456})}, "Asia/Tokyo", "東京"},
           {Timestamp{std::chrono::seconds{172800}}, "Europe/Paris", "Paris"},
           "旅の記録", "# 本文\n\nText\r\n+++\nlast line",
           {{std::chrono::year{2024} / 2 / 29}, "Asia/Shanghai", "上海"},
@@ -823,7 +825,7 @@ TEST(CoreCodecMarkdownErrorTest, RejectsInvalidMetadataValuesAndContextFields) {
 TEST(CoreCodecMarkdownErrorTest, RejectsSignedDateAndTimestampFields) {
   for (const bool is_log : {true, false}) {
     auto metadata = markdown_metadata(is_log);
-    const std::string_view timestamp = "1970-01-02T00:00:00.123456789Z";
+    const std::string_view timestamp = "1970-01-02T00:00:00.123456Z";
     const auto position = metadata.find(timestamp);
     ASSERT_NE(position, std::string::npos);
     metadata.replace(position, timestamp.size(), "1970-01-02T-1:00:00Z");
