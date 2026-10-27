@@ -272,7 +272,8 @@ TEST(CoreCodecSnapshotTest, RoundTripsFullTodoAndSerializedText) {
 }
 
 TEST(CoreCodecSnapshotTest, DirectoryNameAndIdentitySurviveRoundTrip) {
-  const Directory original("\xE7\xAC\x94\xE8\xAE\xB0\xE5\xBA\x93");
+  const Directory original(DirectoryKind::Todo,
+                           "\xE7\xAC\x94\xE8\xAE\xB0\xE5\xBA\x93");
   const auto snapshot = original.snapshot();
   const auto document = codec::to_toml(snapshot);
   EXPECT_EQ(document.get("schema_version")->value<std::int64_t>(),
@@ -281,6 +282,8 @@ TEST(CoreCodecSnapshotTest, DirectoryNameAndIdentitySurviveRoundTrip) {
             std::optional<std::string>{snapshot.id.to_string()});
   EXPECT_EQ(document.get("name")->value<std::string>(),
             std::optional<std::string>{original.name()});
+  EXPECT_EQ(document.get("kind")->value<std::string>(),
+            std::optional<std::string>{"Todo"});
   const auto serialized = codec::serialize_toml(codec::to_toml(snapshot));
   ASSERT_FALSE(is_error(serialized));
   const auto parsed = codec::parse_toml(value_of(serialized));
@@ -290,7 +293,55 @@ TEST(CoreCodecSnapshotTest, DirectoryNameAndIdentitySurviveRoundTrip) {
 
   const Directory restored = Directory::restore(value_of(decoded));
   EXPECT_EQ(restored.id(), original.id());
+  EXPECT_EQ(restored.kind(), DirectoryKind::Todo);
   EXPECT_EQ(restored.name(), original.name());
+}
+
+TEST(CoreCodecSnapshotTest, DirectoryLegacyKindRequiresTrustedContext) {
+  auto legacy = codec::to_toml(Directory::Snapshot{
+      sample_id(), DirectoryKind::Memo, "Legacy notes"});
+  legacy.erase("kind");
+  const auto untrusted = codec::directory_snapshot_from_toml(legacy);
+  ASSERT_TRUE(is_error(untrusted));
+  EXPECT_EQ(std::get<codec::CodecError>(untrusted).code,
+            codec::CodecErrorCode::MissingField);
+  EXPECT_EQ(std::get<codec::CodecError>(untrusted).path, "kind");
+
+  const auto trusted = codec::directory_snapshot_from_toml(
+      legacy, DirectoryKind::Memo);
+  ASSERT_FALSE(is_error(trusted));
+  EXPECT_EQ(value_of(trusted).kind, DirectoryKind::Memo);
+  EXPECT_EQ(value_of(trusted).name, "Legacy notes");
+
+  auto explicit_kind = legacy;
+  explicit_kind.insert("kind", "Todo");
+  const auto conflicting = codec::directory_snapshot_from_toml(
+      explicit_kind, DirectoryKind::Memo);
+  ASSERT_TRUE(is_error(conflicting));
+  EXPECT_EQ(std::get<codec::CodecError>(conflicting).code,
+            codec::CodecErrorCode::InvalidField);
+  EXPECT_EQ(std::get<codec::CodecError>(conflicting).path, "kind");
+  const auto invalid = codec::directory_snapshot_from_toml(
+      toml::table{{"schema_version", 1}, {"id", sample_id().to_string()},
+                  {"kind", "Archive"}, {"name", "Unknown"}});
+  ASSERT_TRUE(is_error(invalid));
+  EXPECT_EQ(std::get<codec::CodecError>(invalid).code,
+            codec::CodecErrorCode::InvalidField);
+  EXPECT_EQ(std::get<codec::CodecError>(invalid).path, "kind");
+  auto wrong_type = codec::to_toml(Directory::Snapshot{
+      sample_id(), DirectoryKind::Memo, "Wrong type"});
+  wrong_type.insert_or_assign("kind", 42);
+  const auto invalid_type = codec::directory_snapshot_from_toml(wrong_type);
+  ASSERT_TRUE(is_error(invalid_type));
+  EXPECT_EQ(std::get<codec::CodecError>(invalid_type).code,
+            codec::CodecErrorCode::InvalidField);
+  EXPECT_EQ(std::get<codec::CodecError>(invalid_type).path, "kind");
+  const auto invalid_context = codec::directory_snapshot_from_toml(
+      legacy, static_cast<DirectoryKind>(99));
+  ASSERT_TRUE(is_error(invalid_context));
+  EXPECT_EQ(std::get<codec::CodecError>(invalid_context).code,
+            codec::CodecErrorCode::InvalidField);
+  EXPECT_EQ(std::get<codec::CodecError>(invalid_context).path, "kind");
 }
 
 TEST(CoreCodecSnapshotTest, EncodesExplicitSchemaWithoutPlaceholderValues) {
@@ -339,8 +390,10 @@ completed = false
 
   const toml::table expected_directory{
       {"schema_version", 1}, {"id", sample_id().to_string()},
+      {"kind", "Memo"},
       {"name", "Research"}};
-  EXPECT_EQ(codec::to_toml(Directory::Snapshot{sample_id(), "Research"}),
+  EXPECT_EQ(codec::to_toml(Directory::Snapshot{sample_id(), DirectoryKind::Memo,
+                                               "Research"}),
             expected_directory);
 }
 
@@ -391,8 +444,9 @@ TEST(CoreCodecErrorTest, RejectsEachMissingRequiredSnapshotField) {
     EXPECT_EQ(error.path, field);
   }
 
-  const auto directory = codec::to_toml(Directory::Snapshot{sample_id(), "Work"});
-  for (const auto* field : {"schema_version", "id", "name"}) {
+  const auto directory = codec::to_toml(Directory::Snapshot{
+      sample_id(), DirectoryKind::Memo, "Work"});
+  for (const auto* field : {"schema_version", "id", "kind", "name"}) {
     SCOPED_TRACE(field);
     auto incomplete = directory;
     incomplete.erase(field);
@@ -467,7 +521,8 @@ TEST(CoreCodecErrorTest, RejectsInvalidDateTimestampAndSchemaVersion) {
                          {"timezone", "UTC"}});
   EXPECT_TRUE(is_error(codec::todo_snapshot_from_toml(invalid_due_kind)));
 
-  auto directory = codec::to_toml(Directory("Projects").snapshot());
+  auto directory = codec::to_toml(
+      Directory(DirectoryKind::Memo, "Projects").snapshot());
   directory.insert_or_assign("schema_version", 2);
   EXPECT_TRUE(is_error(codec::directory_snapshot_from_toml(directory)));
 }

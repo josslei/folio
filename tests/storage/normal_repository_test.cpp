@@ -381,7 +381,8 @@ TEST_F(NormalRepositoryTest, SuppliedMemoPathRejectsStaleAndUnsafeLocators) {
 
 TEST_F(NormalRepositoryTest, SuppliedMemoPathValidatesDirectoryMetadata) {
   const core::Directory::Snapshot directory{
-      id("e7183823-2574-4bfd-b411-99ed177d3e43"), "Research"};
+      id("e7183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
+      "Research"};
   ASSERT_TRUE(operation_succeeded(repository.create_directory(
       storage::DirectoryKind::Memo, directory)));
   auto memo = memo_snapshot();
@@ -459,7 +460,7 @@ TEST_F(NormalRepositoryTest, SuppliedTodoPathBypassesUnrelatedDuplicateId) {
 
 TEST_F(NormalRepositoryTest, DirectoryMetadataPreservesUnicodeNameAndPhysicalUuid) {
   core::Directory::Snapshot directory{id("78183823-2574-4bfd-b411-99ed177d3e43"),
-                                      "旅行 / 筆記"};
+                                      storage::DirectoryKind::Memo, "旅行 / 筆記"};
   ASSERT_TRUE(operation_succeeded(
       repository.create_directory(storage::DirectoryKind::Memo, directory)));
   const auto folder = root / "memos" / directory.id.to_string();
@@ -469,23 +470,92 @@ TEST_F(NormalRepositoryTest, DirectoryMetadataPreservesUnicodeNameAndPhysicalUui
   const auto loaded = repository.load_directory(storage::DirectoryKind::Memo, directory.id);
   ASSERT_TRUE(std::holds_alternative<core::Directory::Snapshot>(loaded));
   EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).id, directory.id);
+  EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).kind, directory.kind);
   EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).name, directory.name);
 
   ASSERT_TRUE(operation_succeeded(repository.rename_directory(
       storage::DirectoryKind::Memo, directory.id, "新名稱 café")));
   const auto renamed = repository.load_directory(storage::DirectoryKind::Memo, directory.id);
   ASSERT_TRUE(std::holds_alternative<core::Directory::Snapshot>(renamed));
+  EXPECT_EQ(std::get<core::Directory::Snapshot>(renamed).kind, directory.kind);
   EXPECT_EQ(std::get<core::Directory::Snapshot>(renamed).name, "新名稱 café");
   EXPECT_TRUE(fs::is_directory(folder));
 }
 
+TEST_F(NormalRepositoryTest, DirectoryKindMismatchAndLegacyReadsUseModuleContext) {
+  core::Directory::Snapshot directory{
+      id("f7183823-2574-4bfd-b411-99ed177d3e43"),
+      storage::DirectoryKind::Todo, "Kind check"};
+  expect_error_code(repository.create_directory(storage::DirectoryKind::Memo,
+                                                directory),
+                    storage::StorageErrorCode::InvalidMetadata);
+  EXPECT_FALSE(fs::exists(root / "memos" / directory.id.to_string()));
+
+  directory.kind = storage::DirectoryKind::Memo;
+  ASSERT_TRUE(operation_succeeded(repository.create_directory(
+      storage::DirectoryKind::Memo, directory)));
+  const auto metadata = root / "memos" / directory.id.to_string() /
+                        ".folio-dir.toml";
+  const auto decoded = storage::codec::parse_toml(read_bytes(metadata));
+  ASSERT_TRUE(std::holds_alternative<toml::table>(decoded));
+  auto legacy = std::get<toml::table>(decoded);
+  legacy.erase("kind");
+  const auto legacy_bytes = storage::codec::serialize_toml(legacy);
+  ASSERT_TRUE(std::holds_alternative<std::string>(legacy_bytes));
+  ASSERT_NO_FATAL_FAILURE(write_bytes(metadata, std::get<std::string>(legacy_bytes)));
+  const auto loaded = repository.load_directory(storage::DirectoryKind::Memo,
+                                                 directory.id);
+  ASSERT_TRUE(std::holds_alternative<core::Directory::Snapshot>(loaded));
+  EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).kind,
+            storage::DirectoryKind::Memo);
+  EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).name, directory.name);
+
+  legacy.insert_or_assign("kind", "Todo");
+  const auto conflicting_bytes = storage::codec::serialize_toml(legacy);
+  ASSERT_TRUE(std::holds_alternative<std::string>(conflicting_bytes));
+  ASSERT_NO_FATAL_FAILURE(write_bytes(metadata, std::get<std::string>(conflicting_bytes)));
+  expect_error_code(repository.load_directory(storage::DirectoryKind::Memo,
+                                              directory.id),
+                    storage::StorageErrorCode::CodecError);
+  expect_error_code(repository.rename_directory(storage::DirectoryKind::Memo,
+                                                directory.id, "Must not rename"),
+                    storage::StorageErrorCode::CodecError);
+  EXPECT_EQ(read_bytes(metadata), std::get<std::string>(conflicting_bytes));
+}
+
+TEST_F(NormalRepositoryTest, LegacyTodoDirectoryUsesTrustedModuleContext) {
+  const core::Directory::Snapshot directory{
+      id("f8183823-2574-4bfd-b411-99ed177d3e43"),
+      storage::DirectoryKind::Todo, "旧任务"};
+  ASSERT_TRUE(operation_succeeded(repository.create_directory(
+      storage::DirectoryKind::Todo, directory)));
+  const auto metadata = root / "todos" / directory.id.to_string() /
+                        ".folio-dir.toml";
+  const auto decoded = storage::codec::parse_toml(read_bytes(metadata));
+  ASSERT_TRUE(std::holds_alternative<toml::table>(decoded));
+  auto legacy = std::get<toml::table>(decoded);
+  legacy.erase("kind");
+  const auto legacy_bytes = storage::codec::serialize_toml(legacy);
+  ASSERT_TRUE(std::holds_alternative<std::string>(legacy_bytes));
+  ASSERT_NO_FATAL_FAILURE(write_bytes(metadata, std::get<std::string>(legacy_bytes)));
+  const auto loaded = repository.load_directory(storage::DirectoryKind::Todo,
+                                                 directory.id);
+  ASSERT_TRUE(std::holds_alternative<core::Directory::Snapshot>(loaded));
+  EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).kind,
+            storage::DirectoryKind::Todo);
+  EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).name, directory.name);
+}
+
 TEST_F(NormalRepositoryTest, MovesMemoAndTodoBetweenRootAndDirectories) {
   const core::Directory::Snapshot memo_directory{
-      id("88183823-2574-4bfd-b411-99ed177d3e43"), "Memo folder"};
+      id("88183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
+      "Memo folder"};
   const core::Directory::Snapshot todo_directory{
-      id("98183823-2574-4bfd-b411-99ed177d3e43"), "Todo folder"};
+      id("98183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Todo,
+      "Todo folder"};
   const core::Directory::Snapshot second_memo_directory{
-      id("a9183823-2574-4bfd-b411-99ed177d3e43"), "Second memo folder"};
+      id("a9183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
+      "Second memo folder"};
   ASSERT_TRUE(operation_succeeded(repository.create_directory(
       storage::DirectoryKind::Memo, memo_directory)));
   ASSERT_TRUE(operation_succeeded(repository.create_directory(
@@ -568,7 +638,8 @@ TEST_F(NormalRepositoryTest, RejectsDuplicateIdsAndDuplicatePhysicalPaths) {
 
 TEST_F(NormalRepositoryTest, RejectsDuplicateIdInAnotherPhysicalDirectory) {
   const core::Directory::Snapshot directory{
-      id("b8183823-2574-4bfd-b411-99ed177d3e43"), "Research"};
+      id("b8183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
+      "Research"};
   ASSERT_TRUE(operation_succeeded(repository.create_directory(
       storage::DirectoryKind::Memo, directory)));
   const auto memo = memo_snapshot();
@@ -625,7 +696,8 @@ TEST_F(NormalRepositoryTest, UnrelatedDuplicateStoredIdBlocksOtherEntry) {
 
 TEST_F(NormalRepositoryTest, StoredIdSurvivesRenamedFilenameUpdateAndMove) {
   const core::Directory::Snapshot directory{
-      id("b9183823-2574-4bfd-b411-99ed177d3e43"), "Destination"};
+      id("b9183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
+      "Destination"};
   ASSERT_TRUE(operation_succeeded(repository.create_directory(
       storage::DirectoryKind::Memo, directory)));
   auto stored = memo_snapshot();
@@ -789,7 +861,8 @@ TEST_F(NormalRepositoryTest, IgnoresNonformalFilesAndRejectsThemAsKnownPaths) {
 
 TEST_F(NormalRepositoryTest, RejectsMissingOrInvalidDirectoryMetadataAndReferences) {
   const core::Directory::Snapshot directory{
-      id("a8183823-2574-4bfd-b411-99ed177d3e43"), "Research"};
+      id("a8183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
+      "Research"};
   auto memo = memo_snapshot();
   memo.directory_id = directory.id;
   expect_error(repository.create_memo(memo));
@@ -837,7 +910,8 @@ TEST_F(NormalRepositoryTest, RejectsMissingOrInvalidDirectoryMetadataAndReferenc
 
 TEST_F(NormalRepositoryTest, RejectsDirectoryReferenceFromWrongEntryModule) {
   const core::Directory::Snapshot todo_directory{
-      id("d8183823-2574-4bfd-b411-99ed177d3e43"), "Todo only"};
+      id("d8183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Todo,
+      "Todo only"};
   ASSERT_TRUE(operation_succeeded(repository.create_directory(
       storage::DirectoryKind::Todo, todo_directory)));
   auto memo = memo_snapshot();
@@ -899,7 +973,8 @@ TEST_F(NormalRepositoryTest, RejectsSymbolicLinkEntry) {
 
 TEST_F(NormalRepositoryTest, RejectsSymbolicLinkChildDirectory) {
   const core::Directory::Snapshot directory{
-      id("e8183823-2574-4bfd-b411-99ed177d3e43"), "Child"};
+      id("e8183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
+      "Child"};
   ASSERT_TRUE(operation_succeeded(repository.create_directory(
       storage::DirectoryKind::Memo, directory)));
   const auto child = root / "memos" / directory.id.to_string();

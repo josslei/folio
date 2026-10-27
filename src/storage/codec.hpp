@@ -10,6 +10,7 @@
 
 #include <string>
 #include <string_view>
+#include <optional>
 #include <variant>
 
 namespace folio::core::storage::codec {
@@ -52,8 +53,11 @@ using Result = std::variant<T, CodecError>;
 
 [[nodiscard]] Result<Todo::Snapshot> todo_snapshot_from_toml(
     const toml::table& table);
+// Legacy documents lacking kind require a trusted module context. A present
+// kind must agree with that context when one is supplied.
 [[nodiscard]] Result<Directory::Snapshot> directory_snapshot_from_toml(
-    const toml::table& table);
+    const toml::table& table,
+    std::optional<DirectoryKind> trusted_legacy_kind = std::nullopt);
 
 [[nodiscard]] Result<std::string> serialize_toml(const toml::table& table);
 [[nodiscard]] Result<toml::table> parse_toml(std::string_view text);

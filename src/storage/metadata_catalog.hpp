@@ -8,7 +8,9 @@
 
 #include <chrono>
 #include <filesystem>
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <variant>
 #include <vector>
@@ -108,13 +110,12 @@ struct RootListing {
 [[nodiscard]] EntryMetadata metadata_from(const Todo::Snapshot& snapshot,
                                           std::filesystem::path relative_path);
 [[nodiscard]] DirectoryMetadata metadata_from(const Directory::Snapshot& snapshot,
-                                              DirectoryKind kind,
                                               std::filesystem::path relative_path);
 
 // In-memory metadata only. Entry and Directory UUID registries are separate.
 // Locators are lexically safe relative paths; physical layout belongs to the
 // repository. Lookups return copies, so callers cannot mutate catalog state
-// indirectly. Registry operations are linear in the number of records.
+// indirectly. UUID lookup and Directory membership listing use ordered IDs.
 class MetadataCatalog {
  public:
   [[nodiscard]] Result<std::monostate> insert_entry(EntryMetadata metadata);
@@ -138,11 +139,17 @@ class MetadataCatalog {
   [[nodiscard]] bool entry_path_occupied(const std::filesystem::path& path,
                                          std::optional<Id> except = std::nullopt) const;
   [[nodiscard]] bool directory_referenced(const DirectoryMetadata& directory) const;
+  [[nodiscard]] std::set<std::string>& members_for(EntryType type,
+                                                  std::optional<Id> directory_id);
 
-  std::vector<LogMetadata> logs_;
-  std::vector<MemoMetadata> memos_;
-  std::vector<TodoMetadata> todos_;
-  std::vector<DirectoryMetadata> directories_;
+  std::map<std::string, LogMetadata> logs_;
+  std::map<std::string, MemoMetadata> memos_;
+  std::map<std::string, TodoMetadata> todos_;
+  std::map<std::string, DirectoryMetadata> directories_;
+  std::set<std::string> log_roots_;
+  std::set<std::string> memo_roots_;
+  std::set<std::string> todo_roots_;
+  std::map<std::string, std::set<std::string>> directory_members_;
   bool dirty_ = false;
 };
 

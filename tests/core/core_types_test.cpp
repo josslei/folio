@@ -5,45 +5,61 @@
 
 #include <chrono>
 #include <optional>
+#include <stdexcept>
 #include <string>
 
 namespace {
 
 using folio::core::Id;
 using folio::core::Directory;
+using folio::core::DirectoryKind;
 
 TEST(DirectoryTest, GeneratesDistinctIdsForNewDirectories) {
-  const Directory first("Notes");
-  const Directory second("Tasks");
+  const Directory first(DirectoryKind::Memo, "Notes");
+  const Directory second(DirectoryKind::Todo, "Tasks");
 
   EXPECT_NE(first.id(), second.id());
   EXPECT_TRUE(Id::parse(first.id().to_string()).has_value());
   EXPECT_TRUE(Id::parse(second.id().to_string()).has_value());
+  EXPECT_EQ(first.kind(), DirectoryKind::Memo);
+  EXPECT_EQ(second.kind(), DirectoryKind::Todo);
 }
 
 TEST(DirectoryTest, RenamingPreservesIdentityAndUtf8Name) {
-  Directory directory("Notes");
+  Directory directory(DirectoryKind::Memo, "Notes");
   const Id original_id = directory.id();
 
   directory.set_name("Caf\u00e9");
 
   EXPECT_EQ(directory.id(), original_id);
+  EXPECT_EQ(directory.kind(), DirectoryKind::Memo);
   EXPECT_EQ(directory.name(), "Caf\u00e9");
 }
 
 TEST(DirectoryTest, SnapshotRestorePreservesIdentityAndName) {
-  Directory directory("Caf\u00e9");
+  Directory directory(DirectoryKind::Todo, "Caf\u00e9");
   const auto original_id = directory.id();
   const auto snapshot = directory.snapshot();
 
   const auto restored = Directory::restore(snapshot);
 
   EXPECT_EQ(restored.id(), original_id);
+  EXPECT_EQ(restored.kind(), DirectoryKind::Todo);
   EXPECT_EQ(restored.name(), "Caf\u00e9");
   EXPECT_EQ(restored.snapshot().id, snapshot.id);
+  EXPECT_EQ(restored.snapshot().kind, snapshot.kind);
   EXPECT_EQ(restored.snapshot().name, snapshot.name);
   EXPECT_EQ(directory.id(), original_id);
+  EXPECT_EQ(directory.kind(), DirectoryKind::Todo);
   EXPECT_EQ(directory.name(), "Caf\u00e9");
+}
+
+TEST(DirectoryTest, RejectsInvalidKindAtCreationAndRestore) {
+  const auto invalid = static_cast<DirectoryKind>(99);
+  EXPECT_THROW((void)Directory(invalid, "Invalid"), std::invalid_argument);
+  auto snapshot = Directory(DirectoryKind::Memo, "Valid").snapshot();
+  snapshot.kind = invalid;
+  EXPECT_THROW((void)Directory::restore(snapshot), std::invalid_argument);
 }
 
 TEST(CoreIdTest, GeneratedIdIsCanonicalUuidV4) {

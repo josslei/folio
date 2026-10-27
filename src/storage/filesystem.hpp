@@ -1,5 +1,6 @@
 #pragma once
 
+#include "folio/core/directory.hpp"
 #include "folio/core/types.hpp"
 
 #include <filesystem>
@@ -18,7 +19,7 @@ struct StoragePaths {
 };
 
 enum class EntryType { Log, Memo, Todo };
-enum class DirectoryKind { Memo, Todo };
+using core::DirectoryKind;
 
 enum class StorageErrorCode {
   InvalidPath,

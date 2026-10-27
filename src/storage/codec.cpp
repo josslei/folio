@@ -521,8 +521,15 @@ toml::table to_toml(const Todo::Snapshot& snapshot) {
 }
 
 toml::table to_toml(const Directory::Snapshot& snapshot) {
+  const char* kind;
+  switch (snapshot.kind) {
+    case DirectoryKind::Memo: kind = "Memo"; break;
+    case DirectoryKind::Todo: kind = "Todo"; break;
+    default: throw std::invalid_argument("Cannot encode an invalid Directory kind");
+  }
   return toml::table{{"schema_version", 1},
                      {"id", snapshot.id.to_string()},
+                     {"kind", kind},
                      {"name", snapshot.name}};
 }
 
@@ -736,8 +743,12 @@ Result<Todo::Snapshot> todo_snapshot_from_toml(const toml::table& table) {
   return snapshot;
 }
 
-Result<Directory::Snapshot> directory_snapshot_from_toml(const toml::table& table) {
+Result<Directory::Snapshot> directory_snapshot_from_toml(
+    const toml::table& table, std::optional<DirectoryKind> trusted_legacy_kind) {
   if (const auto failure = check_schema_version(table)) return *failure;
+  if (trusted_legacy_kind && *trusted_legacy_kind != DirectoryKind::Memo &&
+      *trusted_legacy_kind != DirectoryKind::Todo)
+    return error(CodecErrorCode::InvalidField, "kind", "Invalid trusted Directory kind");
   const auto* id_node = table.get("id");
   if (!id_node) return error(CodecErrorCode::MissingField, "id", "Required field is missing");
   auto id_result = id_from_toml(*id_node);
@@ -748,7 +759,23 @@ Result<Directory::Snapshot> directory_snapshot_from_toml(const toml::table& tabl
   }
   auto name_result = read_string(table, "name", "name");
   if (const auto* failure = result_error(name_result)) return *failure;
+  DirectoryKind kind;
+  if (table.get("kind")) {
+    auto kind_result = read_string(table, "kind", "kind");
+    if (const auto* failure = result_error(kind_result)) return *failure;
+    const auto& value = std::get<std::string>(kind_result);
+    if (value == "Memo") kind = DirectoryKind::Memo;
+    else if (value == "Todo") kind = DirectoryKind::Todo;
+    else return error(CodecErrorCode::InvalidField, "kind", "Unknown Directory kind");
+    if (trusted_legacy_kind && kind != *trusted_legacy_kind)
+      return error(CodecErrorCode::InvalidField, "kind", "Directory kind conflicts with trusted context");
+  } else if (trusted_legacy_kind) {
+    kind = *trusted_legacy_kind;
+  } else {
+    return error(CodecErrorCode::MissingField, "kind", "Required field is missing");
+  }
   return Directory::Snapshot{std::get<Id>(std::move(id_result)),
+                             kind,
                              std::get<std::string>(std::move(name_result))};
 }
 

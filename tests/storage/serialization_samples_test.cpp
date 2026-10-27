@@ -145,8 +145,11 @@ TEST(CoreCodecSamplesTest, GeneratesSerializedExamples) {
   ASSERT_NO_FATAL_FAILURE(export_toml<Todo>(
       "todo-minimal.toml", minimal, codec::todo_snapshot_from_toml));
   ASSERT_NO_FATAL_FAILURE(export_toml<Directory>(
-      "directory.toml", Directory::Snapshot{*directory_id, "研究資料 — café"},
-      codec::directory_snapshot_from_toml));
+      "directory.toml", Directory::Snapshot{*directory_id, DirectoryKind::Memo,
+                                               "研究資料 — café"},
+      [](const toml::table& table) {
+        return codec::directory_snapshot_from_toml(table);
+      }));
 
   // A collection of embedded common values for inspection, not a storage schema.
   const toml::table common{

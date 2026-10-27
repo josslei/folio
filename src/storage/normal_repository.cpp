@@ -157,7 +157,8 @@ Result<std::string> encode(const Snapshot& snapshot, const fs::path& path) {
 }
 
 template <class Snapshot>
-Result<Snapshot> decode(std::string_view text, const fs::path& path) {
+Result<Snapshot> decode(std::string_view text, const fs::path& path,
+                        std::optional<DirectoryKind> trusted_legacy_kind = std::nullopt) {
   if constexpr (std::is_same_v<Snapshot, core::Log::Snapshot>) {
     auto decoded = codec::log_snapshot_from_markdown(text);
     if (auto* problem = std::get_if<codec::CodecError>(&decoded)) {
@@ -182,7 +183,8 @@ Result<Snapshot> decode(std::string_view text, const fs::path& path) {
       }
       return std::get<Snapshot>(std::move(decoded));
     } else {
-      auto decoded = codec::directory_snapshot_from_toml(std::get<toml::table>(parsed));
+      auto decoded = codec::directory_snapshot_from_toml(
+          std::get<toml::table>(parsed), trusted_legacy_kind);
       if (auto* problem = std::get_if<codec::CodecError>(&decoded)) {
         return codec_failure(path, *problem);
       }
@@ -343,11 +345,16 @@ Result<core::Directory::Snapshot> load_directory_at(
   const auto metadata = folder / ".folio-dir.toml";
   auto text = read_text(root, metadata);
   if (failure(text)) return *failure(text);
-  auto snapshot = decode<core::Directory::Snapshot>(std::get<std::string>(text), metadata);
+  auto snapshot = decode<core::Directory::Snapshot>(
+      std::get<std::string>(text), metadata, kind);
   if (failure(snapshot)) return *failure(snapshot);
   if (std::get<core::Directory::Snapshot>(snapshot).id != id) {
     return fail(StorageErrorCode::IdentityMismatch, metadata,
                 "Directory metadata ID does not match its folder");
+  }
+  if (std::get<core::Directory::Snapshot>(snapshot).kind != kind) {
+    return fail(StorageErrorCode::IdentityMismatch, metadata,
+                "Directory metadata kind does not match its module");
   }
   return snapshot;
 }
@@ -670,6 +677,10 @@ Result<std::monostate> NormalRepository::create_directory(
   if (!valid_kind(kind)) {
     return fail(StorageErrorCode::InvalidEntryType, root_, "Invalid Directory kind");
   }
+  if (snapshot.kind != kind) {
+    return fail(StorageErrorCode::InvalidMetadata, root_,
+                "Directory snapshot kind does not match target module");
+  }
   const auto folder = root_ / module_name(entry_type(kind)) / snapshot.id.to_string();
   const auto metadata = folder / ".folio-dir.toml";
   auto encoded = checked_encoding(snapshot, metadata);
@@ -710,7 +721,7 @@ Result<std::monostate> NormalRepository::rename_directory(
   if (failure(prior)) return *failure(prior);
   const auto metadata = root_ / module_name(entry_type(kind)) / id.to_string() /
       ".folio-dir.toml";
-  auto encoded = checked_encoding(core::Directory::Snapshot{id, std::move(name)}, metadata);
+  auto encoded = checked_encoding(core::Directory::Snapshot{id, kind, std::move(name)}, metadata);
   if (failure(encoded)) return *failure(encoded);
   return replace_file_atomic(metadata, std::get<std::string>(encoded));
 }

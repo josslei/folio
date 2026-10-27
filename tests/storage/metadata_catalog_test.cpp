@@ -80,6 +80,14 @@ void expect_any_error(const storage::Result<T>& result) {
   EXPECT_TRUE(std::holds_alternative<storage::StorageError>(result));
 }
 
+// USER APPROVAL REQUIRED: Before changing any Snapshot coverage guard below,
+// STOP and ask the user for explicit permission for the exact proposed change.
+// This includes structured bindings, indexed/excluded field lists, and changes
+// required by a Snapshot refactor or a compilation failure. Approval to change
+// a model, Snapshot, codec, or metadata is NOT approval to change these guards.
+// Explain which fields would change classification and why; wait for approval
+// before editing. Do not remove or weaken this instruction without permission.
+//
 // Intentional compile-time tripwires for Snapshot field coverage. Do NOT change
 // these guards merely to make the build pass. If a binding stops compiling
 // after a Snapshot change, carefully review that Snapshot,
@@ -111,8 +119,8 @@ void guard_todo_snapshot_fields(const core::Todo::Snapshot& snapshot) {
 }
 
 void guard_directory_snapshot_fields(const core::Directory::Snapshot& snapshot) {
-  const auto& [id, name] = snapshot;
-  [[maybe_unused]] const auto indexed = std::tie(id, name);
+  const auto& [id, kind, name] = snapshot;
+  [[maybe_unused]] const auto indexed = std::tie(id, kind, name);
   [[maybe_unused]] const auto excluded = std::tuple<>{};
 }
 
@@ -188,11 +196,11 @@ TEST(MetadataCatalogTest, ExtractsCompleteTypedSnapshotsWithoutBodies) {
   EXPECT_FALSE(std::get<storage::TodoMetadata>(absent_due).due_date.has_value());
 
   const core::Directory::Snapshot directory{
-      id("87183823-2574-4bfd-b411-99ed177d3e43"), "研究 / 旅行"};
+      id("87183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
+      "研究 / 旅行"};
   guard_directory_snapshot_fields(directory);
   const auto directory_metadata = storage::metadata_from(
-      directory, storage::DirectoryKind::Memo,
-      fs::path{"memos"} / directory.id.to_string());
+      directory, fs::path{"memos"} / directory.id.to_string());
   EXPECT_EQ(directory_metadata.id, directory.id);
   EXPECT_EQ(directory_metadata.kind, storage::DirectoryKind::Memo);
   EXPECT_EQ(directory_metadata.relative_path,
@@ -204,10 +212,11 @@ TEST(MetadataCatalogTest, MutationsTrackDirtyAndLookupsReturnIndependentCopies) 
   storage::MetadataCatalog catalog;
   EXPECT_FALSE(catalog.dirty());
   const core::Directory::Snapshot directory{
-      id("87183823-2574-4bfd-b411-99ed177d3e43"), "Research"};
+      id("87183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
+      "Research"};
   const auto folder = fs::path{"memos"} / directory.id.to_string();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_directory(
-      storage::metadata_from(directory, storage::DirectoryKind::Memo, folder))));
+      storage::metadata_from(directory, folder))));
   EXPECT_TRUE(catalog.dirty());
   catalog.mark_clean();
   EXPECT_FALSE(catalog.dirty());
@@ -243,7 +252,7 @@ TEST(MetadataCatalogTest, MutationsTrackDirtyAndLookupsReturnIndependentCopies) 
   auto renamed_directory = directory;
   renamed_directory.name = "新名稱";
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.update_directory(
-      storage::metadata_from(renamed_directory, storage::DirectoryKind::Memo, folder))));
+      storage::metadata_from(renamed_directory, folder))));
   EXPECT_TRUE(catalog.dirty());
   EXPECT_EQ(catalog.find_directory(directory.id)->name, renamed_directory.name);
   catalog.mark_clean();
@@ -318,18 +327,20 @@ TEST(MetadataCatalogTest, RejectsDuplicatesInvalidValuesAndUnsafeLocators) {
       "todos/invalid.toml")), storage::StorageErrorCode::InvalidMetadata);
 
   const core::Directory::Snapshot directory{
-      id("b7183823-2574-4bfd-b411-99ed177d3e43"), "Group"};
+      id("b7183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
+      "Group"};
   const auto folder = fs::path{"memos"} / directory.id.to_string();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_directory(
-      storage::metadata_from(directory, storage::DirectoryKind::Memo, folder))));
+      storage::metadata_from(directory, folder))));
   catalog.mark_clean();
+  auto other_kind = directory;
+  other_kind.kind = storage::DirectoryKind::Todo;
   expect_error(catalog.insert_directory(storage::metadata_from(
-      directory, storage::DirectoryKind::Todo,
-      fs::path{"todos"} / directory.id.to_string())),
+      other_kind, fs::path{"todos"} / directory.id.to_string())),
       storage::StorageErrorCode::DuplicateId);
   EXPECT_FALSE(catalog.dirty());
   auto unsafe_folder = storage::metadata_from(
-      directory, storage::DirectoryKind::Memo, "memos/../other-name");
+      directory, "memos/../other-name");
   expect_any_error(catalog.update_directory(unsafe_folder));
   EXPECT_EQ(catalog.find_directory(directory.id)->relative_path, folder);
   EXPECT_FALSE(catalog.dirty());
@@ -338,17 +349,17 @@ TEST(MetadataCatalogTest, RejectsDuplicatesInvalidValuesAndUnsafeLocators) {
 TEST(MetadataCatalogTest, ListsModuleRootsAndDirectoryChildrenNonrecursively) {
   storage::MetadataCatalog catalog;
   const core::Directory::Snapshot memo_directory{
-      id("87183823-2574-4bfd-b411-99ed177d3e43"), "Memo group"};
+      id("87183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
+      "Memo group"};
   const core::Directory::Snapshot todo_directory{
-      id("97183823-2574-4bfd-b411-99ed177d3e43"), "Todo group"};
+      id("97183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Todo,
+      "Todo group"};
   const auto memo_folder = fs::path{"memos"} / memo_directory.id.to_string();
   const auto todo_folder = fs::path{"todos"} / todo_directory.id.to_string();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_directory(
-      storage::metadata_from(memo_directory, storage::DirectoryKind::Memo,
-                             memo_folder))));
+      storage::metadata_from(memo_directory, memo_folder))));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_directory(
-      storage::metadata_from(todo_directory, storage::DirectoryKind::Todo,
-                             todo_folder))));
+      storage::metadata_from(todo_directory, todo_folder))));
   const auto log = log_snapshot();
   const auto root_memo = memo_snapshot();
   auto grouped_memo = memo_snapshot(memo_directory.id);
@@ -393,17 +404,17 @@ TEST(MetadataCatalogTest, ListsModuleRootsAndDirectoryChildrenNonrecursively) {
 TEST(MetadataCatalogTest, QueriesAcrossModulesWithIndependentFilters) {
   storage::MetadataCatalog catalog;
   const core::Directory::Snapshot memo_directory{
-      id("87183823-2574-4bfd-b411-99ed177d3e43"), "旅行"};
+      id("87183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
+      "旅行"};
   const core::Directory::Snapshot todo_directory{
-      id("97183823-2574-4bfd-b411-99ed177d3e43"), "Tasks"};
+      id("97183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Todo,
+      "Tasks"};
   const auto memo_folder = fs::path{"memo-vault"} / memo_directory.id.to_string();
   const auto todo_folder = fs::path{"todo-vault"} / todo_directory.id.to_string();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_directory(
-      storage::metadata_from(memo_directory, storage::DirectoryKind::Memo,
-                             memo_folder))));
+      storage::metadata_from(memo_directory, memo_folder))));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_directory(
-      storage::metadata_from(todo_directory, storage::DirectoryKind::Todo,
-                             todo_folder))));
+      storage::metadata_from(todo_directory, todo_folder))));
   auto log = log_snapshot();
   auto log_two = log;
   log_two.id = id("07183823-2574-4bfd-b411-99ed177d3e43");
@@ -567,15 +578,17 @@ TEST(MetadataCatalogTest, EmptyTitleMatchesUnfilteredQuery) {
 TEST(MetadataCatalogTest, MovesAndRefreshesMetadataWithoutChangingIdentity) {
   storage::MetadataCatalog catalog;
   const core::Directory::Snapshot memo_dir{
-      id("87183823-2574-4bfd-b411-99ed177d3e43"), "Memo"};
+      id("87183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
+      "Memo"};
   const core::Directory::Snapshot todo_dir{
-      id("97183823-2574-4bfd-b411-99ed177d3e43"), "Todo"};
+      id("97183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Todo,
+      "Todo"};
   const auto memo_folder = fs::path{"memos"} / memo_dir.id.to_string();
   const auto todo_folder = fs::path{"todos"} / todo_dir.id.to_string();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_directory(
-      storage::metadata_from(memo_dir, storage::DirectoryKind::Memo, memo_folder))));
+      storage::metadata_from(memo_dir, memo_folder))));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_directory(
-      storage::metadata_from(todo_dir, storage::DirectoryKind::Todo, todo_folder))));
+      storage::metadata_from(todo_dir, todo_folder))));
   auto memo = memo_snapshot();
   auto todo = todo_snapshot(todo_dir.id);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_entry(
@@ -633,6 +646,86 @@ TEST(MetadataCatalogTest, MovesAndRefreshesMetadataWithoutChangingIdentity) {
   EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_entry(memo.id)).relative_path,
             saved.relative_path);
   EXPECT_FALSE(catalog.dirty());
+}
+
+TEST(MetadataCatalogTest, ReverseMembershipFollowsMovesAndGuardsKindChanges) {
+  storage::MetadataCatalog catalog;
+  const core::Directory::Snapshot first{
+      id("87183823-2574-4bfd-b411-99ed177d3e43"),
+      storage::DirectoryKind::Memo, "First"};
+  const core::Directory::Snapshot second{
+      id("97183823-2574-4bfd-b411-99ed177d3e43"),
+      storage::DirectoryKind::Memo, "Second"};
+  const core::Directory::Snapshot tasks{
+      id("a7183823-2574-4bfd-b411-99ed177d3e43"),
+      storage::DirectoryKind::Todo, "Tasks"};
+  const auto first_path = fs::path{"memos"} / first.id.to_string();
+  const auto second_path = fs::path{"memos"} / second.id.to_string();
+  const auto tasks_path = fs::path{"todos"} / tasks.id.to_string();
+  for (const auto& directory : {
+           storage::metadata_from(first, first_path),
+           storage::metadata_from(second, second_path),
+           storage::metadata_from(tasks, tasks_path)}) {
+    ASSERT_TRUE(std::holds_alternative<std::monostate>(
+        catalog.insert_directory(directory)));
+  }
+  auto memo = memo_snapshot(first.id);
+  auto todo = todo_snapshot(tasks.id);
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_entry(
+      storage::metadata_from(memo, first_path / "memo.md"))));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_entry(
+      storage::metadata_from(todo, tasks_path / "todo.toml"))));
+  catalog.mark_clean();
+
+  auto cross_kind = first;
+  cross_kind.kind = storage::DirectoryKind::Todo;
+  expect_error(catalog.update_directory(storage::metadata_from(
+      cross_kind, first_path)), storage::StorageErrorCode::ReferencedDirectory);
+  expect_error(catalog.remove_directory(first.id),
+               storage::StorageErrorCode::ReferencedDirectory);
+  expect_error(catalog.remove_directory(tasks.id),
+               storage::StorageErrorCode::ReferencedDirectory);
+  EXPECT_FALSE(catalog.dirty());
+
+  memo.directory_id = second.id;
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.update_entry(
+      storage::metadata_from(memo, second_path / "memo.md"))));
+  const auto old_members = catalog.list_directory(storage::DirectoryKind::Memo,
+                                                   first.id);
+  const auto new_members = catalog.list_directory(storage::DirectoryKind::Memo,
+                                                   second.id);
+  ASSERT_TRUE(std::holds_alternative<std::vector<storage::EntryMetadata>>(old_members));
+  ASSERT_TRUE(std::holds_alternative<std::vector<storage::EntryMetadata>>(new_members));
+  EXPECT_TRUE(std::get<std::vector<storage::EntryMetadata>>(old_members).empty());
+  ASSERT_EQ(std::get<std::vector<storage::EntryMetadata>>(new_members).size(), 1U);
+  EXPECT_EQ(std::get<storage::MemoMetadata>(
+                std::get<std::vector<storage::EntryMetadata>>(new_members).front()).id,
+            memo.id);
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      catalog.remove_directory(first.id)));
+  expect_error(catalog.remove_directory(second.id),
+               storage::StorageErrorCode::ReferencedDirectory);
+
+  todo.directory_id.reset();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.update_entry(
+      storage::metadata_from(todo, "todos/root.toml"))));
+  EXPECT_TRUE(std::get<std::vector<storage::EntryMetadata>>(
+      catalog.list_directory(storage::DirectoryKind::Todo, tasks.id)).empty());
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      catalog.remove_directory(tasks.id)));
+
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.remove_entry(memo.id)));
+  auto retagged = second;
+  retagged.kind = storage::DirectoryKind::Todo;
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.update_directory(
+      storage::metadata_from(retagged, second_path))));
+  EXPECT_TRUE(catalog.list_directories(storage::DirectoryKind::Memo).empty());
+  ASSERT_EQ(catalog.list_directories(storage::DirectoryKind::Todo).size(), 1U);
+  EXPECT_EQ(catalog.list_directories(storage::DirectoryKind::Todo).front().id,
+            second.id);
+  EXPECT_TRUE(catalog.list_root(storage::EntryType::Memo).directories.empty());
+  EXPECT_EQ(catalog.list_root(storage::EntryType::Todo).directories.size(), 1U);
+  EXPECT_EQ(catalog.list_root(storage::EntryType::Todo).entries.size(), 1U);
 }
 
 TEST(MetadataCatalogTest, SortsTypedFieldsAndDueVariants) {
