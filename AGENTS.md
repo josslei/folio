@@ -2,18 +2,22 @@
 
 ## Project Context & Structure
 
-Folio is a personal TUI application written in C++20, built with CMake and FTXUI, with GoogleTest, GoogleMock, and CTest for testing. Log, Memo, and Todo are its three primary Core structures. Core currently provides an application-name function, in-memory Log, Memo, and Todo models, and shared types including Tag and Directory; privacy-aware storage remains planned. Subtasks belong to Todo. The TUI provides a welcome screen with `q` to exit.
+Folio is a personal TUI application written in C++20, built with CMake and FTXUI, with GoogleTest, GoogleMock, and CTest for testing. Log, Memo, and Todo are its three primary Core structures. Core provides in-memory domain models and shared types, while the same `folio_core` target contains a private Storage subsystem for codecs and Normal persistence. Subtasks belong to Todo. The TUI provides a welcome screen with `q` to exit.
 
-- `include/folio/core/`: UI-facing public Core headers; `src/core/`: implementations; `src/core/internal/`: Core-only headers.
+- `include/folio/core/`: public domain-model headers available to frontends.
+- `src/core/`: domain implementations and `src/core/internal/`: private domain helpers.
+- `src/storage/`: private persistence implementation, including codecs, filesystem operations, and the Normal Repository. Storage depends on Core models; Core models do not depend on Storage.
 - `src/tui/`: terminal presentation and startup code for `folio`.
-- `tests/`: `folio_core_tests` and CMake test registration.
+- `tests/core/` and `tests/storage/`: domain-model and persistence tests, registered through `tests/CMakeLists.txt`.
 - `thirdparty/`: pinned dependency submodules.
 
 ## Architecture Rules
 
 Keep dependency direction `folio (TUI) -> folio_core`. Core must remain independent of FTXUI and all presentation frameworks, with APIs reusable by a future CLI or alternative frontend. Keep business logic, storage, encryption, and synchronization out of UI components. Prefer clear module boundaries and straightforward solutions; do not create speculative modules, interfaces, placeholder classes, or unnecessary abstractions.
 
-Keep the Core library boundary explicit: declarations the UI may call belong under `include/folio/core/`. Core-only declarations belong under `src/core/internal/`; do not expose that directory through `folio_core`'s public include directories or include internal headers from public headers.
+Keep the Core library boundary explicit. Public domain declarations belong under `include/folio/core/`. Internal declarations belong alongside their implementations under `src/`, including Storage headers under `src/storage/`; do not expose implementation directories through `folio_core`'s public include paths or include internal headers from public headers. The TUI links `folio_core` for domain APIs and must not include or call Storage internals directly.
+
+Use `folio::core` for domain models, `folio::core::storage` for persistence, `folio::core::storage::codec` for serialization, and `folio::core::storage::internal` for Atomic Write implementation/testing helpers. Keep one `folio_core` library target: Storage is an internal subsystem in that target, not a separate library. Keep `include/` PUBLIC and source implementation paths PRIVATE; expose implementation headers to tests only through explicit test-target include paths. Keep implementation-only dependencies PRIVATE where possible.
 
 Call `folio::core::ensure_sodium_initialized()` before using libsodium in Core code. `Id::generate()` already calls this shared one-time helper.
 

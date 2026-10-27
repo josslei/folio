@@ -1,5 +1,5 @@
-#include "folio/core/codec.hpp"
-#include "folio/storage/normal_repository.hpp"
+#include "storage/codec.hpp"
+#include "storage/normal_repository.hpp"
 
 #include <gtest/gtest.h>
 
@@ -18,7 +18,7 @@ namespace {
 
 namespace fs = std::filesystem;
 namespace core = folio::core;
-namespace storage = folio::storage;
+namespace storage = folio::core::storage;
 
 class TemporaryDirectory {
  public:
@@ -585,7 +585,7 @@ TEST_F(NormalRepositoryTest, UnrelatedDuplicateStoredIdBlocksOtherEntry) {
   auto duplicate = memo_snapshot();
   duplicate.id = id("b7183823-2574-4bfd-b411-99ed177d3e43");
   duplicate.title = "Unrelated duplicate";
-  const auto encoded = core::codec::serialize_markdown(duplicate);
+  const auto encoded = core::storage::codec::serialize_markdown(duplicate);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
   const auto first_name = storage::normal_entry_filename(
       storage::EntryType::Memo, duplicate.id, duplicate.created.timestamp);
@@ -720,7 +720,7 @@ TEST_F(NormalRepositoryTest, OldIdCannotOverwriteDifferentEntryAtSamePath) {
   auto injected = memo_snapshot();
   injected.id = id("c7183823-2574-4bfd-b411-99ed177d3e43");
   injected.title = "Different stored ID";
-  const auto encoded = core::codec::serialize_markdown(injected);
+  const auto encoded = core::storage::codec::serialize_markdown(injected);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
   const auto injected_bytes = std::get<std::string>(encoded);
   ASSERT_NO_FATAL_FAILURE(write_bytes(path, injected_bytes));

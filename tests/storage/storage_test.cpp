@@ -1,5 +1,5 @@
-#include "folio/storage/filesystem.hpp"
-#include "internal/atomic_write.hpp"
+#include "storage/filesystem.hpp"
+#include "storage/atomic_write.hpp"
 
 #include <gtest/gtest.h>
 
@@ -28,7 +28,7 @@
 namespace {
 
 namespace fs = std::filesystem;
-namespace storage = folio::storage;
+namespace storage = folio::core::storage;
 using folio::core::Id;
 using folio::core::Timestamp;
 

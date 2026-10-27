@@ -1,5 +1,5 @@
-#include "folio/storage/filesystem.hpp"
-#include "internal/atomic_write.hpp"
+#include "storage/filesystem.hpp"
+#include "storage/atomic_write.hpp"
 
 #include <algorithm>
 #include <array>
@@ -25,7 +25,7 @@
 #include <unistd.h>
 #endif
 
-namespace folio::storage {
+namespace folio::core::storage {
 namespace {
 
 namespace fs = std::filesystem;
@@ -467,4 +467,4 @@ Result<std::monostate> replace_file_atomic(const fs::path& path, std::string_vie
 #endif
 }
 
-}  // namespace folio::storage
+}  // namespace folio::core::storage

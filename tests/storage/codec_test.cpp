@@ -1,4 +1,4 @@
-#include "folio/core/codec.hpp"
+#include "storage/codec.hpp"
 #include "folio/core/log.hpp"
 #include "folio/core/memo.hpp"
 
@@ -16,7 +16,7 @@
 namespace {
 
 using namespace folio::core;
-namespace codec = folio::core::codec;
+namespace codec = folio::core::storage::codec;
 
 template <typename T>
 const T& value_of(const codec::Result<T>& result) {

@@ -8,7 +8,7 @@
 #include <system_error>
 #include <variant>
 
-namespace folio::storage {
+namespace folio::core::storage {
 
 struct StoragePaths {
   std::filesystem::path normal_root;
@@ -73,4 +73,4 @@ using Result = std::variant<T, StorageError>;
 [[nodiscard]] Result<std::monostate> replace_file_atomic(
     const std::filesystem::path& path, std::string_view contents);
 
-}  // namespace folio::storage
+}  // namespace folio::core::storage

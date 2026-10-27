@@ -1,6 +1,6 @@
-#include "folio/storage/normal_repository.hpp"
+#include "storage/normal_repository.hpp"
 
-#include "folio/core/codec.hpp"
+#include "storage/codec.hpp"
 
 #include <algorithm>
 #include <array>
@@ -18,17 +18,18 @@
 #include <unistd.h>
 #endif
 
-namespace folio::storage {
+namespace folio::core::storage {
 namespace {
 
 namespace fs = std::filesystem;
+namespace codec = ::folio::core::storage::codec;
 
 StorageError fail(StorageErrorCode code, const fs::path& path, std::string message,
                   std::error_code ec = {}, bool published = false) {
   return {code, path, std::move(message), ec, published};
 }
 
-StorageError codec_failure(const fs::path& path, const core::codec::CodecError& error) {
+StorageError codec_failure(const fs::path& path, const codec::CodecError& error) {
   return fail(StorageErrorCode::CodecError, path,
               "Invalid serialized entry at " + error.path + ": " + error.message);
 }
@@ -137,14 +138,14 @@ Result<std::string> encode(const Snapshot& snapshot, const fs::path& path) {
   try {
     if constexpr (std::is_same_v<Snapshot, core::Log::Snapshot> ||
                   std::is_same_v<Snapshot, core::Memo::Snapshot>) {
-      auto encoded = core::codec::serialize_markdown(snapshot);
-      if (auto* problem = std::get_if<core::codec::CodecError>(&encoded)) {
+      auto encoded = codec::serialize_markdown(snapshot);
+      if (auto* problem = std::get_if<codec::CodecError>(&encoded)) {
         return codec_failure(path, *problem);
       }
       return std::get<std::string>(std::move(encoded));
     } else {
-      auto encoded = core::codec::serialize_toml(core::codec::to_toml(snapshot));
-      if (auto* problem = std::get_if<core::codec::CodecError>(&encoded)) {
+      auto encoded = codec::serialize_toml(codec::to_toml(snapshot));
+      if (auto* problem = std::get_if<codec::CodecError>(&encoded)) {
         return codec_failure(path, *problem);
       }
       return std::get<std::string>(std::move(encoded));
@@ -158,31 +159,31 @@ Result<std::string> encode(const Snapshot& snapshot, const fs::path& path) {
 template <class Snapshot>
 Result<Snapshot> decode(std::string_view text, const fs::path& path) {
   if constexpr (std::is_same_v<Snapshot, core::Log::Snapshot>) {
-    auto decoded = core::codec::log_snapshot_from_markdown(text);
-    if (auto* problem = std::get_if<core::codec::CodecError>(&decoded)) {
+    auto decoded = codec::log_snapshot_from_markdown(text);
+    if (auto* problem = std::get_if<codec::CodecError>(&decoded)) {
       return codec_failure(path, *problem);
     }
     return std::get<Snapshot>(std::move(decoded));
   } else if constexpr (std::is_same_v<Snapshot, core::Memo::Snapshot>) {
-    auto decoded = core::codec::memo_snapshot_from_markdown(text);
-    if (auto* problem = std::get_if<core::codec::CodecError>(&decoded)) {
+    auto decoded = codec::memo_snapshot_from_markdown(text);
+    if (auto* problem = std::get_if<codec::CodecError>(&decoded)) {
       return codec_failure(path, *problem);
     }
     return std::get<Snapshot>(std::move(decoded));
   } else {
-    auto parsed = core::codec::parse_toml(text);
-    if (auto* problem = std::get_if<core::codec::CodecError>(&parsed)) {
+    auto parsed = codec::parse_toml(text);
+    if (auto* problem = std::get_if<codec::CodecError>(&parsed)) {
       return codec_failure(path, *problem);
     }
     if constexpr (std::is_same_v<Snapshot, core::Todo::Snapshot>) {
-      auto decoded = core::codec::todo_snapshot_from_toml(std::get<toml::table>(parsed));
-      if (auto* problem = std::get_if<core::codec::CodecError>(&decoded)) {
+      auto decoded = codec::todo_snapshot_from_toml(std::get<toml::table>(parsed));
+      if (auto* problem = std::get_if<codec::CodecError>(&decoded)) {
         return codec_failure(path, *problem);
       }
       return std::get<Snapshot>(std::move(decoded));
     } else {
-      auto decoded = core::codec::directory_snapshot_from_toml(std::get<toml::table>(parsed));
-      if (auto* problem = std::get_if<core::codec::CodecError>(&decoded)) {
+      auto decoded = codec::directory_snapshot_from_toml(std::get<toml::table>(parsed));
+      if (auto* problem = std::get_if<codec::CodecError>(&decoded)) {
         return codec_failure(path, *problem);
       }
       return std::get<Snapshot>(std::move(decoded));
@@ -777,4 +778,4 @@ Result<fs::path> NormalRepository::locate_entry(
   return located;
 }
 
-}  // namespace folio::storage
+}  // namespace folio::core::storage

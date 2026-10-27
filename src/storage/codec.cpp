@@ -1,4 +1,4 @@
-#include "folio/core/codec.hpp"
+#include "storage/codec.hpp"
 
 #include <charconv>
 #include <chrono>
@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-namespace folio::core::codec {
+namespace folio::core::storage::codec {
 namespace {
 
 using namespace std::chrono;
@@ -852,4 +852,4 @@ Result<Memo::Snapshot> memo_snapshot_from_markdown(std::string_view text) {
   return snapshot;
 }
 
-}  // namespace folio::core::codec
+}  // namespace folio::core::storage::codec

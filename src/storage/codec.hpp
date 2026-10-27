@@ -12,7 +12,7 @@
 #include <string_view>
 #include <variant>
 
-namespace folio::core::codec {
+namespace folio::core::storage::codec {
 
 enum class CodecErrorCode {
   MalformedToml,
@@ -65,4 +65,4 @@ using Result = std::variant<T, CodecError>;
 [[nodiscard]] Result<Log::Snapshot> log_snapshot_from_markdown(std::string_view text);
 [[nodiscard]] Result<Memo::Snapshot> memo_snapshot_from_markdown(std::string_view text);
 
-}  // namespace folio::core::codec
+}  // namespace folio::core::storage::codec

@@ -1,4 +1,4 @@
-#include "folio/core/codec.hpp"
+#include "storage/codec.hpp"
 
 #include <gtest/gtest.h>
 
@@ -14,7 +14,7 @@
 namespace {
 
 using namespace folio::core;
-namespace codec = folio::core::codec;
+namespace codec = folio::core::storage::codec;
 
 template <typename T>
 bool succeeded(const codec::Result<T>& result) {

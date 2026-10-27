@@ -4,13 +4,13 @@
 #include "folio/core/log.hpp"
 #include "folio/core/memo.hpp"
 #include "folio/core/todo.hpp"
-#include "folio/storage/filesystem.hpp"
+#include "storage/filesystem.hpp"
 
 #include <filesystem>
 #include <optional>
 #include <string>
 
-namespace folio::storage {
+namespace folio::core::storage {
 
 enum class DirectoryKind { Memo, Todo };
 
@@ -74,4 +74,4 @@ class NormalRepository {
   std::filesystem::path root_;
 };
 
-}  // namespace folio::storage
+}  // namespace folio::core::storage
