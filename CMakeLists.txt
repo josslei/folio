@@ -11,6 +11,7 @@ add_library(folio_core STATIC
   src/core/memo.cpp
   src/storage/codec.cpp
   src/storage/filesystem.cpp
+  src/storage/index_codec.cpp
   src/storage/metadata_catalog.cpp
   src/storage/normal_repository.cpp
   src/core/todo.cpp
@@ -33,6 +34,13 @@ target_link_libraries(folio_core PRIVATE folio_sodium)
 
 add_subdirectory(thirdparty/tomlplusplus EXCLUDE_FROM_ALL)
 target_link_libraries(folio_core PRIVATE tomlplusplus::tomlplusplus)
+
+set(MSGPACK_USE_BOOST OFF CACHE BOOL "" FORCE)
+set(MSGPACK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(MSGPACK_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(MSGPACK_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+add_subdirectory(thirdparty/msgpack-cxx EXCLUDE_FROM_ALL)
+target_link_libraries(folio_core PRIVATE msgpack-cxx)
 
 set(UUID_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(UUID_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)

@@ -14,6 +14,7 @@ add_executable(folio_storage_tests
   storage/storage_test.cpp
   storage/normal_repository_test.cpp
   storage/metadata_catalog_test.cpp
+  storage/index_codec_test.cpp
   storage/serialization_samples_test.cpp
   storage/tomlplusplus_test.cpp
 )
@@ -27,6 +28,7 @@ target_link_libraries(folio_storage_tests PRIVATE
   Folio::Core
   GTest::gtest_main
   tomlplusplus::tomlplusplus
+  msgpack-cxx
 )
 
 include(GoogleTest)
