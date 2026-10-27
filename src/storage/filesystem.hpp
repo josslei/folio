@@ -18,6 +18,7 @@ struct StoragePaths {
 };
 
 enum class EntryType { Log, Memo, Todo };
+enum class DirectoryKind { Memo, Todo };
 
 enum class StorageErrorCode {
   InvalidPath,
@@ -29,7 +30,10 @@ enum class StorageErrorCode {
   CodecError,
   IdentityMismatch,
   DuplicateId,
-  StaleLocator
+  StaleLocator,
+  InvalidMetadata,
+  NotFound,
+  ReferencedDirectory
 };
 
 struct StorageError {

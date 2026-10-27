@@ -11,6 +11,7 @@ add_library(folio_core STATIC
   src/core/memo.cpp
   src/storage/codec.cpp
   src/storage/filesystem.cpp
+  src/storage/metadata_catalog.cpp
   src/storage/normal_repository.cpp
   src/core/todo.cpp
   src/core/types.cpp

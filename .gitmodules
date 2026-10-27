@@ -13,3 +13,7 @@
 [submodule "thirdparty/tomlplusplus"]
 	path = thirdparty/tomlplusplus
 	url = https://github.com/marzer/tomlplusplus.git
+[submodule "thirdparty/msgpack-cxx"]
+	path = thirdparty/msgpack-cxx
+	url = https://github.com/msgpack/msgpack-c.git
+	branch = cpp_master

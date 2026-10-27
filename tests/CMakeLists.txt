@@ -13,6 +13,7 @@ add_executable(folio_storage_tests
   storage/codec_test.cpp
   storage/storage_test.cpp
   storage/normal_repository_test.cpp
+  storage/metadata_catalog_test.cpp
   storage/serialization_samples_test.cpp
   storage/tomlplusplus_test.cpp
 )

@@ -12,8 +12,6 @@
 
 namespace folio::core::storage {
 
-enum class DirectoryKind { Memo, Todo };
-
 // Synchronous plaintext persistence. The root is supplied by the caller.
 // Entry locators returned here are relative to normal_root. The caller must
 // exclude external filesystem mutation during an operation, as required by
