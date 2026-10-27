@@ -153,13 +153,18 @@ TEST(CoreCodecContextTest, RoundTripsBothDueDateAlternatives) {
 }
 
 TEST(CoreCodecSnapshotTest, RoundTripsDefaultTodoAndOmittedOptionals) {
-  Todo original("Default task", sample_timestamp_context(std::nullopt));
+  Todo original("Default task", "", sample_timestamp_context(std::nullopt));
   const auto snapshot = original.snapshot();
   const auto table = codec::to_toml(snapshot);
 
   EXPECT_FALSE(table.contains("due"));
   EXPECT_FALSE(table.contains("directory_id"));
   EXPECT_FALSE(table.contains("subtasks"));
+  EXPECT_FALSE(table.contains("description"));
+  EXPECT_EQ(table.get("title")->value<std::string>(),
+            std::optional<std::string>{"Default task"});
+  EXPECT_EQ(table.get("notes")->value<std::string>(),
+            std::optional<std::string>{""});
   EXPECT_EQ(table.get("status")->value<std::string>(),
             std::optional<std::string>{"Pending"});
   EXPECT_EQ(table.get("priority")->value<std::string>(),
@@ -174,7 +179,8 @@ TEST(CoreCodecSnapshotTest, RoundTripsDefaultTodoAndOmittedOptionals) {
   EXPECT_EQ(actual.id, snapshot.id);
   expect_timestamp_context_eq(actual.created, snapshot.created);
   expect_timestamp_context_eq(actual.modified, snapshot.modified);
-  EXPECT_EQ(actual.description, snapshot.description);
+  EXPECT_EQ(actual.title, snapshot.title);
+  EXPECT_EQ(actual.notes, snapshot.notes);
   EXPECT_EQ(actual.status, snapshot.status);
   EXPECT_EQ(actual.priority, snapshot.priority);
   expect_due_date_eq(actual.due_date, snapshot.due_date);
@@ -183,8 +189,35 @@ TEST(CoreCodecSnapshotTest, RoundTripsDefaultTodoAndOmittedOptionals) {
   expect_subtasks_eq(actual.subtasks, snapshot.subtasks);
 }
 
+TEST(CoreCodecSnapshotTest, PreservesEmptyTodoTitleAndNotesWithoutLegacyDescription) {
+  const Todo original("", "", sample_timestamp_context(std::nullopt));
+  const auto table = codec::to_toml(original.snapshot());
+  EXPECT_EQ(table.get("title")->value<std::string>(),
+            std::optional<std::string>{""});
+  EXPECT_EQ(table.get("notes")->value<std::string>(),
+            std::optional<std::string>{""});
+  EXPECT_FALSE(table.contains("description"));
+  const auto decoded = codec::todo_snapshot_from_toml(table);
+  ASSERT_FALSE(is_error(decoded));
+  EXPECT_TRUE(value_of(decoded).title.empty());
+  EXPECT_TRUE(value_of(decoded).notes.empty());
+  const auto restored = Todo::restore(value_of(decoded));
+  EXPECT_TRUE(restored.title().empty());
+  EXPECT_TRUE(restored.notes().empty());
+
+  auto legacy = table;
+  legacy.erase("title");
+  legacy.erase("notes");
+  legacy.insert("description", "Old field");
+  const auto rejected = codec::todo_snapshot_from_toml(legacy);
+  ASSERT_TRUE(is_error(rejected));
+  EXPECT_EQ(std::get<codec::CodecError>(rejected).code,
+            codec::CodecErrorCode::MissingField);
+}
+
 TEST(CoreCodecSnapshotTest, RoundTripsFullTodoAndSerializedText) {
-  Todo original("Plan trip", sample_timestamp_context(std::string("Osaka")),
+  Todo original("Plan trip", "First line\n旅行\nCafé",
+                sample_timestamp_context(std::string("Osaka")),
                 Privacy::Protected);
   const auto modified = sample_timestamp_context(std::string("Kyoto"));
   original.set_status(TodoStatus::Completed, modified);
@@ -200,6 +233,10 @@ TEST(CoreCodecSnapshotTest, RoundTripsFullTodoAndSerializedText) {
 
   const auto snapshot = original.snapshot();
   const auto document = codec::to_toml(snapshot);
+  EXPECT_EQ(document.get("title")->value<std::string>(),
+            std::optional<std::string>{"Plan trip"});
+  EXPECT_EQ(document.get("notes")->value<std::string>(),
+            std::optional<std::string>{"First line\n旅行\nCafé"});
   const auto* due = document.get_as<toml::table>("due");
   ASSERT_NE(due, nullptr);
   EXPECT_EQ(due->get("kind")->value<std::string>(),
@@ -220,7 +257,8 @@ TEST(CoreCodecSnapshotTest, RoundTripsFullTodoAndSerializedText) {
   EXPECT_EQ(actual.id, snapshot.id);
   expect_timestamp_context_eq(actual.created, snapshot.created);
   expect_timestamp_context_eq(actual.modified, snapshot.modified);
-  EXPECT_EQ(actual.description, snapshot.description);
+  EXPECT_EQ(actual.title, snapshot.title);
+  EXPECT_EQ(actual.notes, snapshot.notes);
   EXPECT_EQ(actual.status, snapshot.status);
   EXPECT_EQ(actual.priority, snapshot.priority);
   expect_due_date_eq(actual.due_date, snapshot.due_date);
@@ -260,14 +298,15 @@ TEST(CoreCodecSnapshotTest, EncodesExplicitSchemaWithoutPlaceholderValues) {
       sample_id(),
       {Timestamp{std::chrono::seconds{86400}}, "Asia/Tokyo", "Tokyo"},
       {Timestamp{std::chrono::seconds{172800}}, "Europe/Paris", std::nullopt},
-      "Review notes", TodoStatus::Completed, TodoPriority::Medium,
+      "Review", "First line\n第二行", TodoStatus::Completed, TodoPriority::Medium,
       DueDate{DateContext{{std::chrono::year{2026} / 10 / 25},
                           "Asia/Shanghai", std::nullopt}},
       sample_id(), Privacy::Hidden, {{"Read", true}, {"Reply", false}}};
   const auto expected = codec::parse_toml(R"toml(
 schema_version = 1
 id = "47183823-2574-4bfd-b411-99ed177d3e43"
-description = "Review notes"
+title = "Review"
+notes = "First line\n第二行"
 status = "Completed"
 priority = "Medium"
 privacy = "Hidden"
@@ -324,7 +363,7 @@ TEST(CoreCodecSnapshotTest, UsesStableStringsForEveryPriority) {
   const std::vector<std::pair<TodoPriority, std::string>> priorities{
       {TodoPriority::None, "None"}, {TodoPriority::Low, "Low"},
       {TodoPriority::Medium, "Medium"}, {TodoPriority::High, "High"}};
-  auto snapshot = Todo("Priority", sample_timestamp_context(std::nullopt)).snapshot();
+  auto snapshot = Todo("Priority", "", sample_timestamp_context(std::nullopt)).snapshot();
   for (const auto& [priority, text] : priorities) {
     SCOPED_TRACE(text);
     snapshot.priority = priority;
@@ -339,9 +378,9 @@ TEST(CoreCodecSnapshotTest, UsesStableStringsForEveryPriority) {
 
 TEST(CoreCodecErrorTest, RejectsEachMissingRequiredSnapshotField) {
   const auto todo = codec::to_toml(
-      Todo("Required fields", sample_timestamp_context(std::nullopt)).snapshot());
+      Todo("Required fields", "", sample_timestamp_context(std::nullopt)).snapshot());
   for (const auto* field : {"schema_version", "id", "created", "modified",
-                             "description", "status", "priority", "privacy"}) {
+                             "title", "notes", "status", "priority", "privacy"}) {
     SCOPED_TRACE(field);
     auto incomplete = todo;
     incomplete.erase(field);
@@ -394,7 +433,7 @@ TEST(CoreCodecErrorTest, RejectsInvalidDateTimestampAndSchemaVersion) {
   empty_timezone.insert_or_assign("timezone", "");
   EXPECT_TRUE(is_error(codec::timestamp_context_from_toml(empty_timezone)));
 
-  Todo todo("Versioned", sample_timestamp_context(std::nullopt));
+  Todo todo("Versioned", "", sample_timestamp_context(std::nullopt));
   auto unsupported = codec::to_toml(todo.snapshot());
   unsupported.insert_or_assign("schema_version", 999);
   EXPECT_TRUE(is_error(codec::todo_snapshot_from_toml(unsupported)));
@@ -402,6 +441,17 @@ TEST(CoreCodecErrorTest, RejectsInvalidDateTimestampAndSchemaVersion) {
   auto wrong_type = codec::to_toml(todo.snapshot());
   wrong_type.insert_or_assign("id", 42);
   EXPECT_TRUE(is_error(codec::todo_snapshot_from_toml(wrong_type)));
+
+  for (const auto* field : {"title", "notes"}) {
+    SCOPED_TRACE(field);
+    auto invalid_text = codec::to_toml(todo.snapshot());
+    invalid_text.insert_or_assign(field, 42);
+    const auto decoded = codec::todo_snapshot_from_toml(invalid_text);
+    ASSERT_TRUE(is_error(decoded));
+    EXPECT_EQ(std::get<codec::CodecError>(decoded).code,
+              codec::CodecErrorCode::InvalidField);
+    EXPECT_EQ(std::get<codec::CodecError>(decoded).path, field);
+  }
 
   auto invalid_status = codec::to_toml(todo.snapshot());
   invalid_status.insert_or_assign("status", "InProgress");

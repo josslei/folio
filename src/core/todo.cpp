@@ -40,18 +40,20 @@ void validate_snapshot(const Todo::Snapshot& snapshot) {
 
 }  // namespace
 
-Todo::Todo(std::string description, TimestampContext created, Privacy privacy)
+Todo::Todo(std::string title, std::string notes, TimestampContext created, Privacy privacy)
     : id_(Id::generate()),
       created_(std::move(created)),
       modified_(created_),
-      description_(std::move(description)),
+      title_(std::move(title)),
+      notes_(std::move(notes)),
       privacy_(privacy) {}
 
 Todo::Todo(const Snapshot& snapshot)
     : id_(snapshot.id),
       created_(snapshot.created),
       modified_(snapshot.modified),
-      description_(snapshot.description),
+      title_(snapshot.title),
+      notes_(snapshot.notes),
       status_(snapshot.status),
       priority_(snapshot.priority),
       due_date_(snapshot.due_date),
@@ -62,14 +64,15 @@ Todo::Todo(const Snapshot& snapshot)
 }
 
 Todo::Snapshot Todo::snapshot() const {
-  return Snapshot{id_,       created_,    modified_, description_, status_,
+  return Snapshot{id_,       created_,    modified_, title_, notes_, status_,
                   priority_, due_date_,   directory_id_, privacy_, subtasks_};
 }
 
 Todo Todo::restore(const Snapshot& snapshot) { return Todo(snapshot); }
 
 const Id& Todo::id() const noexcept { return id_; }
-const std::string& Todo::description() const noexcept { return description_; }
+const std::string& Todo::title() const noexcept { return title_; }
+const std::string& Todo::notes() const noexcept { return notes_; }
 const TimestampContext& Todo::created() const noexcept { return created_; }
 const TimestampContext& Todo::modified() const noexcept { return modified_; }
 TodoStatus Todo::status() const noexcept { return status_; }
@@ -79,8 +82,13 @@ const std::optional<Id>& Todo::directory_id() const noexcept { return directory_
 Privacy Todo::privacy() const noexcept { return privacy_; }
 const std::vector<Subtask>& Todo::subtasks() const noexcept { return subtasks_; }
 
-void Todo::set_description(std::string description, TimestampContext modified) {
-  description_ = std::move(description);
+void Todo::set_title(std::string title, TimestampContext modified) {
+  title_ = std::move(title);
+  modified_ = std::move(modified);
+}
+
+void Todo::set_notes(std::string notes, TimestampContext modified) {
+  notes_ = std::move(notes);
   modified_ = std::move(modified);
 }
 

@@ -90,9 +90,7 @@ const TimestampContext& entry_modified(const EntryMetadata& e) {
 }
 const std::string& entry_title(const EntryMetadata& e) {
   return std::visit([](const auto& value) -> const std::string& {
-    if constexpr (std::is_same_v<std::decay_t<decltype(value)>, TodoMetadata>)
-      return value.description;
-    else return value.title;
+    return value.title;
   }, e);
 }
 
@@ -203,11 +201,7 @@ bool matches(const T& e, const CatalogQuery& q) {
     } else if (*q.directory != e.directory_id) return false;
   }
   if (q.privacy && *q.privacy != e.privacy) return false;
-  if constexpr (todo) {
-    if (!contains_ascii_folded(e.description, q.text)) return false;
-  } else {
-    if (!contains_ascii_folded(e.title, q.text)) return false;
-  }
+  if (!contains_ascii_folded(e.title, q.text)) return false;
   if (!in_range(e.created.timestamp, q.created) ||
       !in_range(e.modified.timestamp, q.modified)) return false;
   if (q.tag) {
@@ -262,7 +256,7 @@ EntryMetadata metadata_from(const Memo::Snapshot& s, std::filesystem::path path)
 }
 EntryMetadata metadata_from(const Todo::Snapshot& s, std::filesystem::path path) {
   return TodoMetadata{s.id, std::move(path), s.privacy, s.created, s.modified,
-                      s.description, s.status, s.priority, s.due_date, s.directory_id};
+                      s.title, s.status, s.priority, s.due_date, s.directory_id};
 }
 DirectoryMetadata metadata_from(const Directory::Snapshot& s, DirectoryKind kind,
                                 std::filesystem::path path) {

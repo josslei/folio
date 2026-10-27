@@ -86,7 +86,8 @@ core::Memo::Snapshot memo_snapshot() {
 
 core::Todo::Snapshot todo_snapshot() {
   return {id("67183823-2574-4bfd-b411-99ed177d3e43"), created(), created(),
-          "Plan trip", core::TodoStatus::Pending, core::TodoPriority::High,
+          "Plan trip", "First line\n第二行 — café",
+          core::TodoStatus::Pending, core::TodoPriority::High,
           core::DueDate{core::DateContext{{std::chrono::year{2027} / 1 / 2},
                                           "Asia/Tokyo", std::string{"Tokyo"}}},
           std::nullopt, core::Privacy::Normal,
@@ -167,7 +168,8 @@ void expect_todo(const core::Todo::Snapshot& actual,
   EXPECT_EQ(actual.id, expected.id);
   expect_context(actual.created, expected.created);
   expect_context(actual.modified, expected.modified);
-  EXPECT_EQ(actual.description, expected.description);
+  EXPECT_EQ(actual.title, expected.title);
+  EXPECT_EQ(actual.notes, expected.notes);
   EXPECT_EQ(actual.status, expected.status);
   EXPECT_EQ(actual.priority, expected.priority);
   ASSERT_EQ(actual.due_date.has_value(), expected.due_date.has_value());
@@ -267,7 +269,8 @@ TEST_F(NormalRepositoryTest, CreatesLoadsUpdatesAndReloadsCompleteTodoSnapshot) 
   EXPECT_EQ(std::get<fs::path>(before).filename(),
             std::get<std::string>(canonical_name));
   original.modified = modified();
-  original.description = "Complete trip plan";
+  original.title = "Complete trip plan";
+  original.notes = "Updated notes\n旅行";
   original.status = core::TodoStatus::Completed;
   original.priority = core::TodoPriority::Medium;
   original.due_date = core::TimestampContext{
@@ -280,6 +283,13 @@ TEST_F(NormalRepositoryTest, CreatesLoadsUpdatesAndReloadsCompleteTodoSnapshot) 
   const auto after = repository.locate_entry(storage::EntryType::Todo, original.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(after));
   EXPECT_EQ(std::get<fs::path>(after), std::get<fs::path>(before));
+
+  original.title.clear();
+  original.notes.clear();
+  ASSERT_TRUE(operation_succeeded(repository.update_todo(original)));
+  const auto emptied = repository.load_todo(original.id);
+  ASSERT_TRUE(std::holds_alternative<core::Todo::Snapshot>(emptied));
+  expect_todo(std::get<core::Todo::Snapshot>(emptied), original);
 }
 
 TEST_F(NormalRepositoryTest, SuppliedLogPathBypassesUnrelatedMalformedEntry) {
@@ -434,7 +444,8 @@ TEST_F(NormalRepositoryTest, SuppliedTodoPathBypassesUnrelatedDuplicateId) {
   ASSERT_TRUE(std::holds_alternative<core::Todo::Snapshot>(loaded));
   expect_todo(std::get<core::Todo::Snapshot>(loaded), todo);
 
-  todo.description = "Updated through exact Todo path";
+  todo.title = "Updated through exact Todo path";
+  todo.notes = "Updated exact notes\nCafé";
   todo.modified = modified();
   ASSERT_TRUE(operation_succeeded(repository.update_todo(
       todo, std::get<fs::path>(locator))));
@@ -844,7 +855,7 @@ TEST_F(NormalRepositoryTest, RejectsMalformedEntryWithoutReplacingItsBytes) {
   const std::string malformed = "schema_version = 1\ninvalid = [";
   ASSERT_NO_FATAL_FAILURE(write_bytes(path, malformed));
   expect_error(repository.load_todo(todo.id));
-  todo.description = "Must not overwrite malformed source";
+  todo.title = "Must not overwrite malformed source";
   expect_error(repository.update_todo(todo));
   EXPECT_EQ(read_bytes(path), malformed);
 }

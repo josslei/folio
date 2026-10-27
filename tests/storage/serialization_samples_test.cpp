@@ -121,7 +121,8 @@ TEST(CoreCodecSamplesTest, GeneratesSerializedExamples) {
       "memo.md", memo, codec::memo_snapshot_from_markdown));
 
   const Todo::Snapshot todo_date{
-      *todo_id, created, modified, "旅行の準備", TodoStatus::Pending,
+      *todo_id, created, modified, "旅行の準備",
+      "First line\n第二行 — café", TodoStatus::Pending,
       TodoPriority::High, due_date, *directory_id, Privacy::Normal,
       {{"切符を予約", true}, {"Pack café notes", false}}};
   auto todo_datetime = todo_date;
@@ -131,7 +132,7 @@ TEST(CoreCodecSamplesTest, GeneratesSerializedExamples) {
   todo_datetime.privacy = Privacy::Protected;
   const TimestampContext minimal_context{created.timestamp, "UTC", std::nullopt};
   const Todo::Snapshot minimal{
-      *todo_id, minimal_context, minimal_context, "Simple task", TodoStatus::Pending,
+      *todo_id, minimal_context, minimal_context, "Simple task", "", TodoStatus::Pending,
       TodoPriority::None, std::nullopt, std::nullopt, Privacy::Normal, {}};
   const auto minimal_table = codec::to_toml(minimal);
   for (const auto* key : {"due", "directory_id", "subtasks"}) {

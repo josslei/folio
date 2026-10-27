@@ -43,7 +43,7 @@ struct TodoMetadata {
   Privacy privacy;
   TimestampContext created;
   TimestampContext modified;
-  std::string description;
+  std::string title;
   TodoStatus status;
   TodoPriority priority;
   std::optional<DueDate> due_date;
@@ -76,7 +76,7 @@ struct CatalogQuery {
   // nullopt: any Directory; optional<nullopt>: module root; ID: that Directory.
   std::optional<std::optional<Id>> directory;
   std::optional<Privacy> privacy;
-  // ASCII case insensitive substring in title/description. Other UTF-8 bytes
+  // ASCII case insensitive substring in title. Other UTF-8 bytes
   // compare exactly. Tags use the same matching rule.
   std::string text;
   std::optional<Tag> tag;

@@ -472,7 +472,8 @@ toml::table to_toml(const DueDate& due_date) {
 toml::table to_toml(const Todo::Snapshot& snapshot) {
   toml::table table{{"schema_version", 1},
                     {"id", snapshot.id.to_string()},
-                    {"description", snapshot.description}};
+                    {"title", snapshot.title},
+                    {"notes", snapshot.notes}};
   switch (snapshot.status) {
     case TodoStatus::Pending:
       table.insert_or_assign("status", "Pending");
@@ -645,8 +646,10 @@ Result<Todo::Snapshot> todo_snapshot_from_toml(const toml::table& table) {
   auto modified_result = timestamp_context_from_toml(*modified_node);
   if (const auto* failure = result_error(modified_result)) return *failure;
 
-  auto description_result = read_string(table, "description", "description");
-  if (const auto* failure = result_error(description_result)) return *failure;
+  auto title_result = read_string(table, "title", "title");
+  if (const auto* failure = result_error(title_result)) return *failure;
+  auto notes_result = read_string(table, "notes", "notes");
+  if (const auto* failure = result_error(notes_result)) return *failure;
   auto status_result = read_string(table, "status", "status");
   if (const auto* failure = result_error(status_result)) return *failure;
   TodoStatus status;
@@ -717,7 +720,8 @@ Result<Todo::Snapshot> todo_snapshot_from_toml(const toml::table& table) {
   Todo::Snapshot snapshot{std::get<Id>(std::move(id_result)),
                           std::get<TimestampContext>(std::move(created_result)),
                           std::get<TimestampContext>(std::move(modified_result)),
-                          std::get<std::string>(std::move(description_result)),
+                          std::get<std::string>(std::move(title_result)),
+                          std::get<std::string>(std::move(notes_result)),
                           status,
                           priority,
                           std::move(due_date),

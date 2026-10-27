@@ -26,7 +26,8 @@ class Todo {
     Id id;
     TimestampContext created;
     TimestampContext modified;
-    std::string description;
+    std::string title;
+    std::string notes;
     TodoStatus status;
     TodoPriority priority;
     std::optional<DueDate> due_date;
@@ -35,14 +36,15 @@ class Todo {
     std::vector<Subtask> subtasks;
   };
 
-  Todo(std::string description, TimestampContext created,
+  Todo(std::string title, std::string notes, TimestampContext created,
        Privacy privacy = Privacy::Normal);
 
   [[nodiscard]] Snapshot snapshot() const;
   [[nodiscard]] static Todo restore(const Snapshot& snapshot);
 
   [[nodiscard]] const Id& id() const noexcept;
-  [[nodiscard]] const std::string& description() const noexcept;
+  [[nodiscard]] const std::string& title() const noexcept;
+  [[nodiscard]] const std::string& notes() const noexcept;
   [[nodiscard]] const TimestampContext& created() const noexcept;
   [[nodiscard]] const TimestampContext& modified() const noexcept;
   [[nodiscard]] TodoStatus status() const noexcept;
@@ -52,7 +54,8 @@ class Todo {
   [[nodiscard]] Privacy privacy() const noexcept;
   [[nodiscard]] const std::vector<Subtask>& subtasks() const noexcept;
 
-  void set_description(std::string description, TimestampContext modified);
+  void set_title(std::string title, TimestampContext modified);
+  void set_notes(std::string notes, TimestampContext modified);
   void set_status(TodoStatus status, TimestampContext modified);
   void set_priority(TodoPriority priority, TimestampContext modified);
   void set_due_date(std::optional<DueDate> due_date, TimestampContext modified);
@@ -71,7 +74,8 @@ class Todo {
   const Id id_;
   const TimestampContext created_;
   TimestampContext modified_;
-  std::string description_;
+  std::string title_;
+  std::string notes_;
   TodoStatus status_ = TodoStatus::Pending;
   TodoPriority priority_ = TodoPriority::None;
   std::optional<DueDate> due_date_;

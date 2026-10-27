@@ -52,7 +52,8 @@ core::Todo::Snapshot todo_snapshot(std::optional<core::Id> directory_id = std::n
   return {id("67183823-2574-4bfd-b411-99ed177d3e43"),
           time_at(std::chrono::seconds{1800000240}, "UTC", std::nullopt),
           time_at(std::chrono::seconds{1800000300}, "Asia/Tokyo", "大阪"),
-          "Todo Beta", core::TodoStatus::Completed, core::TodoPriority::High,
+          "Todo Beta", "Private notes\n旅行", core::TodoStatus::Completed,
+          core::TodoPriority::High,
           core::DueDate{core::TimestampContext{
               core::Timestamp{std::chrono::seconds{1900000000}},
               "Asia/Tokyo", "東京"}},
@@ -83,7 +84,7 @@ void expect_any_error(const storage::Result<T>& result) {
 // these guards merely to make the build pass. If a binding stops compiling
 // after a Snapshot change, carefully review that Snapshot,
 // its Metadata type, metadata_from(), the exclusions below, and the extraction
-// assertions before changing these bindings. Content and subtasks are excluded
+// assertions before changing these bindings. Content, Todo notes, and subtasks are excluded
 // by design; every other Snapshot field belongs in metadata.
 // std::tie makes tuples of references, so these guards do not copy record data.
 void guard_log_snapshot_fields(const core::Log::Snapshot& snapshot) {
@@ -101,12 +102,12 @@ void guard_memo_snapshot_fields(const core::Memo::Snapshot& snapshot) {
 }
 
 void guard_todo_snapshot_fields(const core::Todo::Snapshot& snapshot) {
-  const auto& [id, created, modified, description, status, priority, due_date,
+  const auto& [id, created, modified, title, notes, status, priority, due_date,
                directory_id, privacy, subtasks] = snapshot;
   [[maybe_unused]] const auto indexed =
-      std::tie(id, created, modified, description, status, priority, due_date,
+      std::tie(id, created, modified, title, status, priority, due_date,
                directory_id, privacy);
-  [[maybe_unused]] const auto excluded = std::tie(subtasks);
+  [[maybe_unused]] const auto excluded = std::tie(notes, subtasks);
 }
 
 void guard_directory_snapshot_fields(const core::Directory::Snapshot& snapshot) {
@@ -159,7 +160,7 @@ TEST(MetadataCatalogTest, ExtractsCompleteTypedSnapshotsWithoutBodies) {
   EXPECT_EQ(todo_metadata.privacy, todo.privacy);
   expect_context(todo_metadata.created, todo.created);
   expect_context(todo_metadata.modified, todo.modified);
-  EXPECT_EQ(todo_metadata.description, todo.description);
+  EXPECT_EQ(todo_metadata.title, todo.title);
   EXPECT_EQ(todo_metadata.status, todo.status);
   EXPECT_EQ(todo_metadata.priority, todo.priority);
   EXPECT_EQ(todo_metadata.directory_id, std::nullopt);
@@ -416,13 +417,13 @@ TEST(MetadataCatalogTest, QueriesAcrossModulesWithIndependentFilters) {
   auto todo = todo_snapshot(todo_directory.id);
   auto no_due = todo_snapshot();
   no_due.id = id("27183823-2574-4bfd-b411-99ed177d3e43");
-  no_due.description = "No due";
+  no_due.title = "No due";
   no_due.due_date.reset();
   no_due.status = core::TodoStatus::Pending;
   no_due.priority = core::TodoPriority::Low;
   auto date_due = todo_snapshot();
   date_due.id = id("37183823-2574-4bfd-b411-99ed177d3e43");
-  date_due.description = "Date due";
+  date_due.title = "Date due";
   date_due.due_date = core::DateContext{
       {std::chrono::year{2027} / 3 / 3}, "UTC", std::nullopt};
   for (const auto& entry : {
@@ -460,6 +461,8 @@ TEST(MetadataCatalogTest, QueriesAcrossModulesWithIndependentFilters) {
   query.text = "Café";
   ASSERT_EQ(catalog.query(query).size(), 1U);
   EXPECT_EQ(std::get<storage::MemoMetadata>(catalog.query(query).front()).id, memo.id);
+  query.text = "Private notes";
+  EXPECT_TRUE(catalog.query(query).empty());
   query.text = "";
   query.tag = core::Tag{"TRAV"};
   ASSERT_EQ(catalog.query(query).size(), 1U);
@@ -738,7 +741,7 @@ TEST(MetadataCatalogTest, CrossTypeQueriesAndMutationsKeepOtherEntriesIntact) {
   auto todo = todo_snapshot();
   log.title = "Zulu";
   memo.title = "Alpha";
-  todo.description = "Mike";
+  todo.title = "Mike";
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_entry(
       storage::metadata_from(todo, "entries/todo.enc"))));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_entry(
@@ -768,7 +771,7 @@ TEST(MetadataCatalogTest, CrossTypeQueriesAndMutationsKeepOtherEntriesIntact) {
 
   log.title = "Updated Log";
   memo.title = "Updated Memo";
-  todo.description = "Updated Todo";
+  todo.title = "Updated Todo";
   for (const auto& update : {
            storage::metadata_from(log, "entries/log.enc"),
            storage::metadata_from(memo, "entries/memo.enc"),
@@ -781,7 +784,7 @@ TEST(MetadataCatalogTest, CrossTypeQueriesAndMutationsKeepOtherEntriesIntact) {
             "Updated Log");
   EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_entry(memo.id)).title,
             "Updated Memo");
-  EXPECT_EQ(std::get<storage::TodoMetadata>(*catalog.find_entry(todo.id)).description,
+  EXPECT_EQ(std::get<storage::TodoMetadata>(*catalog.find_entry(todo.id)).title,
             "Updated Todo");
 
   expect_error(catalog.update_entry(storage::metadata_from(
