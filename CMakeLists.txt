@@ -37,7 +37,17 @@ target_link_libraries(folio_core PRIVATE tomlplusplus::tomlplusplus)
 set(UUID_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(UUID_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(UUID_USING_CXX20_SPAN ON CACHE BOOL "" FORCE)
-add_subdirectory(thirdparty/uuidv4 EXCLUDE_FROM_ALL)
+# The pinned stduuid declares CMake 3.7 compatibility. Apply modern policies
+# locally without editing the submodule or suppressing deprecation warnings.
+function(folio_add_stduuid)
+  if(CMAKE_VERSION VERSION_GREATER_EQUAL 4.0 AND
+     (NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM OR
+      CMAKE_POLICY_VERSION_MINIMUM VERSION_LESS 3.10))
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
+  endif()
+  add_subdirectory(thirdparty/uuidv4 EXCLUDE_FROM_ALL)
+endfunction()
+folio_add_stduuid()
 target_link_libraries(folio_core PRIVATE stduuid)
 
 set(FTXUI_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)

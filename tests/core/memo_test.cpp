@@ -131,7 +131,7 @@ TEST(MemoTest, RestoreRejectsInvalidPrivacy) {
   auto snapshot = memo.snapshot();
   snapshot.privacy = static_cast<Privacy>(99);
 
-  EXPECT_THROW(Memo::restore(snapshot), std::invalid_argument);
+  EXPECT_THROW((void)Memo::restore(snapshot), std::invalid_argument);
 }
 
 }  // namespace

@@ -296,7 +296,7 @@ TEST(TodoTest, RestoreRejectsInvalidDateOnlyDueDate) {
   snapshot.due_date = DueDate{DateContext{
       std::chrono::year{2026} / 2 / 30, "UTC", std::nullopt}};
 
-  EXPECT_THROW(Todo::restore(snapshot), std::invalid_argument);
+  EXPECT_THROW((void)Todo::restore(snapshot), std::invalid_argument);
 }
 
 TEST(TodoTest, SnapshotRestorePreservesDateTimeDueDate) {
@@ -324,15 +324,15 @@ TEST(TodoTest, RestoreRejectsInvalidStatusAndPriority) {
   const Todo todo("Task", "", created);
   auto snapshot = todo.snapshot();
   snapshot.status = static_cast<TodoStatus>(99);
-  EXPECT_THROW(Todo::restore(snapshot), std::invalid_argument);
+  EXPECT_THROW((void)Todo::restore(snapshot), std::invalid_argument);
 
   snapshot = todo.snapshot();
   snapshot.priority = static_cast<TodoPriority>(99);
-  EXPECT_THROW(Todo::restore(snapshot), std::invalid_argument);
+  EXPECT_THROW((void)Todo::restore(snapshot), std::invalid_argument);
 
   snapshot = todo.snapshot();
   snapshot.privacy = static_cast<Privacy>(99);
-  EXPECT_THROW(Todo::restore(snapshot), std::invalid_argument);
+  EXPECT_THROW((void)Todo::restore(snapshot), std::invalid_argument);
 }
 
 }  // namespace

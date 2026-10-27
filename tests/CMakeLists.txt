@@ -30,5 +30,7 @@ target_link_libraries(folio_storage_tests PRIVATE
 )
 
 include(GoogleTest)
-gtest_discover_tests(folio_core_tests)
-gtest_discover_tests(folio_storage_tests)
+# Allow for first-launch delays after linking (for example, macOS executable
+# checks). This limits test-name discovery, not individual test execution.
+gtest_discover_tests(folio_core_tests DISCOVERY_TIMEOUT 30)
+gtest_discover_tests(folio_storage_tests DISCOVERY_TIMEOUT 30)

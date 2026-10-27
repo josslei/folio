@@ -2,9 +2,18 @@
 set(sodium_source_dir "${PROJECT_SOURCE_DIR}/thirdparty/libsodium/src/libsodium")
 
 file(GLOB_RECURSE sodium_sources CONFIGURE_DEPENDS "${sodium_source_dir}/*.c")
-# Use portable implementations. Optimized variants need per-file compiler flags.
+# Use portable implementations by default. Most optimized variants need
+# per-file compiler flags.
 list(FILTER sodium_sources EXCLUDE REGEX
   "(/|_|-)(aesni|armcrypto|avx2|avx512f|neon|sse|sse2|sse41|ssse3|wasm32|xmm6|xmm6int|sandy2x|armsha3)(/|\\.|_|-)")
+
+# Argon2 selects NEON directly from compiler macros on ARM64, independently of
+# configure feature checks. Keep its implementation in sync with that selector.
+# This source has the same architecture guard, so it is inert on other targets
+# and needs no extra compiler flags on ARM64.
+list(APPEND sodium_sources
+  "${sodium_source_dir}/crypto_pwhash/argon2/argon2-fill-block-neon.c"
+)
 
 add_library(folio_sodium STATIC ${sodium_sources})
 set_target_properties(folio_sodium PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)

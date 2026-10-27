@@ -154,7 +154,7 @@ TEST(LogTest, RestoreRejectsInvalidLogDate) {
   auto snapshot = log.snapshot();
   snapshot.log_date.date = std::chrono::year{2026} / 2 / 30;
 
-  EXPECT_THROW(Log::restore(snapshot), std::invalid_argument);
+  EXPECT_THROW((void)Log::restore(snapshot), std::invalid_argument);
 }
 
 TEST(LogTest, RestoreRejectsInvalidPrivacy) {
@@ -165,7 +165,7 @@ TEST(LogTest, RestoreRejectsInvalidPrivacy) {
   auto snapshot = log.snapshot();
   snapshot.privacy = static_cast<Privacy>(99);
 
-  EXPECT_THROW(Log::restore(snapshot), std::invalid_argument);
+  EXPECT_THROW((void)Log::restore(snapshot), std::invalid_argument);
 }
 
 }  // namespace
