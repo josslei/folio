@@ -108,29 +108,57 @@ Decoding never receives a mutable live catalog. It restores Directory records be
 
 ### Persistent cache policy and future rebuilding
 
-Persistent indexes are low-priority, rebuildable caches, rather than authoritative databases. The Normal cache belongs under configurable `state_root`, outside `normal_root`, and must not be committed or pushed to Git. The persistence lifecycle is strict: load the persisted index once at application startup, use the in-memory catalog for the entire session, and save the complete index once during orderly shutdown if dirty. There are no index disk reads or writes during ordinary application operations. Explicit cache load/save primitives are available independently; lifecycle orchestration, authoritative file scanning, and repository integration remain future work. Missing, unsupported, or corrupted caches must never modify authoritative Entries. Ordinary listing, filtering, and metadata search use the loaded catalog without parsing Entry files again.
+Persistent indexes are low-priority, rebuildable caches, rather than authoritative databases. The Normal cache belongs under configurable `state_root`, outside `normal_root`, and must not be committed or pushed to Git. The persistence lifecycle is strict: attempt to load the persisted index at most once at application startup, use the in-memory catalog for the entire session, and normally save the complete index during orderly shutdown when necessary. Saving once is a caller policy, not an enforced attempt limit. There are no index disk reads or writes during ordinary application operations. The internal coordinator guards repeated startup loading but permits repeated save calls; application lifecycle wiring, authoritative file scanning, and repository integration remain future work. Missing, unsupported, or corrupted caches must never modify authoritative Entries. Ordinary listing, filtering, and metadata search use the loaded catalog without parsing Entry files again.
 
 The Normal index is deliberately local-only: placing it under `state_root` rather than `normal_root` keeps this rebuildable cache out of the data tree synchronized to the Git remote. Its metadata is complete plaintext. Entry locators inside the index remain relative to the associated repository's data root, not to the index file's location.
 
-### Normal index cache store
+### Catalog-centric persistence coordination
 
-The internal `src/storage/index_store.hpp` component, `NormalIndexStore`, stores the complete Normal index at `<state_root>/index/normal.msgpack`. The relative location is centralized in the store. Startup configuration supplies `StoragePaths`; the store validates root separation and never uses `normal_root`, `vault_root`, or `cache_root` as the cache destination. Entry locators inside the decoded metadata remain relative to the repository data root. The constructor only stores configuration; filesystem access occurs through explicit load/save operations.
+`MetadataCatalog` is the central in-memory metadata projection, with primary records, derived reverse membership, queries, and dirty state. Entry and Directory files remain authoritative. The catalog performs no file I/O. `IndexCodec` independently converts primary metadata to/from MessagePack; decoding constructs a temporary complete catalog before publication and reconstructs membership from primary records.
 
-`load()` opens and reads the complete bounded binary payload, then calls IndexCodec. It returns a newly reconstructed clean MetadataCatalog on success, or an explicit error distinguishing a missing cache, corrupt data, unsupported schema, and filesystem/I/O failures. Resource-limit and invalid-path errors remain explicit. A missing or invalid cache is never returned as a valid empty catalog. Loading does not create directories, retry reads, scan Entries, repair files, rebuild metadata, or mutate a live catalog.
+The internal `CatalogCoordinator` owns one active catalog and coordinates explicit startup loading and orderly shutdown saving. It combines configured paths, IndexCodec, and generic Binary I/O. It does not write authoritative Entries, implement serialization, or perform filesystem discovery. `startup_load()` and `shutdown_save()` are its explicit lifecycle operations; `catalog()` accesses the single owned in-memory catalog and `status()` reports Unloaded, Ready, or Unavailable. The coordinator is non-copyable and non-movable so session guards and ownership cannot be duplicated. No I/O occurs in its constructor or destructor. Application/TUI wiring remains deferred.
 
-`save(const MetadataCatalog&)` returns `Saved`, `SkippedClean`, or an error. A clean catalog is skipped before any filesystem I/O. For a dirty catalog, encoding completes before parent creation; the store then creates missing state/index directories and invokes exactly one existing atomic create or replace operation for the full snapshot. An absent destination uses create-only semantics; an existing regular destination uses replacement. There is no retry that switches creation to replacement after a race. Symbolic-link redirects and non-regular cache destinations are rejected. Callers must exclude external filesystem mutation during an operation, matching the atomic writer contract.
+The Normal index location is centralized as `<state_root>/index/normal.msgpack`, outside `normal_root`, `vault_root`, and `cache_root`. Locators in metadata remain relative to the repository data root. Root validation resolves configured roots and rejects overlaps; cache-path checks reject symbolic links at the index directory or target and non-regular destinations. A configured root may resolve through a symlink if it remains safely separate. The existing requirement to exclude concurrent external filesystem mutation still applies.
 
-Save never mutates the supplied catalog or acknowledges persistence. The lifecycle owner may call `mark_clean()` only after `Saved`; encoding success alone is insufficient. All save failures leave dirty state unchanged and propagate diagnostic context, including the atomic writer's publication flag. A failure after publication can leave the new index visible without confirmed crash durability; the store does not roll it back. Parent creation can leave empty directories on later failure, and newly created ancestors do not gain stronger crash-durability guarantees than the existing directory-creation/atomic-write primitives. **TODO:** address parent-directory creation durability and partial states with the future transaction/recovery design; do not add a journal here.
+The coordinator permits at most one explicit startup load attempt, including a failed attempt. Shutdown saving has no attempt guard: a repeated call can skip a clean catalog or retry a failed save. Startup reads the bounded payload through Binary I/O and decodes it before adopting the complete clean catalog. Missing, corrupt, unsupported-schema, resource-limit, invalid-path, and I/O outcomes remain distinct. A failed load never establishes a valid catalog, and ordinary mutations cannot turn that failure into permission to overwrite the index. A future authoritative rebuild must establish readiness explicitly; that integration is not implemented here.
 
-The intended calling policy belongs to a future lifecycle owner:
+Shutdown skips I/O for an unchanged, successfully restored catalog. Otherwise it encodes the complete ready catalog before creating parents and invokes one existing atomic create or replace operation. Only complete persistence success acknowledges the catalog as clean. Failed encoding, writing, syncing, or cleanup preserves dirty state and diagnostic context, including whether publication occurred. Repeated startup loading returns an explicit error without further index I/O. Saving leaves readiness unchanged: after success a repeated call skips the now-clean catalog, while a failed save can be retried. Saving before a valid catalog is available returns an error without consuming a save allowance or preventing startup loading. Post-publication errors still require reconciliation according to the existing atomic-write contract before retrying.
+
+`src/storage/binary_io.hpp` provides `read_binary_file(path, max_bytes)`, a generic bounded opaque-byte reader; its caller supplies the byte limit and owns path confinement/symlink policy. It has no Index, Catalog, Entry, or Vault concepts. Binary bytes use `std::string` with explicit lengths, preserving embedded nulls. Existing `create_file_atomic` and `replace_file_atomic` already accept opaque bytes and are reused directly, without another write wrapper or changed atomic semantics.
 
 ```text
-startup           -> one index load
-runtime           -> memory-only catalog
-orderly shutdown  -> one full index save if dirty
+startup -> coordinator load attempt -> Binary I/O -> IndexCodec
+                                          success -> adopt clean Catalog
+                                          failure -> unavailable; no overwrite
+runtime -> in-memory Catalog only
+shutdown -> ready Catalog -> encode -> atomic create/replace -> mark clean
+                         clean restored Catalog -> skip I/O
 ```
 
-The store does not enforce invocation counts or hold session state. It implements no timers, background persistence, debouncing, incremental writes, automatic reload, or TUI/Repository integration. Unexpected termination can leave a stale index; later verification and rebuilding must reconcile it against authoritative Entry files. A cache-save failure must never invalidate a successfully saved Entry.
+Parent creation is a separate mutation: a later failure can leave empty state/index directories, and newly created ancestors have no stronger crash-durability guarantees than existing primitives. A post-publication failure can leave a visible new index with uncertain durability; no rollback is attempted. **TODO:** address parent creation and partial states with the future transaction/recovery design.
+
+### Authoritative mutations and cached locators
+
+The planned coordination flow keeps persistence ahead of metadata changes:
+
+```text
+Caller -> NormalRepository validates and persists Entry/Directory
+       -> successful saved Snapshot + actual locator
+       -> project metadata -> update Catalog and reverse membership -> dirty
+```
+
+A subsequent catalog-update failure preserves the saved Entry and reports the discrepancy for later Refresh. Ordinary catalog updates never scan files. Repository/Catalog CRUD coordination remains deferred.
+
+```text
+Caller -> Repository(UUID, optional relative locator)
+  locator supplied -> read exact file -> validate stored UUID
+    match -> return Entry
+    missing / different UUID -> StaleLocator -> caller decides discovery
+  no locator -> explicit UUID discovery -> Entry + actual locator
+                                        -> caller updates Catalog locator
+```
+
+No automatic discovery fallback is introduced. Unsafe paths, malformed documents, and other filesystem failures retain their own errors. Manual Refresh will scan authoritative files, rather than reload or immediately save the persistent index. Filesystem rebuilding, automatic rebuild adoption, Refresh, directory-count checks, and Repository integration remain deferred. Unexpected termination may leave a stale cache; authoritative files remain recoverable.
 
 ### Vault index synchronization policy
 
@@ -186,7 +214,7 @@ The public headers under `include/folio/core/` currently describe in-memory mode
 - `Memo` and `Todo` now store optional Directory IDs; `Log` has no Directory field. Directory remains an in-memory logical model with no filesystem access or physical path mapping in Core; its v1 TOML metadata codec is in-memory only.
 - Time data is represented by `TimestampContext` and `DateContext`; the in-memory codec serializes them as RFC 3339 UTC timestamp strings and `YYYY-MM-DD` date strings, with timezone and optional location stored separately.
 - `Log`, `Memo`, `Todo`, and `Directory` expose typed in-memory snapshots, static restore factories, and v1 in-memory codecs. Privacy remains immutable after construction.
-- The internal Storage subsystem in `folio_core` provides path validation, Normal entry filename generation, single-file atomic writing, and a Normal repository for plaintext entries and Directory metadata. Storage implementation headers live under `src/storage/` and are not part of the public Core API. It does not load configuration, create Vault storage, or provide persistent indexes, journals, migrations, or automated filesystem reconciliation. Its in-memory Metadata Catalog is a separate metadata projection with no repository integration yet. `Subtask` is currently embedded in `Todo`, consistent with the design.
+- The internal Storage subsystem in `folio_core` provides path validation, Normal entry filename generation, single-file atomic writing, and a Normal repository for plaintext entries and Directory metadata. Storage implementation headers live under `src/storage/` and are not part of the public Core API. It does not load configuration, create Vault storage, or provide journals, migrations, or automated filesystem reconciliation. Binary index encoding and explicit Catalog lifecycle persistence are available internally. Its in-memory Metadata Catalog is a separate metadata projection with no repository integration yet. `Subtask` is currently embedded in `Todo`, consistent with the design.
 - `Tag` is a value type, but there is no shared tag rename/delete operation that updates Log and Memo references.
 - `DateContext` includes a calendar date, timezone, and optional location; `TimestampContext` includes an absolute timestamp, timezone, and optional location. Privacy rules for these fields in indexes and public metadata remain defined by the Vault/index design.
 
@@ -194,7 +222,7 @@ The public headers under `include/folio/core/` currently describe in-memory mode
 
 The architecture establishes boundaries and formats but does not yet define enough detail for interoperable persistence. Before implementing the first storage milestone, decide:
 
-- The binary index encoding, cache lifecycle, and rebuild/integration interfaces remain to be implemented; the in-memory metadata model is described above.
+- Authoritative catalog rebuilding, Refresh, consistency checks, and Repository/application lifecycle integration remain to be implemented; binary encoding and explicit session persistence are available.
 - How unknown fields are preserved or handled during future migration; the current Log/Memo v1 decoder rejects them.
 - The exact Normal and Vault directory tree, including safe-relative-locator rules beyond the ASCII UUID Directory naming and filename patterns.
 - How invalid or duplicate Directory metadata is reconciled during filesystem scanning.
