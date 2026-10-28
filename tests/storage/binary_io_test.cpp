@@ -1,4 +1,3 @@
-#include "storage/binary_io.hpp"
 #include "storage/filesystem.hpp"
 
 #include <gtest/gtest.h>

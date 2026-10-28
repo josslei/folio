@@ -12,7 +12,6 @@ add_library(folio_core STATIC
   src/storage/codec.cpp
   src/storage/filesystem.cpp
   src/storage/index_codec.cpp
-  src/storage/binary_io.cpp
   src/storage/catalog_coordinator.cpp
   src/storage/metadata_catalog.cpp
   src/storage/normal_repository.cpp

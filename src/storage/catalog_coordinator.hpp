@@ -2,7 +2,6 @@
 
 #include "core/internal/result.hpp"
 
-#include "storage/binary_io.hpp"
 #include "storage/filesystem.hpp"
 #include "storage/index_codec.hpp"
 #include "storage/normal_repository.hpp"
