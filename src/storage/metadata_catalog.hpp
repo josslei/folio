@@ -124,6 +124,13 @@ class MetadataCatalog {
   [[nodiscard]] Result<std::monostate> insert_directory(DirectoryMetadata metadata);
   [[nodiscard]] Result<std::monostate> update_directory(DirectoryMetadata metadata);
   [[nodiscard]] Result<std::monostate> remove_directory(const Id& id);
+  // Validates a complete candidate in isolation, then adopts it atomically.
+  // A successful replacement is unpersisted even if all vectors are empty.
+  [[nodiscard]] Result<std::monostate> rebuild(
+      std::vector<LogMetadata> logs,
+      std::vector<MemoMetadata> memos,
+      std::vector<TodoMetadata> todos,
+      std::vector<DirectoryMetadata> directories);
 
   [[nodiscard]] std::optional<EntryMetadata> find_entry(const Id& id) const;
   [[nodiscard]] std::optional<DirectoryMetadata> find_directory(const Id& id) const;

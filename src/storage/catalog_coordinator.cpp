@@ -114,6 +114,29 @@ CoordinatorResult<std::monostate> CatalogCoordinator::startup_load() {
   return std::monostate{};
 }
 
+CoordinatorResult<std::vector<ExcludedObject>>
+CatalogCoordinator::rebuild() {
+  auto paths = validate_storage_paths(paths_);
+  if (auto* problem = std::get_if<StorageError>(&paths)) return storage_error(*problem);
+  NormalRepository repository(paths_.normal_root);
+  auto scanned = repository.scan();
+  if (auto* problem = std::get_if<StorageError>(&scanned)) return storage_error(*problem);
+  auto inventory = std::get<NormalRepositoryScanResult>(std::move(scanned));
+  // Allocate each typed vector once and move records without combining types.
+  auto to_vector = []<class T>(std::deque<T>& records) {
+    std::vector<T> result;
+    result.reserve(records.size());
+    for (auto& record : records) result.push_back(std::move(record));
+    return result;
+  };
+  auto adopted = catalog_.rebuild(to_vector(inventory.logs), to_vector(inventory.memos),
+                                  to_vector(inventory.todos), to_vector(inventory.directories));
+  if (auto* problem = std::get_if<StorageError>(&adopted)) return storage_error(*problem);
+  status_ = CatalogStatus::Ready;
+  load_attempted_ = true;
+  return std::move(inventory.diagnostics);
+}
+
 CoordinatorResult<SaveOutcome> CatalogCoordinator::shutdown_save() {
   if (status_ != CatalogStatus::Ready)
     return error(CoordinatorErrorCode::Unavailable, {},

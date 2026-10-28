@@ -3,11 +3,13 @@
 #include "storage/binary_io.hpp"
 #include "storage/filesystem.hpp"
 #include "storage/index_codec.hpp"
+#include "storage/normal_repository.hpp"
 
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace folio::core::storage {
 
@@ -43,6 +45,10 @@ class CatalogCoordinator {
   CatalogCoordinator& operator=(CatalogCoordinator&&) = delete;
 
   [[nodiscard]] CoordinatorResult<std::monostate> startup_load();
+  // Explicit full rebuild/Refresh from authoritative Normal files. Failure
+  // preserves catalog and readiness; success is Ready and unpersisted, with no
+  // Index I/O, and prevents a later stale startup load from replacing it.
+  [[nodiscard]] CoordinatorResult<std::vector<ExcludedObject>> rebuild();
   [[nodiscard]] CoordinatorResult<SaveOutcome> shutdown_save();
   [[nodiscard]] const MetadataCatalog& catalog() const noexcept;
   [[nodiscard]] MetadataCatalog& catalog() noexcept;

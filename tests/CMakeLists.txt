@@ -14,6 +14,7 @@ add_executable(folio_storage_tests
   storage/storage_test.cpp
   storage/normal_repository_test.cpp
   storage/metadata_catalog_test.cpp
+  storage/catalog_rebuild_test.cpp
   storage/index_codec_test.cpp
   storage/binary_io_test.cpp
   storage/catalog_coordinator_test.cpp

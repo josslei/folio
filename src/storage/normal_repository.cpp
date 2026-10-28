@@ -227,7 +227,7 @@ Result<core::Directory::Snapshot> load_directory_at(
 Result<core::Id> checked_entry_id(const fs::path& root, EntryType type,
                                    const fs::path& path);
 
-Result<std::vector<Match>> scan(const fs::path& root, const core::Id& id) {
+Result<std::vector<Match>> scan_for_id(const fs::path& root, const core::Id& id) {
   std::vector<Match> matches;
   std::set<std::string> seen_ids;
   for (auto type : {EntryType::Log, EntryType::Memo, EntryType::Todo}) {
@@ -303,7 +303,7 @@ Result<fs::path> locate(const fs::path& root, EntryType type, const core::Id& id
   if (!valid_type(type)) {
     return fail(StorageErrorCode::InvalidEntryType, root, "Invalid entry type");
   }
-  auto found = scan(root, id);
+  auto found = scan_for_id(root, id);
   if (failure(found)) return *failure(found);
   const auto& matches = std::get<std::vector<Match>>(found);
   if (matches.empty()) {
@@ -317,7 +317,7 @@ Result<fs::path> locate(const fs::path& root, EntryType type, const core::Id& id
 }
 
 Result<std::monostate> unique_id(const fs::path& root, const core::Id& id) {
-  auto found = scan(root, id);
+  auto found = scan_for_id(root, id);
   if (failure(found)) return *failure(found);
   if (!std::get<std::vector<Match>>(found).empty()) {
     return fail(StorageErrorCode::DuplicateId, root, "Entry ID already exists");
@@ -705,7 +705,7 @@ Result<core::Directory::Snapshot> NormalRepository::load_directory(
   if (!valid_kind(kind)) {
     return fail(StorageErrorCode::InvalidEntryType, root_, "Invalid Directory kind");
   }
-  auto checked = scan(root_, id);
+  auto checked = scan_for_id(root_, id);
   if (failure(checked)) return *failure(checked);
   return load_directory_at(root_, kind, id);
 }
@@ -715,7 +715,7 @@ Result<std::monostate> NormalRepository::rename_directory(
   if (!valid_kind(kind)) {
     return fail(StorageErrorCode::InvalidEntryType, root_, "Invalid Directory kind");
   }
-  auto checked = scan(root_, id);
+  auto checked = scan_for_id(root_, id);
   if (failure(checked)) return *failure(checked);
   auto prior = load_directory_at(root_, kind, id);
   if (failure(prior)) return *failure(prior);
@@ -787,6 +787,195 @@ Result<fs::path> NormalRepository::locate_entry(
                 "Locator does not match the entry's physical path");
   }
   return located;
+}
+
+Result<NormalRepositoryScanResult> NormalRepository::scan() const {
+  NormalRepositoryScanResult inventory;
+  if (auto checked = safe_path(root_, root_, true); failure(checked)) return *failure(checked);
+  std::error_code ec;
+  const auto root_status = fs::symlink_status(root_, ec);
+  if (ec == std::errc::no_such_file_or_directory ||
+      root_status.type() == fs::file_type::not_found) return inventory;
+  if (ec) return fail(StorageErrorCode::IoError, root_, "Could not inspect Normal root", ec);
+  if (!fs::is_directory(root_status))
+    return fail(StorageErrorCode::InvalidPath, root_, "Normal root is not a directory");
+
+  std::set<std::string> entry_ids;
+  std::set<std::string> directory_ids;
+  auto note = [&](const fs::path& path, std::string message) {
+    inventory.diagnostics.push_back({path.lexically_relative(root_), std::move(message)});
+  };
+  auto reserved_temp = [](const fs::path& path) {
+    const auto name = path.filename().string();
+    if (name.size() < 3 || name.front() != '.') return false;
+    const auto marker = name.rfind(".tmp-");
+    if (marker == std::string::npos || marker <= 1) return false;
+    const auto suffix = name.substr(marker + 5);
+    const auto id = core::Id::parse(suffix);
+    return id && id->to_string() == suffix;
+  };
+  auto unknown_folder_has_managed_file = [&](const fs::path& folder,
+                                             EntryType type) -> Result<bool> {
+    std::error_code folder_ec;
+    fs::directory_iterator child{folder, folder_ec};
+    const fs::directory_iterator end;
+    while (!folder_ec && child != end) {
+      const auto path = child->path();
+      if (path.filename() == ".folio-dir.toml" ||
+          path.extension() == (type == EntryType::Todo ? ".toml" : ".md")) return true;
+      child.increment(folder_ec);
+    }
+    if (folder_ec) return fail(StorageErrorCode::IoError, folder,
+                               "Could not inspect unrelated folder", folder_ec);
+    return false;
+  };
+  auto visit_files = [&](EntryType type, const fs::path& folder,
+                         bool in_directory) -> Result<std::monostate> {
+    std::error_code iter_ec;
+    fs::directory_iterator item{folder, iter_ec};
+    const fs::directory_iterator end;
+    while (!iter_ec && item != end) {
+      const auto path = item->path();
+      const auto status = item->symlink_status(iter_ec);
+      if (iter_ec) break;
+      if (in_directory && path.filename() == ".folio-dir.toml") {
+        if (!fs::is_regular_file(status))
+          return fail(StorageErrorCode::InvalidPath, path, "Directory metadata is not a regular file");
+      } else if (reserved_temp(path) && fs::is_regular_file(status)) {
+        // Recovery owns reserved atomic temporary artifacts.
+      } else if (reserved_temp(path) && fs::is_symlink(status)) {
+        return fail(StorageErrorCode::InvalidPath, path, "Symlink at reserved temporary path");
+      } else if (path.filename() == ".folio-dir.toml") {
+        return fail(StorageErrorCode::InvalidPath, path, "Misplaced Directory metadata");
+      } else if (fs::is_directory(status)) {
+        if (in_directory)
+          return fail(StorageErrorCode::RecoveryRequired, path, "Unexpected nested folder");
+        if (type == EntryType::Log) {
+          auto managed = unknown_folder_has_managed_file(path, type);
+          if (failure(managed)) return *failure(managed);
+          if (std::get<bool>(managed))
+            return fail(StorageErrorCode::RecoveryRequired, path,
+                        "Unexpected folder contains formal Log files");
+          note(path, "Unrelated folder was not traversed");
+        }
+        // A module-root Directory candidate is processed separately below.
+      } else {
+        if (fs::is_symlink(status) && !in_directory && type != EntryType::Log) {
+          const auto id = core::Id::parse(path.filename().string());
+          if (id && id->to_string() == path.filename().string())
+            return fail(StorageErrorCode::InvalidPath, path,
+                        "Symlink at managed Directory path");
+        }
+        const auto extension = type == EntryType::Todo ? ".toml" : ".md";
+        if (path.extension() == extension) {
+          if (!fs::is_regular_file(status))
+            return fail(StorageErrorCode::InvalidPath, path, "Formal Entry is not a regular file");
+          if (auto checked = safe_path(root_, path); failure(checked)) return *failure(checked);
+          const auto relative = path.lexically_relative(root_);
+          if (type == EntryType::Log) {
+            auto loaded = load_at<core::Log::Snapshot>(root_, type, path);
+            if (failure(loaded)) return *failure(loaded);
+            auto value = std::get<core::Log::Snapshot>(std::move(loaded));
+            if (!entry_ids.insert(value.id.to_string()).second)
+              return fail(StorageErrorCode::DuplicateId, path, "Duplicate stored Entry UUID");
+            inventory.logs.push_back({value.id, relative, value.privacy,
+                                      std::move(value.created), std::move(value.modified),
+                                      std::move(value.title), std::move(value.tags),
+                                      std::move(value.log_date)});
+          } else if (type == EntryType::Memo) {
+            auto loaded = load_at<core::Memo::Snapshot>(root_, type, path);
+            if (failure(loaded)) return *failure(loaded);
+            auto value = std::get<core::Memo::Snapshot>(std::move(loaded));
+            if (!entry_ids.insert(value.id.to_string()).second)
+              return fail(StorageErrorCode::DuplicateId, path, "Duplicate stored Entry UUID");
+            inventory.memos.push_back({value.id, relative, value.privacy,
+                                       std::move(value.created), std::move(value.modified),
+                                       std::move(value.title), std::move(value.tags),
+                                       std::move(value.directory_id)});
+          } else {
+            auto loaded = load_at<core::Todo::Snapshot>(root_, type, path);
+            if (failure(loaded)) return *failure(loaded);
+            auto value = std::get<core::Todo::Snapshot>(std::move(loaded));
+            if (!entry_ids.insert(value.id.to_string()).second)
+              return fail(StorageErrorCode::DuplicateId, path, "Duplicate stored Entry UUID");
+            inventory.todos.push_back({value.id, relative, value.privacy,
+                                       std::move(value.created), std::move(value.modified),
+                                       std::move(value.title), value.status, value.priority,
+                                       std::move(value.due_date), std::move(value.directory_id)});
+          }
+        } else {
+          note(path, "Unrelated object was not parsed");
+        }
+      }
+      item.increment(iter_ec);
+    }
+    if (iter_ec) return fail(StorageErrorCode::IoError, folder, "Could not enumerate folder", iter_ec);
+    return std::monostate{};
+  };
+
+  fs::directory_iterator root_item{root_, ec};
+  const fs::directory_iterator end;
+  while (!ec && root_item != end) {
+    const auto path = root_item->path();
+    const auto name = path.filename();
+    if (name != "logs" && name != "memos" && name != "todos") note(path, "Unrelated root object was not parsed");
+    root_item.increment(ec);
+  }
+  if (ec) return fail(StorageErrorCode::IoError, root_, "Could not enumerate Normal root", ec);
+
+  for (auto type : {EntryType::Log, EntryType::Memo, EntryType::Todo}) {
+    const auto base = root_ / module_name(type);
+    if (auto checked = safe_path(root_, base, true); failure(checked)) return *failure(checked);
+    const auto status = fs::symlink_status(base, ec);
+    if (ec == std::errc::no_such_file_or_directory ||
+        status.type() == fs::file_type::not_found) { ec.clear(); continue; }
+    if (ec) return fail(StorageErrorCode::IoError, base, "Could not inspect module", ec);
+    if (!fs::is_directory(status))
+      return fail(StorageErrorCode::InvalidPath, base, "Module is not a directory");
+    if (auto visited = visit_files(type, base, false); failure(visited)) return *failure(visited);
+    if (type == EntryType::Log) continue;
+    fs::directory_iterator item{base, ec};
+    while (!ec && item != end) {
+      const auto folder = item->path();
+      const auto folder_status = item->symlink_status(ec);
+      if (ec) break;
+      if (fs::is_directory(folder_status)) {
+        const auto folder_id = core::Id::parse(folder.filename().string());
+        if (!folder_id || folder_id->to_string() != folder.filename().string()) {
+          auto managed = unknown_folder_has_managed_file(folder, type);
+          if (failure(managed)) return *failure(managed);
+          if (std::get<bool>(managed))
+            return fail(StorageErrorCode::RecoveryRequired, folder,
+                        "Unexpected folder contains formal Entry files or Directory metadata");
+          note(folder, "Unrelated folder was not traversed");
+        } else {
+          const auto kind = type == EntryType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo;
+          auto loaded = load_directory_at(root_, kind, *folder_id);
+          if (failure(loaded)) return *failure(loaded);
+          auto value = std::get<core::Directory::Snapshot>(std::move(loaded));
+          if (!directory_ids.insert(value.id.to_string()).second)
+            return fail(StorageErrorCode::DuplicateId, folder, "Duplicate Directory UUID");
+          inventory.directories.push_back(metadata_from(value, folder.lexically_relative(root_)));
+          if (auto visited = visit_files(type, folder, true); failure(visited)) return *failure(visited);
+        }
+      }
+      item.increment(ec);
+    }
+    if (ec) return fail(StorageErrorCode::IoError, base, "Could not enumerate Directories", ec);
+  }
+  auto by_path = [](const auto& a, const auto& b) {
+    return a.relative_path < b.relative_path;
+  };
+  std::sort(inventory.logs.begin(), inventory.logs.end(), by_path);
+  std::sort(inventory.memos.begin(), inventory.memos.end(), by_path);
+  std::sort(inventory.todos.begin(), inventory.todos.end(), by_path);
+  std::sort(inventory.directories.begin(), inventory.directories.end(), [](const auto& a, const auto& b) {
+    return a.relative_path < b.relative_path;
+  });
+  std::sort(inventory.diagnostics.begin(), inventory.diagnostics.end(), [](const auto& a, const auto& b) {
+    return a.path < b.path;
+  });
+  return inventory;
 }
 
 }  // namespace folio::core::storage

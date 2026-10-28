@@ -441,6 +441,35 @@ Result<std::monostate> MetadataCatalog::remove_directory(const Id& id) {
   return std::monostate{};
 }
 
+Result<std::monostate> MetadataCatalog::rebuild(
+    std::vector<LogMetadata> logs,
+    std::vector<MemoMetadata> memos,
+    std::vector<TodoMetadata> todos,
+    std::vector<DirectoryMetadata> directories) {
+  MetadataCatalog candidate;
+  for (auto& directory : directories) {
+    auto inserted = candidate.insert_directory(std::move(directory));
+    if (const auto* problem = std::get_if<StorageError>(&inserted)) return *problem;
+  }
+  auto insert_records = [&](auto& records) -> Result<std::monostate> {
+    for (auto& record : records) {
+      auto inserted = candidate.insert_entry(std::move(record));
+      if (const auto* problem = std::get_if<StorageError>(&inserted)) return *problem;
+    }
+    return std::monostate{};
+  };
+  auto inserted = insert_records(logs);
+  if (const auto* problem = std::get_if<StorageError>(&inserted)) return *problem;
+  inserted = insert_records(memos);
+  if (const auto* problem = std::get_if<StorageError>(&inserted)) return *problem;
+  inserted = insert_records(todos);
+  if (const auto* problem = std::get_if<StorageError>(&inserted)) return *problem;
+  candidate.unpersisted_ = true;
+  static_assert(std::is_nothrow_swappable_v<MetadataCatalog>);
+  std::swap(*this, candidate);
+  return std::monostate{};
+}
+
 std::optional<EntryMetadata> MetadataCatalog::find_entry(const Id& id) const {
   const auto key = id.to_string();
   if (const auto it = logs_.find(key); it != logs_.end()) return EntryMetadata{it->second};
