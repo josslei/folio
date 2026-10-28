@@ -86,32 +86,54 @@ struct Locations { fs::path state_root; fs::path parent; fs::path file; };
 
 CatalogCoordinator::CatalogCoordinator(StoragePaths paths) : paths_(std::move(paths)) {}
 
-::folio::core::internal::Result<std::monostate, CoordinatorError> CatalogCoordinator::startup_load() {
+::folio::core::internal::Result<InitializationOutcome, CoordinatorError>
+CatalogCoordinator::startup_load() {
   if (load_attempted_)
     return error(CoordinatorErrorCode::Lifecycle, {}, "Startup load already attempted");
   load_attempted_ = true;
   status_ = CatalogStatus::Unavailable;
-  auto resolved = locations(paths_);
-  if (auto* problem = std::get_if<CoordinatorError>(&resolved)) return *problem;
-  const auto& path = std::get<Locations>(resolved);
-  for (const auto& directory : {path.state_root, path.parent}) {
-    auto ready = directory_ready(directory);
+  // Keep cache-read errors distinct so only unusable caches trigger a rebuild.
+  auto load_index = [&]() -> ::folio::core::internal::Result<std::monostate, CoordinatorError> {
+    auto resolved = locations(paths_);
+    if (auto* problem = std::get_if<CoordinatorError>(&resolved)) return *problem;
+    const auto& path = std::get<Locations>(resolved);
+    for (const auto& directory : {path.state_root, path.parent}) {
+      auto ready = directory_ready(directory);
+      if (auto* problem = std::get_if<CoordinatorError>(&ready)) return *problem;
+      if (!std::get<bool>(ready))
+        return error(CoordinatorErrorCode::Missing, path.file, "Normal Index is missing");
+    }
+    auto ready = file_ready(path.file);
     if (auto* problem = std::get_if<CoordinatorError>(&ready)) return *problem;
     if (!std::get<bool>(ready))
       return error(CoordinatorErrorCode::Missing, path.file, "Normal Index is missing");
+    auto bytes = read_binary_file(path.file, kMaxIndexBytes);
+    if (auto* problem = std::get_if<BinaryReadError>(&bytes)) return binary_error(*problem);
+    auto decoded = index_codec::decode_index(std::get<std::string>(bytes));
+    if (auto* problem = std::get_if<index_codec::IndexCodecError>(&decoded))
+      return codec_error(path.file, *problem, true);
+    catalog_ = std::get<MetadataCatalog>(std::move(decoded));
+    status_ = CatalogStatus::Ready;
+    return std::monostate{};
+  };
+  auto loaded = load_index();
+  if (const auto* problem = std::get_if<CoordinatorError>(&loaded)) {
+    switch (problem->code) {
+      case CoordinatorErrorCode::Missing:
+      case CoordinatorErrorCode::Corrupt:
+      case CoordinatorErrorCode::UnsupportedVersion:
+      case CoordinatorErrorCode::LimitExceeded:
+        break;
+      default:
+        return *problem;
+    }
+    CoordinatorError index_error = *problem;
+    auto rebuilt = rebuild();
+    if (const auto* failure = std::get_if<CoordinatorError>(&rebuilt)) return *failure;
+    return InitializationOutcome{std::move(index_error),
+                                 std::get<std::vector<ExcludedObject>>(std::move(rebuilt))};
   }
-  auto ready = file_ready(path.file);
-  if (auto* problem = std::get_if<CoordinatorError>(&ready)) return *problem;
-  if (!std::get<bool>(ready))
-    return error(CoordinatorErrorCode::Missing, path.file, "Normal Index is missing");
-  auto bytes = read_binary_file(path.file, kMaxIndexBytes);
-  if (auto* problem = std::get_if<BinaryReadError>(&bytes)) return binary_error(*problem);
-  auto decoded = index_codec::decode_index(std::get<std::string>(bytes));
-  if (auto* problem = std::get_if<index_codec::IndexCodecError>(&decoded))
-    return codec_error(path.file, *problem, true);
-  catalog_ = std::get<MetadataCatalog>(std::move(decoded));
-  status_ = CatalogStatus::Ready;
-  return std::monostate{};
+  return InitializationOutcome{};
 }
 
 ::folio::core::internal::Result<std::vector<ExcludedObject>, CoordinatorError>
@@ -135,6 +157,11 @@ CatalogCoordinator::rebuild() {
   status_ = CatalogStatus::Ready;
   load_attempted_ = true;
   return std::move(inventory.diagnostics);
+}
+
+::folio::core::internal::Result<std::vector<ExcludedObject>, CoordinatorError>
+CatalogCoordinator::refresh_all() {
+  return rebuild();
 }
 
 ::folio::core::internal::Result<SaveOutcome, CoordinatorError> CatalogCoordinator::shutdown_save() {

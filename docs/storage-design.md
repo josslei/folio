@@ -110,7 +110,11 @@ Decoding never receives a mutable live catalog. It restores Directory records be
 
 ### Persistent cache policy and reconstruction
 
-Persistent indexes are low-priority, rebuildable caches, rather than authoritative databases. The Normal cache belongs under configurable `state_root`, outside `normal_root`, and must not be committed or pushed to Git. The persistence lifecycle is strict: attempt to load the persisted index at most once at application startup, use the in-memory catalog for the entire session, and normally save the complete index during orderly shutdown when necessary. Saving once is a caller policy, not an enforced attempt limit. There are no index disk reads or writes during ordinary application operations. The internal coordinator guards repeated startup loading but permits repeated save calls; application lifecycle wiring, broader Refresh policy, and repository mutation integration remain future work. Missing, unsupported, or corrupted caches must never modify authoritative Entries. Ordinary listing, filtering, and metadata search use the loaded catalog without parsing Entry files again.
+Persistent indexes are low-priority, rebuildable caches, rather than authoritative databases. The Normal cache belongs under configurable `state_root`, outside `normal_root`, and must not be committed or pushed to Git. The persistence lifecycle is strict: attempt to load the persisted index at most once at application startup, use the in-memory catalog for the entire session, and normally save the complete index during orderly shutdown when necessary. Saving once is a caller policy, not an enforced attempt limit. There are no index disk reads or writes during ordinary application operations. The internal coordinator guards repeated startup loading but permits repeated save calls; application lifecycle wiring, targeted correction policy, and repository mutation integration remain future work. Missing, unsupported, or corrupted caches must never modify authoritative Entries. Ordinary listing, filtering, and metadata search use the loaded catalog without parsing Entry files again.
+
+External editing, renaming, replacement, or deletion of Entry files is allowed, but is an exceptional workflow rather than ordinary Folio usage. These low-probability external changes and abnormal termination may leave the Index or Catalog stale. Folio deliberately avoids routine overhead to detect every such change: a successfully decoded Index is accepted without additional full filesystem validation, and ordinary Catalog queries perform no filesystem I/O. Explicit full Refresh provides authoritative reconstruction when needed; known-locator reads still validate the requested Entry identity and report stale locators for explicit caller-directed discovery.
+
+Future directory navigation will use a lightweight count check of immediate formal Entry files against Catalog membership. Matching counts are accepted as a practical, high-confidence indication of consistency, without parsing every Entry. They are not proof: external content edits and one-for-one replacements may remain undetected. A mismatch will support explicit reconciliation. Count checking remains deferred; no watchers, periodic scans, or abnormal-exit detection are introduced.
 
 The Normal index is deliberately local-only: placing it under `state_root` rather than `normal_root` keeps this rebuildable cache out of the data tree synchronized to the Git remote. Its metadata is complete plaintext. Entry locators inside the index remain relative to the associated repository's data root, not to the index file's location.
 
@@ -139,34 +143,42 @@ The intended architecture is catalog-centric:
                            v
                    CatalogCoordinator
                    |-- Startup load
-                   |-- Refresh policy (future)
+                   |-- Explicit full Refresh
                    |-- Shutdown save
                    `-- Catalog consistency status
                            |
                            v
-                       Binary I/O
+                 Filesystem byte I/O
                            |
                            v
              state_root/index/normal.msgpack
 ```
 
-This is a responsibility diagram, not a literal call sequence: the coordinator invokes IndexCodec and Binary I/O. `Rebuild(metadata)` means reconstructing the catalog's derived structures from primary metadata, without filesystem I/O. Explicit full rebuild delegates authoritative reading to NormalRepository; Repository-to-Catalog mutation coordination remains future work. The coordinator's current status describes catalog availability; richer consistency reporting will accompany future Refresh integration.
+This is a responsibility diagram, not a literal call sequence: the coordinator invokes IndexCodec and filesystem byte I/O. `Rebuild(metadata)` means reconstructing the catalog's derived structures from primary metadata, without filesystem I/O. Explicit full rebuild delegates authoritative reading to NormalRepository; Repository-to-Catalog mutation coordination remains future work. The coordinator's current status describes catalog availability; richer consistency reporting and targeted metadata corrections remain future integration work.
 
-The internal `CatalogCoordinator` owns one active catalog and coordinates explicit startup loading and orderly shutdown saving. It combines configured paths, IndexCodec, and generic Binary I/O. It does not write authoritative Entries, implement serialization, or perform filesystem discovery. `startup_load()` and `shutdown_save()` are its explicit lifecycle operations; `rebuild()` explicitly reconstructs authoritative metadata through NormalRepository; `catalog()` accesses the single owned in-memory catalog and `status()` reports Unloaded, Ready, or Unavailable. The coordinator is non-copyable and non-movable so session guards and ownership cannot be duplicated. No I/O occurs in its constructor or destructor. Application/TUI wiring remains deferred.
+The internal `CatalogCoordinator` owns one active catalog and coordinates explicit startup loading and orderly shutdown saving. It combines configured paths, IndexCodec, and generic filesystem byte I/O. It does not write authoritative Entries, implement serialization, or perform filesystem discovery. `startup_load()` performs startup loading with authoritative fallback; `shutdown_save()` performs orderly persistence. `refresh_all()` explicitly replaces the entire Catalog from authoritative Normal files through the existing `rebuild()` operation. The shared `rebuild()` implementation is private; `catalog()` accesses the single owned in-memory catalog and `status()` reports Unloaded, Ready, or Unavailable. The coordinator is non-copyable and non-movable so session guards and ownership cannot be duplicated. No I/O occurs in its constructor or destructor. Application/TUI wiring remains deferred.
+
+`startup_load()` reports an `InitializationOutcome`. An absent `index_error` means the persisted Index was adopted; a present error records the missing, corrupt, unsupported-schema, or resource-limit reason that led to a successful authoritative rebuild. Excluded-object diagnostics from rebuilding are returned separately. Path and I/O errors do not trigger fallback. If reconstruction fails, its contextual error is returned and no incomplete candidate is published. Startup initialization shares the existing load-attempt guard, so it cannot reload an already initialized or explicitly rebuilt Catalog. A failed initialization remains distinguishable from an empty successful reconstruction by its result and Unavailable status.
+
+A **full authoritative rebuild** replaces all primary metadata and reconstructs all derived membership. `refresh_all()` requests exactly this operation; it is not a partial refresh or a correction of a few Entries. **Targeted metadata corrections** instead use explicit record updates, such as correcting a discovered locator; they do not invoke a full rebuild. Both kinds of successful changes become unpersisted, which says nothing about whether authoritative Entry data was saved. Full Refresh failure preserves the previous Catalog, availability, and unpersisted state. A successful full Refresh is unpersisted even for empty or equivalent data, because it does not acknowledge the on-disk Index snapshot. No automatic refresh, repair, directory-navigation scan, or immediate Index save occurs.
 
 The Normal index location is centralized as `<state_root>/index/normal.msgpack`, outside `normal_root`, `vault_root`, and `cache_root`. Locators in metadata remain relative to the repository data root. Root validation resolves configured roots and rejects overlaps; cache-path checks reject symbolic links at the index directory or target and non-regular destinations. A configured root may resolve through a symlink if it remains safely separate. The existing requirement to exclude concurrent external filesystem mutation still applies.
 
-The coordinator permits at most one explicit startup load attempt, including a failed attempt. Shutdown saving has no attempt guard: a repeated call can skip a persisted catalog or retry a failed save. Startup reads the bounded payload through Binary I/O and decodes it before adopting the complete persisted catalog. Missing, corrupt, unsupported-schema, resource-limit, invalid-path, and I/O outcomes remain distinct. A failed load never establishes a valid catalog, and ordinary mutations cannot turn that failure into permission to overwrite the index. A successful explicit authoritative rebuild establishes Ready and leaves the Catalog unpersisted. It also prevents a later startup load from overwriting the rebuilt Catalog.
+The coordinator permits at most one explicit startup load attempt, including a failed attempt. Shutdown saving has no attempt guard: a repeated call can skip a persisted catalog or retry a failed save. Startup reads the bounded payload through the filesystem byte reader and decodes it before adopting the complete persisted catalog. Missing, corrupt, unsupported-schema, resource-limit, invalid-path, and I/O outcomes remain distinct. A failed load never establishes a valid catalog, and ordinary mutations cannot turn that failure into permission to overwrite the index. A successful explicit authoritative rebuild establishes Ready and leaves the Catalog unpersisted. It also prevents a later startup load from overwriting the rebuilt Catalog.
 
 Shutdown skips I/O for an unchanged, successfully restored catalog. Otherwise it encodes the complete ready catalog before creating parents and invokes one existing atomic create or replace operation. Only complete persistence success acknowledges the catalog as persisted. Failed encoding, writing, syncing, or cleanup preserves unpersisted state and diagnostic context, including whether publication occurred. Repeated startup loading returns an explicit error without further index I/O. Saving leaves readiness unchanged: after success a repeated call skips the now-persisted catalog, while a failed save can be retried. Saving before a valid catalog is available returns an error without consuming a save allowance or preventing startup loading. Post-publication errors still require reconciliation according to the existing atomic-write contract before retrying.
 
 `src/storage/filesystem.hpp` groups binary reading and atomic creation/replacement as free functions. It provides `read_binary_file(path, max_bytes)`, a generic bounded opaque-byte reader; its caller supplies the byte limit and owns path confinement/symlink policy. It has no Index, Catalog, Entry, or Vault concepts. Binary bytes use `std::string` with explicit lengths, preserving embedded nulls. Existing `create_file_atomic` and `replace_file_atomic` already accept opaque bytes and are reused directly, without another write wrapper or changed atomic semantics.
 
 ```text
-startup -> coordinator load attempt -> Binary I/O -> IndexCodec
-                                          success -> adopt persisted Catalog
-                                          failure -> unavailable; no overwrite
-runtime -> in-memory Catalog only
+startup -> one startup_load() attempt -> filesystem reader -> IndexCodec
+            valid Index -> adopt persisted Catalog, Ready; no authoritative scan
+            missing/corrupt/unsupported/over-limit Index -> full authoritative rebuild
+              success -> Ready, unpersisted; no immediate Index write
+              failure -> Unavailable; no partial Catalog adoption
+            path/I/O failure -> report error; no fallback scan
+runtime -> in-memory Catalog queries and updates
+        -> explicit full Refresh -> authoritative rebuild; no Index I/O
 shutdown -> ready Catalog -> encode -> atomic create/replace -> mark persisted
                          unchanged restored Catalog -> skip I/O
 ```
@@ -194,7 +206,7 @@ Caller -> Repository(UUID, optional relative locator)
                                         -> caller updates Catalog locator
 ```
 
-No automatic discovery fallback is introduced. Unsafe paths, malformed documents, and other filesystem failures retain their own errors. Manual Refresh will scan authoritative files, rather than reload or immediately save the persistent index. Authoritative enumeration and in-memory reconstruction are available separately; Refresh policy, directory-count checks, and Repository mutation integration remain deferred. Unexpected termination may leave a stale cache; authoritative files remain recoverable.
+No automatic discovery fallback is introduced. Unsafe paths, malformed documents, and other filesystem failures retain their own errors. Manual Refresh scans authoritative files, rather than reloading or immediately saving the persistent index. Targeted correction policy, directory-count checks, and Repository mutation integration remain deferred. Unexpected termination may leave a stale cache; authoritative files remain recoverable.
 
 ### Vault index synchronization policy
 
@@ -208,10 +220,11 @@ Malformed recognized files, unsupported schemas, duplicate internal Entry or Dir
 
 `MetadataCatalog::rebuild` accepts complete typed primary Entry and Directory metadata, validates a temporary candidate using existing insertion rules, and adopts it only on success. Directories are inserted before Entries, so input ordering cannot create unresolved references. Root and Directory reverse membership indexes are reconstructed from primary records rather than supplied independently. Failure preserves the active Catalog and its unpersisted state. Successful reconstruction sets `unpersisted()` even for an empty result, because authoritative reconstruction does not acknowledge a persisted Index snapshot. Normal queries and ordinary mutations do not invoke this operation or filesystem enumeration.
 
-CatalogCoordinator::rebuild() validates configured storage roots and requests the complete scan metadata. It reserves exact capacities for the separate typed Catalog rebuild input vectors, then moves records from each typed deque into its corresponding vector in one pass. Entry types remain separate throughout bulk rebuilding. Deques avoid relocating previously collected records during append; the conversion requires temporary container storage but does not deep-copy metadata strings. Full scans are reserved for unavailable Indexes or explicitly requested Refresh; normal CRUD, queries, and navigation do not invoke them. Successful reconstruction establishes coordinator Ready status, including after a missing or corrupt startup Index. Scan or Catalog validation failure preserves the active Catalog, its unpersisted flag, and coordinator status. Diagnostics are returned to the caller. Rebuilding neither reloads nor immediately saves the persistent Index; broader Refresh policy and application wiring remain deferred. No repository-to-catalog automatic mutation coordination or navigation count checks are added here.
+CatalogCoordinator::rebuild() validates configured storage roots and requests the complete scan metadata. It reserves exact capacities for the separate typed Catalog rebuild input vectors, then moves records from each typed deque into its corresponding vector in one pass. Entry types remain separate throughout bulk rebuilding. Deques avoid relocating previously collected records during append; the conversion requires temporary container storage but does not deep-copy metadata strings. Full scans are reserved for unavailable Indexes or explicitly requested Refresh; normal CRUD, queries, and navigation do not invoke them. Successful reconstruction establishes coordinator Ready status, including after a missing or corrupt startup Index. Scan or Catalog validation failure preserves the active Catalog, its unpersisted flag, and coordinator status. Diagnostics are returned to the caller. Rebuilding neither reloads nor immediately saves the persistent Index; targeted correction policy and application wiring remain deferred. No repository-to-catalog automatic mutation coordination or navigation count checks are added here.
 
 ```text
-Explicit caller request
+Explicit full Refresh request
+  -> CatalogCoordinator::refresh_all()
   -> CatalogCoordinator::rebuild()
   -> NormalRepository::scan() -> typed metadata deques + diagnostics
   -> exactly reserved vectors, moving metadata
@@ -221,7 +234,7 @@ Explicit caller request
        failure -> preserve existing state and unpersisted flag
 ```
 
-This path performs no Index I/O. Opening an Entry at a known locator remains a direct Repository operation; identity validation and `StaleLocator` handling follow the repository contract above. **TODO:** add explicit refresh/verification and lightweight immediate-file count checks on entering a physical Directory. Equal counts cannot detect content edits or one-for-one replacements; these checks must not promise full verification or constant-time enumeration.
+This path performs no Index I/O. Opening an Entry at a known locator remains a direct Repository operation; identity validation and `StaleLocator` handling follow the repository contract above. **TODO:** add targeted correction/verification and lightweight immediate-file count checks on entering a physical Directory. Equal counts cannot detect content edits or one-for-one replacements; these checks must not promise full verification or constant-time enumeration.
 
 ## Write Safety, Transactions, and Trash
 
@@ -277,7 +290,7 @@ The public headers under `include/folio/core/` currently describe in-memory mode
 
 The architecture establishes boundaries and formats but does not yet define enough detail for interoperable persistence. Before implementing the first storage milestone, decide:
 
-- Explicit authoritative enumeration and atomic in-memory Catalog reconstruction are available. Explicit coordinator rebuild adoption is available; broader Refresh policy, consistency checks, and Repository/application lifecycle integration remain to be implemented.
+- Explicit authoritative enumeration and atomic in-memory Catalog reconstruction are available. Startup initialization with authoritative fallback and explicit full Refresh are available; targeted correction policy, consistency checks, and Repository/application lifecycle integration remain to be implemented.
 - How unknown fields are preserved or handled during future migration; the current Log/Memo v1 decoder rejects them.
 - The exact Normal and Vault directory tree, including safe-relative-locator rules beyond the ASCII UUID Directory naming and filename patterns.
 - How invalid or duplicate Directory metadata is reconciled during filesystem scanning.

@@ -28,6 +28,13 @@ struct CoordinatorError {
   std::optional<BinaryReadError> binary_error;
 };
 
+// Successful initialization: no index_error means the persisted Index loaded.
+// Otherwise it records why a full authoritative rebuild was needed and succeeded.
+struct InitializationOutcome {
+  std::optional<CoordinatorError> index_error;
+  std::vector<ExcludedObject> diagnostics;
+};
+
 enum class CatalogStatus { Unloaded, Ready, Unavailable };
 enum class SaveOutcome { Saved, SkippedPersisted };
 
@@ -42,17 +49,24 @@ class CatalogCoordinator {
   CatalogCoordinator(CatalogCoordinator&&) = delete;
   CatalogCoordinator& operator=(CatalogCoordinator&&) = delete;
 
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, CoordinatorError> startup_load();
-  // Explicit full rebuild/Refresh from authoritative Normal files. Failure
-  // preserves catalog and readiness; success is Ready and unpersisted, with no
-  // Index I/O, and prevents a later stale startup load from replacing it.
-  [[nodiscard]] ::folio::core::internal::Result<std::vector<ExcludedObject>, CoordinatorError> rebuild();
+  // One-time startup policy: load the Index, rebuilding from Normal files only
+  // when the cache is missing, corrupt, unsupported, or over a resource limit.
+  [[nodiscard]] ::folio::core::internal::Result<InitializationOutcome, CoordinatorError>
+  startup_load();
+  // Explicit full replacement from authoritative Normal files, not a targeted
+  // correction of individual cached records.
+  [[nodiscard]] ::folio::core::internal::Result<std::vector<ExcludedObject>, CoordinatorError>
+  refresh_all();
   [[nodiscard]] ::folio::core::internal::Result<SaveOutcome, CoordinatorError> shutdown_save();
   [[nodiscard]] const MetadataCatalog& catalog() const noexcept;
   [[nodiscard]] MetadataCatalog& catalog() noexcept;
   [[nodiscard]] CatalogStatus status() const noexcept;
 
  private:
+  // Explicit full rebuild/Refresh from authoritative Normal files. Failure
+  // preserves catalog and readiness; success is Ready and unpersisted, with no
+  // Index I/O, and prevents a later stale startup load from replacing it.
+  [[nodiscard]] ::folio::core::internal::Result<std::vector<ExcludedObject>, CoordinatorError> rebuild();
   StoragePaths paths_;
   MetadataCatalog catalog_;
   CatalogStatus status_ = CatalogStatus::Unloaded;
