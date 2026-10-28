@@ -106,13 +106,37 @@ Safety limits are 64 MiB of encoded input/output, 100,000 combined Entry and Dir
 
 Decoding never receives a mutable live catalog. It restores Directory records before Entry records into a temporary catalog using ordinary validated insertions; wire ordering does not determine whether a Directory reference resolves. Missing or wrong-kind references, duplicate identities, and occupied locators fail rather than being repaired. The existing catalog has no unchecked import or independent reference-verification API. Reverse Directory membership and root membership sets are reconstructed from primary records and are not serialized. Only a completely validated catalog is returned, marked clean. Encoding and failed decoding leave existing catalog contents and dirty state unchanged. Callers must check the result before replacing their current catalog; encoding alone does not acknowledge persistence or clear dirty state.
 
-### Planned persistent caches and rebuilding
+### Persistent cache policy and future rebuilding
 
-Persistent indexes are low-priority, rebuildable caches, rather than authoritative databases. The Normal cache belongs under configurable `state_root`, outside `normal_root`, and must not be committed or pushed to Git. Planned persistence is explicit and coalesced at program exit, rather than rewriting the cache after each metadata edit. Disk cache loading/saving, authoritative file scanning, and repository integration remain separate future work; binary metadata encoding is available independently. Missing, unsupported, or corrupted caches must never modify authoritative Entries. Ordinary listing, filtering, and metadata search use the loaded catalog without parsing Entry files again.
+Persistent indexes are low-priority, rebuildable caches, rather than authoritative databases. The Normal cache belongs under configurable `state_root`, outside `normal_root`, and must not be committed or pushed to Git. The persistence lifecycle is strict: load the persisted index once at application startup, use the in-memory catalog for the entire session, and save the complete index once during orderly shutdown if dirty. There are no index disk reads or writes during ordinary application operations. Explicit cache load/save primitives are available independently; lifecycle orchestration, authoritative file scanning, and repository integration remain future work. Missing, unsupported, or corrupted caches must never modify authoritative Entries. Ordinary listing, filtering, and metadata search use the loaded catalog without parsing Entry files again.
 
 The Normal index is deliberately local-only: placing it under `state_root` rather than `normal_root` keeps this rebuildable cache out of the data tree synchronized to the Git remote. Its metadata is complete plaintext. Entry locators inside the index remain relative to the associated repository's data root, not to the index file's location.
 
+### Normal index cache store
+
+The internal `src/storage/index_store.hpp` component, `NormalIndexStore`, stores the complete Normal index at `<state_root>/index/normal.msgpack`. The relative location is centralized in the store. Startup configuration supplies `StoragePaths`; the store validates root separation and never uses `normal_root`, `vault_root`, or `cache_root` as the cache destination. Entry locators inside the decoded metadata remain relative to the repository data root. The constructor only stores configuration; filesystem access occurs through explicit load/save operations.
+
+`load()` opens and reads the complete bounded binary payload, then calls IndexCodec. It returns a newly reconstructed clean MetadataCatalog on success, or an explicit error distinguishing a missing cache, corrupt data, unsupported schema, and filesystem/I/O failures. Resource-limit and invalid-path errors remain explicit. A missing or invalid cache is never returned as a valid empty catalog. Loading does not create directories, retry reads, scan Entries, repair files, rebuild metadata, or mutate a live catalog.
+
+`save(const MetadataCatalog&)` returns `Saved`, `SkippedClean`, or an error. A clean catalog is skipped before any filesystem I/O. For a dirty catalog, encoding completes before parent creation; the store then creates missing state/index directories and invokes exactly one existing atomic create or replace operation for the full snapshot. An absent destination uses create-only semantics; an existing regular destination uses replacement. There is no retry that switches creation to replacement after a race. Symbolic-link redirects and non-regular cache destinations are rejected. Callers must exclude external filesystem mutation during an operation, matching the atomic writer contract.
+
+Save never mutates the supplied catalog or acknowledges persistence. The lifecycle owner may call `mark_clean()` only after `Saved`; encoding success alone is insufficient. All save failures leave dirty state unchanged and propagate diagnostic context, including the atomic writer's publication flag. A failure after publication can leave the new index visible without confirmed crash durability; the store does not roll it back. Parent creation can leave empty directories on later failure, and newly created ancestors do not gain stronger crash-durability guarantees than the existing directory-creation/atomic-write primitives. **TODO:** address parent-directory creation durability and partial states with the future transaction/recovery design; do not add a journal here.
+
+The intended calling policy belongs to a future lifecycle owner:
+
+```text
+startup           -> one index load
+runtime           -> memory-only catalog
+orderly shutdown  -> one full index save if dirty
+```
+
+The store does not enforce invocation counts or hold session state. It implements no timers, background persistence, debouncing, incremental writes, automatic reload, or TUI/Repository integration. Unexpected termination can leave a stale index; later verification and rebuilding must reconcile it against authoritative Entry files. A cache-save failure must never invalidate a successfully saved Entry.
+
+### Vault index synchronization policy
+
 Vault has a different synchronization policy. Its planned complete encrypted private index and minimal plaintext public index are both intended to synchronize with Vault data to the Git remote. Synchronizing the private index avoids decrypting and parsing every Vault Entry merely to reconstruct metadata on another device; after unlocking, Folio can decrypt the private index instead. The public index must be available before Vault decryption so Folio can expose the permitted metadata while locked. It contains Entry UUID, type, safe relative locator, visibility/privacy, and a Log date only for Protected Logs; it must not disclose private titles, tags, timezones, locations, or logical Directories. Both Vault indexes remain auxiliary projections of authoritative Entry data. Their exact physical paths, encryption implementation, synchronization consistency handling, and rebuilding remain future work; the shared catalog does not enforce a locked-Vault visibility policy.
+
+### Future rebuilding and verification
 
 Future rebuilding will scan recognized formal Entry files and read Directory metadata separately, identify Entries by stored UUID regardless of filename, and report duplicate identities or ambiguous structures without silently repairing them. Opening an Entry at a known locator remains a direct Repository operation; identity validation and `StaleLocator` handling follow the repository contract above. **TODO:** add explicit refresh/verification and lightweight immediate-file count checks on entering a physical Directory. Equal counts cannot detect content edits or one-for-one replacements; these checks must not promise full verification or constant-time enumeration.
 
