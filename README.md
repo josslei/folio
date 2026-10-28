@@ -57,6 +57,19 @@ cmake --build build --config Debug --parallel
 ctest --test-dir build -C Debug --output-on-failure
 ```
 
+Resource-heavy boundary tests live separately under `tests/resource_limits/` and
+are excluded from the default build and CTest suite. Enable and run them explicitly:
+
+```sh
+cmake -S . -B build-resource-limits -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DFOLIO_BUILD_RESOURCE_LIMIT_TESTS=ON
+cmake --build build-resource-limits --config Debug --target folio_resource_limit_tests --parallel
+ctest --test-dir build-resource-limits -C Debug -L resource_limits --output-on-failure
+```
+
+These check correctness at large input/resource boundaries, rather than benchmark
+execution speed. Small malformed-input and bounds checks remain in the regular suite.
+When the option is enabled, unfiltered CTest runs also include the resource-limit tests.
+
 To produce a Release build without tests:
 
 ```sh

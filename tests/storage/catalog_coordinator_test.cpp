@@ -326,8 +326,6 @@ TEST_F(CatalogCoordinatorTest, StartupCacheErrorsReportFallbackReasonsAndCannotR
     if (expected == storage::CoordinatorErrorCode::Corrupt ||
         expected == storage::CoordinatorErrorCode::UnsupportedVersion)
       EXPECT_TRUE(outcome.index_error->codec_error.has_value());
-    if (expected == storage::CoordinatorErrorCode::LimitExceeded)
-      EXPECT_TRUE(outcome.index_error->binary_error.has_value());
     EXPECT_TRUE(outcome.diagnostics.empty());
     EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
     EXPECT_TRUE(coordinator.catalog().unpersisted());
@@ -354,8 +352,6 @@ TEST_F(CatalogCoordinatorTest, StartupCacheErrorsReportFallbackReasonsAndCannotR
   packer.pack(std::string{"schema_version"}); packer.pack_uint64(2);
   ASSERT_NO_FATAL_FAILURE(write_bytes(file, {packed.data(), packed.size()}));
   check(storage::CoordinatorErrorCode::UnsupportedVersion);
-  ASSERT_NO_FATAL_FAILURE(write_bytes(file, std::string(64u * 1024u * 1024u + 1, '\0')));
-  check(storage::CoordinatorErrorCode::LimitExceeded);
   expect_no_data_roots();
 }
 
@@ -629,7 +625,7 @@ TEST_F(CatalogCoordinatorTest, StartupLoadsValidIndexWithoutScanningNormalFiles)
   expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);
 }
 
-TEST_F(CatalogCoordinatorTest, StartupFallsBackForMissingCorruptUnsupportedAndLimitedIndex) {
+TEST_F(CatalogCoordinatorTest, StartupFallsBackForMissingCorruptAndUnsupportedIndex) {
   storage::NormalRepository repository{normal};
   const auto snapshot = authoritative_log();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(snapshot)));
@@ -661,8 +657,6 @@ TEST_F(CatalogCoordinatorTest, StartupFallsBackForMissingCorruptUnsupportedAndLi
   packer.pack(std::string{"schema_version"}); packer.pack_uint64(2);
   ASSERT_NO_FATAL_FAILURE(write_bytes(file, {packed.data(), packed.size()}));
   verify_fallback(storage::CoordinatorErrorCode::UnsupportedVersion);
-  ASSERT_NO_FATAL_FAILURE(write_bytes(file, std::string(64u * 1024u * 1024u + 1, '\0')));
-  verify_fallback(storage::CoordinatorErrorCode::LimitExceeded);
 }
 
 TEST_F(CatalogCoordinatorTest, StartupFallbackRestoresMixedMetadataAndDirectoryMembership) {

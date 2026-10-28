@@ -35,6 +35,8 @@ Prefer RAII, standard library facilities, explicit ownership and lifetimes, and 
 
 Use GoogleTest for unit and integration tests, GoogleMock where mocking provides clear value, and CTest as the unified runner. Register tests using `gtest_discover_tests()` in `tests/CMakeLists.txt`; use descriptive suites and filenames such as `core_smoke_test.cpp`.
 
+Keep resource-heavy boundary tests under `tests/resource_limits/`, behind the default-off `FOLIO_BUILD_RESOURCE_LIMIT_TESTS` option and the CTest `resource_limits` label. Do not allocate or repeatedly read large boundary fixtures in routine unit/integration tests. Keep small malformed-input and bounds checks in the normal suite; resource-limit tests verify correctness rather than benchmark performance.
+
 Add or update tests for meaningful behavior changes and regression tests for confirmed bug fixes where practical. Keep unit tests deterministic, isolated, and independent of terminals, networks, GitHub credentials, and real user environments. Use temporary directories and synthetic data for filesystem tests. Report results accurately, including tests that could not run. Cosmetic and documentation changes do not require new tests.
 
 ## Security & Data Safety

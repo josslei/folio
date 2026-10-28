@@ -39,3 +39,22 @@ include(GoogleTest)
 # checks). This limits test-name discovery, not individual test execution.
 gtest_discover_tests(folio_core_tests DISCOVERY_TIMEOUT 30)
 gtest_discover_tests(folio_storage_tests DISCOVERY_TIMEOUT 30)
+
+option(FOLIO_BUILD_RESOURCE_LIMIT_TESTS "Build opt-in resource limit tests" OFF)
+if(FOLIO_BUILD_RESOURCE_LIMIT_TESTS)
+  add_executable(folio_resource_limit_tests
+    resource_limits/index_resource_limits_test.cpp
+  )
+  target_include_directories(folio_resource_limit_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_compile_features(folio_resource_limit_tests PRIVATE cxx_std_20)
+  set_target_properties(folio_resource_limit_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_link_libraries(folio_resource_limit_tests PRIVATE
+    Folio::Core
+    GTest::gtest_main
+    msgpack-cxx
+  )
+  gtest_discover_tests(folio_resource_limit_tests
+    DISCOVERY_TIMEOUT 30
+    PROPERTIES LABELS resource_limits
+  )
+endif()

@@ -629,10 +629,7 @@ TEST(IndexCodecTest, RejectsInvalidMetadataAndRelationshipsWithoutMutatingCaller
   check(wire);
 }
 
-TEST(IndexCodecTest, EnforcesBinarySizeDepthAndContainerBounds) {
-  std::string oversized(64u * 1024u * 1024u + 1, '\0');
-  expect_error(codec::decode_index(oversized),
-               codec::IndexCodecErrorCode::LimitExceeded);
+TEST(IndexCodecTest, EnforcesDepthAndDeclaredContainerBounds) {
   const std::string declared_large_array{static_cast<char>(0xdd), '\0', '\1',
                                          static_cast<char>(0x86), static_cast<char>(0xa1)};
   expect_error(codec::decode_index(declared_large_array),
@@ -654,12 +651,6 @@ TEST(IndexCodecTest, EnforcesBinarySizeDepthAndContainerBounds) {
   for (int i = 0; i < 62; ++i)
     fields.emplace_back("future" + std::to_string(i),
                         WireValue{std::uint64_t{1}});
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::LimitExceeded);
-
-  wire = unpack_wire(encoded_catalog());
-  auto& entries = std::get<WireValue::Array>(field(wire, "entries").value);
-  entries.resize(100001, WireValue{nullptr});
   expect_error(codec::decode_index(pack_wire(wire)),
                codec::IndexCodecErrorCode::LimitExceeded);
 }
