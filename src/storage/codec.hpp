@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/internal/result.hpp"
+
 #include "folio/core/directory.hpp"
 #include "folio/core/log.hpp"
 #include "folio/core/memo.hpp"
@@ -30,9 +32,6 @@ struct CodecError {
   std::string message;
 };
 
-template <class T>
-using Result = std::variant<T, CodecError>;
-
 [[nodiscard]] toml::value<std::string> to_toml(const Id& id);
 [[nodiscard]] toml::value<std::string> to_toml(const Tag& tag);
 [[nodiscard]] toml::value<std::string> to_toml(Privacy privacy);
@@ -42,31 +41,31 @@ using Result = std::variant<T, CodecError>;
 [[nodiscard]] toml::table to_toml(const Todo::Snapshot& snapshot);
 [[nodiscard]] toml::table to_toml(const Directory::Snapshot& snapshot);
 
-[[nodiscard]] Result<Id> id_from_toml(const toml::node& node);
-[[nodiscard]] Result<Tag> tag_from_toml(const toml::node& node);
-[[nodiscard]] Result<Privacy> privacy_from_toml(const toml::node& node);
-[[nodiscard]] Result<TimestampContext> timestamp_context_from_toml(
+[[nodiscard]] ::folio::core::internal::Result<Id, CodecError> id_from_toml(const toml::node& node);
+[[nodiscard]] ::folio::core::internal::Result<Tag, CodecError> tag_from_toml(const toml::node& node);
+[[nodiscard]] ::folio::core::internal::Result<Privacy, CodecError> privacy_from_toml(const toml::node& node);
+[[nodiscard]] ::folio::core::internal::Result<TimestampContext, CodecError> timestamp_context_from_toml(
     const toml::node& node);
-[[nodiscard]] Result<DateContext> date_context_from_toml(
+[[nodiscard]] ::folio::core::internal::Result<DateContext, CodecError> date_context_from_toml(
     const toml::node& node);
-[[nodiscard]] Result<DueDate> due_date_from_toml(const toml::node& node);
+[[nodiscard]] ::folio::core::internal::Result<DueDate, CodecError> due_date_from_toml(const toml::node& node);
 
-[[nodiscard]] Result<Todo::Snapshot> todo_snapshot_from_toml(
+[[nodiscard]] ::folio::core::internal::Result<Todo::Snapshot, CodecError> todo_snapshot_from_toml(
     const toml::table& table);
 // Legacy documents lacking kind require a trusted module context. A present
 // kind must agree with that context when one is supplied.
-[[nodiscard]] Result<Directory::Snapshot> directory_snapshot_from_toml(
+[[nodiscard]] ::folio::core::internal::Result<Directory::Snapshot, CodecError> directory_snapshot_from_toml(
     const toml::table& table,
     std::optional<DirectoryKind> trusted_legacy_kind = std::nullopt);
 
-[[nodiscard]] Result<std::string> serialize_toml(const toml::table& table);
-[[nodiscard]] Result<toml::table> parse_toml(std::string_view text);
+[[nodiscard]] ::folio::core::internal::Result<std::string, CodecError> serialize_toml(const toml::table& table);
+[[nodiscard]] ::folio::core::internal::Result<toml::table, CodecError> parse_toml(std::string_view text);
 
 // Front matter uses LF framing; decoding accepts LF or CRLF framing and
 // preserves every byte after the closing delimiter's line terminator.
-[[nodiscard]] Result<std::string> serialize_markdown(const Log::Snapshot& snapshot);
-[[nodiscard]] Result<std::string> serialize_markdown(const Memo::Snapshot& snapshot);
-[[nodiscard]] Result<Log::Snapshot> log_snapshot_from_markdown(std::string_view text);
-[[nodiscard]] Result<Memo::Snapshot> memo_snapshot_from_markdown(std::string_view text);
+[[nodiscard]] ::folio::core::internal::Result<std::string, CodecError> serialize_markdown(const Log::Snapshot& snapshot);
+[[nodiscard]] ::folio::core::internal::Result<std::string, CodecError> serialize_markdown(const Memo::Snapshot& snapshot);
+[[nodiscard]] ::folio::core::internal::Result<Log::Snapshot, CodecError> log_snapshot_from_markdown(std::string_view text);
+[[nodiscard]] ::folio::core::internal::Result<Memo::Snapshot, CodecError> memo_snapshot_from_markdown(std::string_view text);
 
 }  // namespace folio::core::storage::codec

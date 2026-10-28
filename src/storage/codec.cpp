@@ -25,7 +25,7 @@ CodecError error(CodecErrorCode code, std::string path, std::string message) {
   return CodecError{code, std::move(path), std::move(message)};
 }
 
-Result<std::string> read_string(const toml::table& table, std::string_view key,
+::folio::core::internal::Result<std::string, CodecError> read_string(const toml::table& table, std::string_view key,
                                 std::string path) {
   const auto* node = table.get(key);
   if (!node) {
@@ -38,7 +38,7 @@ Result<std::string> read_string(const toml::table& table, std::string_view key,
   return *value;
 }
 
-Result<std::int64_t> read_integer(const toml::table& table, std::string_view key,
+::folio::core::internal::Result<std::int64_t, CodecError> read_integer(const toml::table& table, std::string_view key,
                                   std::string path) {
   const auto* node = table.get(key);
   if (!node) {
@@ -54,7 +54,7 @@ Result<std::int64_t> read_integer(const toml::table& table, std::string_view key
   return *value;
 }
 
-Result<bool> read_boolean(const toml::table& table, std::string_view key,
+::folio::core::internal::Result<bool, CodecError> read_boolean(const toml::table& table, std::string_view key,
                           std::string path) {
   const auto* node = table.get(key);
   if (!node) {
@@ -218,11 +218,11 @@ std::optional<Timestamp> parse_timestamp(std::string_view text) {
 }
 
 template <class T>
-const CodecError* result_error(const Result<T>& result) {
+const CodecError* result_error(const ::folio::core::internal::Result<T, CodecError>& result) {
   return std::get_if<CodecError>(&result);
 }
 
-Result<std::string> field_string(const toml::table& table,
+::folio::core::internal::Result<std::string, CodecError> field_string(const toml::table& table,
                                  std::string_view key) {
   return read_string(table, key, std::string{key});
 }
@@ -234,7 +234,7 @@ void insert_location(toml::table& table,
   }
 }
 
-Result<std::optional<std::string>> read_location(const toml::table& table) {
+::folio::core::internal::Result<std::optional<std::string>, CodecError> read_location(const toml::table& table) {
   const auto* node = table.get("location");
   if (!node) {
     return std::optional<std::string>{};
@@ -291,8 +291,8 @@ std::optional<CodecError> check_markdown_fields(const toml::table& table,
 }
 
 template <class T>
-Result<T> read_field(const toml::table& table, std::string_view key,
-                     Result<T> (*decode)(const toml::node&)) {
+::folio::core::internal::Result<T, CodecError> read_field(const toml::table& table, std::string_view key,
+                     ::folio::core::internal::Result<T, CodecError> (*decode)(const toml::node&)) {
   const auto* node = table.get(key);
   if (!node) {
     return error(CodecErrorCode::MissingField, std::string{key}, "Required field is missing");
@@ -305,7 +305,7 @@ Result<T> read_field(const toml::table& table, std::string_view key,
   return result;
 }
 
-Result<std::vector<Tag>> read_tags(const toml::table& table) {
+::folio::core::internal::Result<std::vector<Tag>, CodecError> read_tags(const toml::table& table) {
   std::vector<Tag> tags;
   const auto* node = table.get("tags");
   if (!node) {
@@ -331,7 +331,7 @@ struct MarkdownParts {
   std::string_view body;
 };
 
-Result<MarkdownParts> split_markdown(std::string_view text) {
+::folio::core::internal::Result<MarkdownParts, CodecError> split_markdown(std::string_view text) {
   std::size_t begin;
   if (text.starts_with("+++\n")) {
     begin = 4;
@@ -365,7 +365,7 @@ struct MarkdownMetadata {
   Privacy privacy;
 };
 
-Result<MarkdownMetadata> read_markdown_metadata(const toml::table& table) {
+::folio::core::internal::Result<MarkdownMetadata, CodecError> read_markdown_metadata(const toml::table& table) {
   auto id = read_field(table, "id", id_from_toml);
   if (const auto* failure = result_error(id)) return *failure;
   auto created = read_field(table, "created", timestamp_context_from_toml);
@@ -399,7 +399,7 @@ toml::table markdown_metadata(const Id& id, const TimestampContext& created,
   return table;
 }
 
-Result<std::string> frame_markdown(const toml::table& metadata,
+::folio::core::internal::Result<std::string, CodecError> frame_markdown(const toml::table& metadata,
                                   const std::string& body) {
   // Escaped single-line strings cannot introduce a delimiter line. Disable
   // literal strings and real tabs too, so CR, LF and tabs are escaped uniformly.
@@ -533,7 +533,7 @@ toml::table to_toml(const Directory::Snapshot& snapshot) {
                      {"name", snapshot.name}};
 }
 
-Result<Id> id_from_toml(const toml::node& node) {
+::folio::core::internal::Result<Id, CodecError> id_from_toml(const toml::node& node) {
   const auto value = node.value<std::string>();
   if (!value) {
     return error(CodecErrorCode::InvalidField, "", "Expected a UUID string");
@@ -545,7 +545,7 @@ Result<Id> id_from_toml(const toml::node& node) {
   return *id;
 }
 
-Result<Tag> tag_from_toml(const toml::node& node) {
+::folio::core::internal::Result<Tag, CodecError> tag_from_toml(const toml::node& node) {
   const auto value = node.value<std::string>();
   if (!value) {
     return error(CodecErrorCode::InvalidField, "", "Expected a string tag");
@@ -553,7 +553,7 @@ Result<Tag> tag_from_toml(const toml::node& node) {
   return Tag{*value};
 }
 
-Result<Privacy> privacy_from_toml(const toml::node& node) {
+::folio::core::internal::Result<Privacy, CodecError> privacy_from_toml(const toml::node& node) {
   const auto value = node.value<std::string>();
   if (!value) {
     return error(CodecErrorCode::InvalidField, "", "Expected a Privacy string");
@@ -564,7 +564,7 @@ Result<Privacy> privacy_from_toml(const toml::node& node) {
   return error(CodecErrorCode::InvalidField, "", "Unknown Privacy value");
 }
 
-Result<TimestampContext> timestamp_context_from_toml(const toml::node& node) {
+::folio::core::internal::Result<TimestampContext, CodecError> timestamp_context_from_toml(const toml::node& node) {
   const auto* table = node.as_table();
   if (!table) {
     return error(CodecErrorCode::InvalidField, "", "Expected a timestamp context table");
@@ -587,7 +587,7 @@ Result<TimestampContext> timestamp_context_from_toml(const toml::node& node) {
                           std::get<std::optional<std::string>>(location_result)};
 }
 
-Result<DateContext> date_context_from_toml(const toml::node& node) {
+::folio::core::internal::Result<DateContext, CodecError> date_context_from_toml(const toml::node& node) {
   const auto* table = node.as_table();
   if (!table) {
     return error(CodecErrorCode::InvalidField, "", "Expected a date context table");
@@ -610,7 +610,7 @@ Result<DateContext> date_context_from_toml(const toml::node& node) {
                      std::get<std::optional<std::string>>(location_result)};
 }
 
-Result<DueDate> due_date_from_toml(const toml::node& node) {
+::folio::core::internal::Result<DueDate, CodecError> due_date_from_toml(const toml::node& node) {
   const auto* table = node.as_table();
   if (!table) {
     return error(CodecErrorCode::InvalidField, "due", "Expected a due table");
@@ -631,7 +631,7 @@ Result<DueDate> due_date_from_toml(const toml::node& node) {
   return error(CodecErrorCode::InvalidField, "due.kind", "Expected Date or Datetime");
 }
 
-Result<Todo::Snapshot> todo_snapshot_from_toml(const toml::table& table) {
+::folio::core::internal::Result<Todo::Snapshot, CodecError> todo_snapshot_from_toml(const toml::table& table) {
   if (const auto failure = check_schema_version(table)) return *failure;
 
   const auto* id_node = table.get("id");
@@ -743,7 +743,7 @@ Result<Todo::Snapshot> todo_snapshot_from_toml(const toml::table& table) {
   return snapshot;
 }
 
-Result<Directory::Snapshot> directory_snapshot_from_toml(
+::folio::core::internal::Result<Directory::Snapshot, CodecError> directory_snapshot_from_toml(
     const toml::table& table, std::optional<DirectoryKind> trusted_legacy_kind) {
   if (const auto failure = check_schema_version(table)) return *failure;
   if (trusted_legacy_kind && *trusted_legacy_kind != DirectoryKind::Memo &&
@@ -779,7 +779,7 @@ Result<Directory::Snapshot> directory_snapshot_from_toml(
                              std::get<std::string>(std::move(name_result))};
 }
 
-Result<std::string> serialize_toml(const toml::table& table) {
+::folio::core::internal::Result<std::string, CodecError> serialize_toml(const toml::table& table) {
   try {
     std::ostringstream output;
     output << table;
@@ -792,7 +792,7 @@ Result<std::string> serialize_toml(const toml::table& table) {
   }
 }
 
-Result<toml::table> parse_toml(std::string_view text) {
+::folio::core::internal::Result<toml::table, CodecError> parse_toml(std::string_view text) {
   try {
     return toml::parse(text);
   } catch (const toml::parse_error& exception) {
@@ -802,7 +802,7 @@ Result<toml::table> parse_toml(std::string_view text) {
   }
 }
 
-Result<std::string> serialize_markdown(const Log::Snapshot& snapshot) {
+::folio::core::internal::Result<std::string, CodecError> serialize_markdown(const Log::Snapshot& snapshot) {
   try {
     (void)Log::restore(snapshot);
     auto metadata = markdown_metadata(snapshot.id, snapshot.created, snapshot.modified,
@@ -814,7 +814,7 @@ Result<std::string> serialize_markdown(const Log::Snapshot& snapshot) {
   }
 }
 
-Result<std::string> serialize_markdown(const Memo::Snapshot& snapshot) {
+::folio::core::internal::Result<std::string, CodecError> serialize_markdown(const Memo::Snapshot& snapshot) {
   try {
     (void)Memo::restore(snapshot);
     auto metadata = markdown_metadata(snapshot.id, snapshot.created, snapshot.modified,
@@ -828,7 +828,7 @@ Result<std::string> serialize_markdown(const Memo::Snapshot& snapshot) {
   }
 }
 
-Result<Log::Snapshot> log_snapshot_from_markdown(std::string_view text) {
+::folio::core::internal::Result<Log::Snapshot, CodecError> log_snapshot_from_markdown(std::string_view text) {
   auto parts_result = split_markdown(text);
   if (const auto* failure = result_error(parts_result)) return *failure;
   const auto parts = std::get<MarkdownParts>(parts_result);
@@ -854,7 +854,7 @@ Result<Log::Snapshot> log_snapshot_from_markdown(std::string_view text) {
   return snapshot;
 }
 
-Result<Memo::Snapshot> memo_snapshot_from_markdown(std::string_view text) {
+::folio::core::internal::Result<Memo::Snapshot, CodecError> memo_snapshot_from_markdown(std::string_view text) {
   auto parts_result = split_markdown(text);
   if (const auto* failure = result_error(parts_result)) return *failure;
   const auto parts = std::get<MarkdownParts>(parts_result);

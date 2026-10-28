@@ -7,9 +7,7 @@
 
 namespace folio::core::storage {
 namespace {
-using Success = Result<std::monostate>;
-
-Success failure(StorageErrorCode code, const std::filesystem::path& path,
+::folio::core::internal::Result<std::monostate, StorageError> failure(StorageErrorCode code, const std::filesystem::path& path,
                 std::string message) {
   return StorageError{code, path, std::move(message), {}, false};
 }
@@ -290,7 +288,7 @@ std::set<std::string>& MetadataCatalog::members_for(EntryType type,
   return log_roots_;
 }
 
-Result<std::monostate> MetadataCatalog::insert_entry(EntryMetadata m) {
+::folio::core::internal::Result<std::monostate, StorageError> MetadataCatalog::insert_entry(EntryMetadata m) {
   if (!valid_entry(m)) return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Invalid entry metadata");
   const Id id = entry_id(m);
   const auto key = id.to_string();
@@ -325,7 +323,7 @@ Result<std::monostate> MetadataCatalog::insert_entry(EntryMetadata m) {
   return std::monostate{};
 }
 
-Result<std::monostate> MetadataCatalog::update_entry(EntryMetadata m) {
+::folio::core::internal::Result<std::monostate, StorageError> MetadataCatalog::update_entry(EntryMetadata m) {
   if (!valid_entry(m)) return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Invalid entry metadata");
   const Id id = entry_id(m);
   const auto key = id.to_string();
@@ -370,7 +368,7 @@ Result<std::monostate> MetadataCatalog::update_entry(EntryMetadata m) {
   return std::monostate{};
 }
 
-Result<std::monostate> MetadataCatalog::remove_entry(const Id& id) {
+::folio::core::internal::Result<std::monostate, StorageError> MetadataCatalog::remove_entry(const Id& id) {
   const auto key = id.to_string();
   const auto existing = find_entry(id);
   if (!existing) return failure(StorageErrorCode::NotFound, {}, "Entry UUID not found");
@@ -385,7 +383,7 @@ Result<std::monostate> MetadataCatalog::remove_entry(const Id& id) {
   return std::monostate{};
 }
 
-Result<std::monostate> MetadataCatalog::insert_directory(DirectoryMetadata m) {
+::folio::core::internal::Result<std::monostate, StorageError> MetadataCatalog::insert_directory(DirectoryMetadata m) {
   if (!valid_kind(m.kind) || !valid_path(m.relative_path) || !valid_utf8(m.name))
     return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Invalid Directory metadata");
   const auto key = m.id.to_string();
@@ -407,7 +405,7 @@ Result<std::monostate> MetadataCatalog::insert_directory(DirectoryMetadata m) {
   return std::monostate{};
 }
 
-Result<std::monostate> MetadataCatalog::update_directory(DirectoryMetadata m) {
+::folio::core::internal::Result<std::monostate, StorageError> MetadataCatalog::update_directory(DirectoryMetadata m) {
   if (!valid_kind(m.kind) || !valid_path(m.relative_path) || !valid_utf8(m.name))
     return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Invalid Directory metadata");
   const auto key = m.id.to_string();
@@ -428,7 +426,7 @@ Result<std::monostate> MetadataCatalog::update_directory(DirectoryMetadata m) {
   return std::monostate{};
 }
 
-Result<std::monostate> MetadataCatalog::remove_directory(const Id& id) {
+::folio::core::internal::Result<std::monostate, StorageError> MetadataCatalog::remove_directory(const Id& id) {
   const auto key = id.to_string();
   auto it = directories_.find(key);
   if (it == directories_.end()) return failure(StorageErrorCode::NotFound, {}, "Directory UUID not found");
@@ -441,7 +439,7 @@ Result<std::monostate> MetadataCatalog::remove_directory(const Id& id) {
   return std::monostate{};
 }
 
-Result<std::monostate> MetadataCatalog::rebuild(
+::folio::core::internal::Result<std::monostate, StorageError> MetadataCatalog::rebuild(
     std::vector<LogMetadata> logs,
     std::vector<MemoMetadata> memos,
     std::vector<TodoMetadata> todos,
@@ -451,7 +449,7 @@ Result<std::monostate> MetadataCatalog::rebuild(
     auto inserted = candidate.insert_directory(std::move(directory));
     if (const auto* problem = std::get_if<StorageError>(&inserted)) return *problem;
   }
-  auto insert_records = [&](auto& records) -> Result<std::monostate> {
+  auto insert_records = [&](auto& records) -> ::folio::core::internal::Result<std::monostate, StorageError> {
     for (auto& record : records) {
       auto inserted = candidate.insert_entry(std::move(record));
       if (const auto* problem = std::get_if<StorageError>(&inserted)) return *problem;
@@ -499,7 +497,7 @@ RootListing MetadataCatalog::list_root(EntryType module) const {
         (module == EntryType::Todo && d.kind == DirectoryKind::Todo)) out.directories.push_back(d);
   return out;
 }
-Result<std::vector<EntryMetadata>> MetadataCatalog::list_directory(DirectoryKind kind, const Id& id) const {
+::folio::core::internal::Result<std::vector<EntryMetadata>, StorageError> MetadataCatalog::list_directory(DirectoryKind kind, const Id& id) const {
   const auto dir = find_directory(id);
   if (!dir || dir->kind != kind)
     return StorageError{StorageErrorCode::NotFound, {}, "Directory UUID not found in module", {}, false};

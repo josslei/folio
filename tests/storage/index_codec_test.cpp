@@ -41,12 +41,12 @@ core::TimestampContext context(core::Timestamp timestamp, std::string timezone,
 }
 
 template <typename T>
-const T& value_of(const codec::Result<T>& result) {
+const T& value_of(const ::folio::core::internal::Result<T, codec::IndexCodecError>& result) {
   return std::get<T>(result);
 }
 
 template <typename T>
-void expect_error(const codec::Result<T>& result,
+void expect_error(const ::folio::core::internal::Result<T, codec::IndexCodecError>& result,
                   codec::IndexCodecErrorCode code) {
   ASSERT_TRUE(std::holds_alternative<codec::IndexCodecError>(result));
   EXPECT_EQ(std::get<codec::IndexCodecError>(result).code, code);

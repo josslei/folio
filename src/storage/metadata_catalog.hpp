@@ -118,15 +118,15 @@ struct RootListing {
 // indirectly. UUID lookup and Directory membership listing use ordered IDs.
 class MetadataCatalog {
  public:
-  [[nodiscard]] Result<std::monostate> insert_entry(EntryMetadata metadata);
-  [[nodiscard]] Result<std::monostate> update_entry(EntryMetadata metadata);
-  [[nodiscard]] Result<std::monostate> remove_entry(const Id& id);
-  [[nodiscard]] Result<std::monostate> insert_directory(DirectoryMetadata metadata);
-  [[nodiscard]] Result<std::monostate> update_directory(DirectoryMetadata metadata);
-  [[nodiscard]] Result<std::monostate> remove_directory(const Id& id);
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> insert_entry(EntryMetadata metadata);
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> update_entry(EntryMetadata metadata);
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> remove_entry(const Id& id);
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> insert_directory(DirectoryMetadata metadata);
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> update_directory(DirectoryMetadata metadata);
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> remove_directory(const Id& id);
   // Validates a complete candidate in isolation, then adopts it atomically.
   // A successful replacement is unpersisted even if all vectors are empty.
-  [[nodiscard]] Result<std::monostate> rebuild(
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> rebuild(
       std::vector<LogMetadata> logs,
       std::vector<MemoMetadata> memos,
       std::vector<TodoMetadata> todos,
@@ -135,7 +135,7 @@ class MetadataCatalog {
   [[nodiscard]] std::optional<EntryMetadata> find_entry(const Id& id) const;
   [[nodiscard]] std::optional<DirectoryMetadata> find_directory(const Id& id) const;
   [[nodiscard]] RootListing list_root(EntryType module) const;
-  [[nodiscard]] Result<std::vector<EntryMetadata>> list_directory(
+  [[nodiscard]] ::folio::core::internal::Result<std::vector<EntryMetadata>, StorageError> list_directory(
       DirectoryKind kind, const Id& id) const;
   [[nodiscard]] std::vector<DirectoryMetadata> list_directories(DirectoryKind kind) const;
   [[nodiscard]] std::vector<EntryMetadata> query(const CatalogQuery& query = {}) const;

@@ -98,7 +98,7 @@ class CatalogRebuildTest : public testing::Test {
     text.replace(position, from.size(), to);
     ASSERT_NO_FATAL_FAILURE(write(file, text));
   }
-  static void error_code(const storage::Result<storage::NormalRepositoryScanResult>& result,
+  static void error_code(const ::folio::core::internal::Result<storage::NormalRepositoryScanResult, storage::StorageError>& result,
                          storage::StorageErrorCode code) {
     ASSERT_TRUE(std::holds_alternative<storage::StorageError>(result));
     EXPECT_EQ(std::get<storage::StorageError>(result).code, code);

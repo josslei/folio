@@ -73,7 +73,7 @@ void write_bytes(const fs::path& path, std::string_view bytes) {
 }
 
 template <typename T>
-void expect_error(const storage::CoordinatorResult<T>& result,
+void expect_error(const ::folio::core::internal::Result<T, storage::CoordinatorError>& result,
                   storage::CoordinatorErrorCode code) {
   ASSERT_TRUE(std::holds_alternative<storage::CoordinatorError>(result));
   EXPECT_EQ(std::get<storage::CoordinatorError>(result).code, code);

@@ -91,7 +91,7 @@ void seed_file(const fs::path& path, const std::string& bytes) {
 }
 
 template <typename T>
-void expect_storage_error(const storage::Result<T>& result) {
+void expect_storage_error(const ::folio::core::internal::Result<T, storage::StorageError>& result) {
   EXPECT_TRUE(std::holds_alternative<storage::StorageError>(result));
 }
 
@@ -356,7 +356,7 @@ class StorageDurabilityTest : public StorageFilesystemTest {
 
   fs::path target() const { return temporary.path() / "entry.md"; }
 
-  storage::Result<std::monostate> write(bool create_only) {
+  ::folio::core::internal::Result<std::monostate, storage::StorageError> write(bool create_only) {
     return storage::internal::write_file_atomic(target(), "new bytes", create_only, observe_sync);
   }
 

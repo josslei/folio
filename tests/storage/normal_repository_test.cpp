@@ -109,19 +109,19 @@ void write_bytes(const fs::path& path, const std::string& bytes) {
 }
 
 template <typename T>
-void expect_error(const storage::Result<T>& result) {
+void expect_error(const ::folio::core::internal::Result<T, storage::StorageError>& result) {
   EXPECT_TRUE(std::holds_alternative<storage::StorageError>(result));
 }
 
 template <typename T>
-void expect_error_code(const storage::Result<T>& result,
+void expect_error_code(const ::folio::core::internal::Result<T, storage::StorageError>& result,
                        storage::StorageErrorCode code) {
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(result));
   EXPECT_EQ(std::get<storage::StorageError>(result).code, code);
 }
 
 template <typename T>
-bool operation_succeeded(const storage::Result<T>& result) {
+bool operation_succeeded(const ::folio::core::internal::Result<T, storage::StorageError>& result) {
   if (std::holds_alternative<T>(result)) return true;
   const auto& error = std::get<storage::StorageError>(result);
   ADD_FAILURE() << "StorageError code=" << static_cast<int>(error.code)

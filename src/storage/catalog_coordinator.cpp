@@ -45,7 +45,7 @@ CoordinatorError binary_error(BinaryReadError source) {
 }
 
 struct Locations { fs::path state_root; fs::path parent; fs::path file; };
-CoordinatorResult<Locations> locations(const StoragePaths& paths) {
+::folio::core::internal::Result<Locations, CoordinatorError> locations(const StoragePaths& paths) {
   auto checked = validate_storage_paths(paths);
   if (auto* problem = std::get_if<StorageError>(&checked)) return storage_error(*problem);
   std::error_code ec;
@@ -54,7 +54,7 @@ CoordinatorResult<Locations> locations(const StoragePaths& paths) {
   const auto relative = index_relative_path();
   return Locations{root, root / relative.parent_path(), root / relative};
 }
-CoordinatorResult<fs::file_status> inspect(const fs::path& path) {
+::folio::core::internal::Result<fs::file_status, CoordinatorError> inspect(const fs::path& path) {
   std::error_code ec;
   const auto status = fs::symlink_status(path, ec);
   if (ec == std::errc::no_such_file_or_directory)
@@ -64,7 +64,7 @@ CoordinatorResult<fs::file_status> inspect(const fs::path& path) {
     return error(CoordinatorErrorCode::InvalidPath, path, "Symlink in Index path");
   return status;
 }
-CoordinatorResult<bool> directory_ready(const fs::path& path) {
+::folio::core::internal::Result<bool, CoordinatorError> directory_ready(const fs::path& path) {
   auto inspected = inspect(path);
   if (auto* problem = std::get_if<CoordinatorError>(&inspected)) return *problem;
   const auto status = std::get<fs::file_status>(inspected);
@@ -73,7 +73,7 @@ CoordinatorResult<bool> directory_ready(const fs::path& path) {
     return error(CoordinatorErrorCode::InvalidPath, path, "Index parent is not a directory");
   return true;
 }
-CoordinatorResult<bool> file_ready(const fs::path& path) {
+::folio::core::internal::Result<bool, CoordinatorError> file_ready(const fs::path& path) {
   auto inspected = inspect(path);
   if (auto* problem = std::get_if<CoordinatorError>(&inspected)) return *problem;
   const auto status = std::get<fs::file_status>(inspected);
@@ -86,7 +86,7 @@ CoordinatorResult<bool> file_ready(const fs::path& path) {
 
 CatalogCoordinator::CatalogCoordinator(StoragePaths paths) : paths_(std::move(paths)) {}
 
-CoordinatorResult<std::monostate> CatalogCoordinator::startup_load() {
+::folio::core::internal::Result<std::monostate, CoordinatorError> CatalogCoordinator::startup_load() {
   if (load_attempted_)
     return error(CoordinatorErrorCode::Lifecycle, {}, "Startup load already attempted");
   load_attempted_ = true;
@@ -114,7 +114,7 @@ CoordinatorResult<std::monostate> CatalogCoordinator::startup_load() {
   return std::monostate{};
 }
 
-CoordinatorResult<std::vector<ExcludedObject>>
+::folio::core::internal::Result<std::vector<ExcludedObject>, CoordinatorError>
 CatalogCoordinator::rebuild() {
   auto paths = validate_storage_paths(paths_);
   if (auto* problem = std::get_if<StorageError>(&paths)) return storage_error(*problem);
@@ -137,7 +137,7 @@ CatalogCoordinator::rebuild() {
   return std::move(inventory.diagnostics);
 }
 
-CoordinatorResult<SaveOutcome> CatalogCoordinator::shutdown_save() {
+::folio::core::internal::Result<SaveOutcome, CoordinatorError> CatalogCoordinator::shutdown_save() {
   if (status_ != CatalogStatus::Ready)
     return error(CoordinatorErrorCode::Unavailable, {},
                  "No valid restored catalog is available to save");

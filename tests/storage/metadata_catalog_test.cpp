@@ -69,14 +69,14 @@ void expect_context(const core::TimestampContext& actual,
 }
 
 template <typename T>
-void expect_error(const storage::Result<T>& result,
+void expect_error(const ::folio::core::internal::Result<T, storage::StorageError>& result,
                   storage::StorageErrorCode code) {
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(result));
   EXPECT_EQ(std::get<storage::StorageError>(result).code, code);
 }
 
 template <typename T>
-void expect_any_error(const storage::Result<T>& result) {
+void expect_any_error(const ::folio::core::internal::Result<T, storage::StorageError>& result) {
   EXPECT_TRUE(std::holds_alternative<storage::StorageError>(result));
 }
 

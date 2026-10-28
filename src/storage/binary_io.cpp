@@ -5,7 +5,7 @@
 
 namespace folio::core::storage {
 
-BinaryReadResult<std::string> read_binary_file(const std::filesystem::path& path,
+::folio::core::internal::Result<std::string, BinaryReadError> read_binary_file(const std::filesystem::path& path,
                                                std::size_t max_bytes) {
   if (path.empty() || path.native().find(std::filesystem::path::value_type{}) !=
                           std::filesystem::path::string_type::npos)

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/internal/result.hpp"
+
 #include "storage/metadata_catalog.hpp"
 
 #include <string>
@@ -21,12 +23,9 @@ struct IndexCodecError {
   std::string message;
 };
 
-template <class T>
-using Result = std::variant<T, IndexCodecError>;
-
 // Pure in-memory MessagePack codec. Decoding builds a fresh, persisted catalog;
 // errors never mutate an existing catalog or authoritative Entry files.
-[[nodiscard]] Result<std::string> encode_index(const MetadataCatalog& catalog);
-[[nodiscard]] Result<MetadataCatalog> decode_index(std::string_view bytes);
+[[nodiscard]] ::folio::core::internal::Result<std::string, IndexCodecError> encode_index(const MetadataCatalog& catalog);
+[[nodiscard]] ::folio::core::internal::Result<MetadataCatalog, IndexCodecError> decode_index(std::string_view bytes);
 
 }  // namespace folio::core::storage::index_codec

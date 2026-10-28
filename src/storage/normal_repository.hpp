@@ -41,49 +41,49 @@ class NormalRepository {
  public:
   explicit NormalRepository(std::filesystem::path normal_root);
 
-  [[nodiscard]] Result<std::monostate> create_log(const core::Log::Snapshot& snapshot);
-  [[nodiscard]] Result<std::monostate> create_memo(const core::Memo::Snapshot& snapshot);
-  [[nodiscard]] Result<std::monostate> create_todo(const core::Todo::Snapshot& snapshot);
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> create_log(const core::Log::Snapshot& snapshot);
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> create_memo(const core::Memo::Snapshot& snapshot);
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> create_todo(const core::Todo::Snapshot& snapshot);
 
   // A supplied locator is read directly, without discovery or fallback.
   // It must still contain the requested stored UUID.
-  [[nodiscard]] Result<core::Log::Snapshot> load_log(
+  [[nodiscard]] ::folio::core::internal::Result<core::Log::Snapshot, StorageError> load_log(
       const core::Id& id,
       std::optional<std::filesystem::path> relative_path = std::nullopt) const;
-  [[nodiscard]] Result<core::Memo::Snapshot> load_memo(
+  [[nodiscard]] ::folio::core::internal::Result<core::Memo::Snapshot, StorageError> load_memo(
       const core::Id& id,
       std::optional<std::filesystem::path> relative_path = std::nullopt) const;
-  [[nodiscard]] Result<core::Todo::Snapshot> load_todo(
+  [[nodiscard]] ::folio::core::internal::Result<core::Todo::Snapshot, StorageError> load_todo(
       const core::Id& id,
       std::optional<std::filesystem::path> relative_path = std::nullopt) const;
 
-  [[nodiscard]] Result<std::monostate> update_log(
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> update_log(
       const core::Log::Snapshot& snapshot,
       std::optional<std::filesystem::path> relative_path = std::nullopt);
-  [[nodiscard]] Result<std::monostate> update_memo(
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> update_memo(
       const core::Memo::Snapshot& snapshot,
       std::optional<std::filesystem::path> relative_path = std::nullopt);
-  [[nodiscard]] Result<std::monostate> update_todo(
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> update_todo(
       const core::Todo::Snapshot& snapshot,
       std::optional<std::filesystem::path> relative_path = std::nullopt);
 
-  [[nodiscard]] Result<std::monostate> create_directory(
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> create_directory(
       DirectoryKind kind, const core::Directory::Snapshot& snapshot);
-  [[nodiscard]] Result<core::Directory::Snapshot> load_directory(
+  [[nodiscard]] ::folio::core::internal::Result<core::Directory::Snapshot, StorageError> load_directory(
       DirectoryKind kind, const core::Id& id) const;
-  [[nodiscard]] Result<std::monostate> rename_directory(
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> rename_directory(
       DirectoryKind kind, const core::Id& id, std::string name);
 
-  [[nodiscard]] Result<std::monostate> move_memo(
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> move_memo(
       const core::Id& id, std::optional<core::Id> directory_id,
       core::TimestampContext modified);
-  [[nodiscard]] Result<std::monostate> move_todo(
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> move_todo(
       const core::Id& id, std::optional<core::Id> directory_id,
       core::TimestampContext modified);
 
-  [[nodiscard]] Result<std::filesystem::path> locate_entry(
+  [[nodiscard]] ::folio::core::internal::Result<std::filesystem::path, StorageError> locate_entry(
       EntryType type, const core::Id& id) const;
-  [[nodiscard]] Result<std::filesystem::path> locate_entry(
+  [[nodiscard]] ::folio::core::internal::Result<std::filesystem::path, StorageError> locate_entry(
       EntryType type, const std::filesystem::path& relative_path) const;
 
   // Collects authoritative metadata for a complete MetadataCatalog rebuild when
@@ -97,7 +97,7 @@ class NormalRepository {
   // Snapshots are projected per file; bodies are not retained in the result.
   // Missing roots/modules are empty. Unrelated objects produce diagnostics;
   // malformed managed content, duplicate identities, and unsafe paths fail.
-  [[nodiscard]] Result<NormalRepositoryScanResult> scan() const;
+  [[nodiscard]] ::folio::core::internal::Result<NormalRepositoryScanResult, StorageError> scan() const;
 
  private:
   std::filesystem::path root_;

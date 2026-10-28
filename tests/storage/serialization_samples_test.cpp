@@ -17,7 +17,7 @@ using namespace folio::core;
 namespace codec = folio::core::storage::codec;
 
 template <typename T>
-bool succeeded(const codec::Result<T>& result) {
+bool succeeded(const ::folio::core::internal::Result<T, codec::CodecError>& result) {
   return std::holds_alternative<T>(result);
 }
 
@@ -74,7 +74,7 @@ void export_toml(const std::string& filename,
 
 template <typename T>
 void expect_common_roundtrip(const toml::table& table, const std::string& key,
-                             codec::Result<T> (*decode)(const toml::node&)) {
+                             ::folio::core::internal::Result<T, codec::CodecError> (*decode)(const toml::node&)) {
   SCOPED_TRACE(key);
   const auto* node = table.get(key);
   ASSERT_NE(node, nullptr);

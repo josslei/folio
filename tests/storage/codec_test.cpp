@@ -19,12 +19,12 @@ using namespace folio::core;
 namespace codec = folio::core::storage::codec;
 
 template <typename T>
-const T& value_of(const codec::Result<T>& result) {
+const T& value_of(const ::folio::core::internal::Result<T, codec::CodecError>& result) {
   return std::get<T>(result);
 }
 
 template <typename T>
-bool is_error(const codec::Result<T>& result) {
+bool is_error(const ::folio::core::internal::Result<T, codec::CodecError>& result) {
   return std::holds_alternative<codec::CodecError>(result);
 }
 

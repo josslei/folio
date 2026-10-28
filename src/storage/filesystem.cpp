@@ -76,7 +76,7 @@ fs::path temporary_name(const fs::path& destination) {
   return name;
 }
 
-Result<std::monostate> check_pending_temporary(const fs::path& parent,
+::folio::core::internal::Result<std::monostate, StorageError> check_pending_temporary(const fs::path& parent,
                                               const fs::path& destination) {
   const auto prefix = temporary_prefix(destination).native();
   std::error_code ec;
@@ -158,7 +158,7 @@ bool sync_file(int descriptor) {
 
 }  // namespace
 
-Result<StoragePaths> validate_storage_paths(const StoragePaths& paths) {
+::folio::core::internal::Result<StoragePaths, StorageError> validate_storage_paths(const StoragePaths& paths) {
   const std::array roots{paths.normal_root, paths.vault_root,
                           paths.state_root, paths.cache_root};
   std::array<fs::path, 4> resolved;
@@ -194,7 +194,7 @@ Result<StoragePaths> validate_storage_paths(const StoragePaths& paths) {
   return paths;
 }
 
-Result<std::string> normal_entry_filename(EntryType type, const core::Id& id,
+::folio::core::internal::Result<std::string, StorageError> normal_entry_filename(EntryType type, const core::Id& id,
                                          core::Timestamp created) {
   using namespace std::chrono;
   const char* extension;
@@ -230,7 +230,7 @@ Result<std::string> normal_entry_filename(EntryType type, const core::Id& id,
 
 namespace internal {
 
-Result<std::monostate> write_file_atomic(const fs::path& path,
+::folio::core::internal::Result<std::monostate, StorageError> write_file_atomic(const fs::path& path,
                                         std::string_view contents,
                                         bool create_only, SyncFile sync) {
   if (path.empty() || has_nul(path) || path.filename().empty() ||
@@ -449,7 +449,7 @@ Result<std::monostate> write_file_atomic(const fs::path& path,
 
 }  // namespace internal
 
-Result<std::monostate> create_file_atomic(const fs::path& path, std::string_view contents) {
+::folio::core::internal::Result<std::monostate, StorageError> create_file_atomic(const fs::path& path, std::string_view contents) {
   return internal::write_file_atomic(path, contents, true,
 #ifdef _WIN32
                                      nullptr);
@@ -458,7 +458,7 @@ Result<std::monostate> create_file_atomic(const fs::path& path, std::string_view
 #endif
 }
 
-Result<std::monostate> replace_file_atomic(const fs::path& path, std::string_view contents) {
+::folio::core::internal::Result<std::monostate, StorageError> replace_file_atomic(const fs::path& path, std::string_view contents) {
   return internal::write_file_atomic(path, contents, false,
 #ifdef _WIN32
                                      nullptr);

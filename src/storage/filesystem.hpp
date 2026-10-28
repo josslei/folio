@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/internal/result.hpp"
+
 #include "folio/core/directory.hpp"
 #include "folio/core/types.hpp"
 
@@ -47,14 +49,11 @@ struct StorageError {
   bool replacement_completed = false;
 };
 
-template <class T>
-using Result = std::variant<T, StorageError>;
-
 // Validation does not create directories. Existing symlink prefixes are resolved
 // when checking that data roots and the state root do not overlap.
-[[nodiscard]] Result<StoragePaths> validate_storage_paths(const StoragePaths& paths);
+[[nodiscard]] ::folio::core::internal::Result<StoragePaths, StorageError> validate_storage_paths(const StoragePaths& paths);
 
-[[nodiscard]] Result<std::string> normal_entry_filename(
+[[nodiscard]] ::folio::core::internal::Result<std::string, StorageError> normal_entry_filename(
     EntryType type, const core::Id& id, core::Timestamp created);
 
 // Contents are opaque bytes: no text encoding, parsing, or encryption occurs
@@ -73,9 +72,9 @@ using Result = std::variant<T, StorageError>;
 // A failure after publication requires caller reconciliation before further
 // writes; recovery is outside this API. A successful rename is not rolled back
 // by a failed sync.
-[[nodiscard]] Result<std::monostate> create_file_atomic(
+[[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> create_file_atomic(
     const std::filesystem::path& path, std::string_view contents);
-[[nodiscard]] Result<std::monostate> replace_file_atomic(
+[[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> replace_file_atomic(
     const std::filesystem::path& path, std::string_view contents);
 
 }  // namespace folio::core::storage

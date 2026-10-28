@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/internal/result.hpp"
+
 #include "storage/binary_io.hpp"
 #include "storage/filesystem.hpp"
 #include "storage/index_codec.hpp"
@@ -27,9 +29,6 @@ struct CoordinatorError {
   std::optional<BinaryReadError> binary_error;
 };
 
-template <class T>
-using CoordinatorResult = std::variant<T, CoordinatorError>;
-
 enum class CatalogStatus { Unloaded, Ready, Unavailable };
 enum class SaveOutcome { Saved, SkippedPersisted };
 
@@ -44,12 +43,12 @@ class CatalogCoordinator {
   CatalogCoordinator(CatalogCoordinator&&) = delete;
   CatalogCoordinator& operator=(CatalogCoordinator&&) = delete;
 
-  [[nodiscard]] CoordinatorResult<std::monostate> startup_load();
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, CoordinatorError> startup_load();
   // Explicit full rebuild/Refresh from authoritative Normal files. Failure
   // preserves catalog and readiness; success is Ready and unpersisted, with no
   // Index I/O, and prevents a later stale startup load from replacing it.
-  [[nodiscard]] CoordinatorResult<std::vector<ExcludedObject>> rebuild();
-  [[nodiscard]] CoordinatorResult<SaveOutcome> shutdown_save();
+  [[nodiscard]] ::folio::core::internal::Result<std::vector<ExcludedObject>, CoordinatorError> rebuild();
+  [[nodiscard]] ::folio::core::internal::Result<SaveOutcome, CoordinatorError> shutdown_save();
   [[nodiscard]] const MetadataCatalog& catalog() const noexcept;
   [[nodiscard]] MetadataCatalog& catalog() noexcept;
   [[nodiscard]] CatalogStatus status() const noexcept;
