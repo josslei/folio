@@ -29,7 +29,7 @@ template <class T>
 using CoordinatorResult = std::variant<T, CoordinatorError>;
 
 enum class CatalogStatus { Unloaded, Ready, Unavailable };
-enum class SaveOutcome { Saved, SkippedClean };
+enum class SaveOutcome { Saved, SkippedPersisted };
 
 // Owns one in-memory catalog. Startup load is a single attempt. Saving once at
 // shutdown is caller policy; failed saves may be retried. Failed startup cannot

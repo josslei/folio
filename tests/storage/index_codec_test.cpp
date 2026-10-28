@@ -209,15 +209,15 @@ std::string encoded_catalog() {
   return value_of(encoded);
 }
 
-TEST(IndexCodecTest, RoundTripsAllMetadataFieldsAndRestoresMembershipClean) {
+TEST(IndexCodecTest, RoundTripsAllMetadataFieldsAndRestoresPersistedMembership) {
   const auto source = make_catalog();
-  ASSERT_TRUE(source.dirty());
+  ASSERT_TRUE(source.unpersisted());
   const auto encoded = codec::encode_index(source);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
   const auto decoded = codec::decode_index(value_of(encoded));
   ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
   const auto& restored = value_of(decoded);
-  EXPECT_FALSE(restored.dirty());
+  EXPECT_FALSE(restored.unpersisted());
   EXPECT_EQ(restored.query().size(), 4U);
   EXPECT_EQ(restored.list_root(storage::EntryType::Log).entries.size(), 1U);
   EXPECT_EQ(restored.list_root(storage::EntryType::Memo).directories.size(), 1U);
@@ -323,7 +323,7 @@ TEST(IndexCodecTest, RoundTripsEmptyAndEachEntryTypeAlone) {
   const auto empty_decoded = codec::decode_index(value_of(empty_bytes));
   ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(empty_decoded));
   EXPECT_TRUE(value_of(empty_decoded).query().empty());
-  EXPECT_FALSE(value_of(empty_decoded).dirty());
+  EXPECT_FALSE(value_of(empty_decoded).unpersisted());
 
   const auto fixture = make_catalog();
   for (const auto& item : fixture.query()) {
@@ -557,14 +557,14 @@ TEST(IndexCodecTest, RejectsMissingWrongAndIrrelevantKnownFields) {
 
 TEST(IndexCodecTest, RejectsInvalidMetadataAndRelationshipsWithoutMutatingCaller) {
   auto working = make_catalog();
-  working.mark_clean();
+  working.mark_persisted();
   const auto unchanged = codec::encode_index(working);
   ASSERT_TRUE(std::holds_alternative<std::string>(unchanged));
   const auto bytes = value_of(unchanged);
   auto check = [&](WireValue& wire) {
     expect_error(codec::decode_index(pack_wire(wire)),
                  codec::IndexCodecErrorCode::InvalidMetadata);
-    EXPECT_FALSE(working.dirty());
+    EXPECT_FALSE(working.unpersisted());
     const auto after = codec::encode_index(working);
     ASSERT_TRUE(std::holds_alternative<std::string>(after));
     EXPECT_EQ(value_of(after), bytes);

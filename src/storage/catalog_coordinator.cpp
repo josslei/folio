@@ -118,7 +118,7 @@ CoordinatorResult<SaveOutcome> CatalogCoordinator::shutdown_save() {
   if (status_ != CatalogStatus::Ready)
     return error(CoordinatorErrorCode::Unavailable, {},
                  "No valid restored catalog is available to save");
-  if (!catalog_.dirty()) return SaveOutcome::SkippedClean;
+  if (!catalog_.unpersisted()) return SaveOutcome::SkippedPersisted;
   auto encoded = index_codec::encode_index(catalog_);
   if (auto* problem = std::get_if<index_codec::IndexCodecError>(&encoded))
     return codec_error(paths_.state_root / index_relative_path(), *problem, false);
@@ -147,7 +147,7 @@ CoordinatorResult<SaveOutcome> CatalogCoordinator::shutdown_save() {
   auto written = std::get<bool>(found)
       ? replace_file_atomic(path.file, bytes) : create_file_atomic(path.file, bytes);
   if (auto* problem = std::get_if<StorageError>(&written)) return storage_error(*problem);
-  catalog_.mark_clean();
+  catalog_.mark_persisted();
   return SaveOutcome::Saved;
 }
 

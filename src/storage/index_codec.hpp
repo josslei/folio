@@ -24,7 +24,7 @@ struct IndexCodecError {
 template <class T>
 using Result = std::variant<T, IndexCodecError>;
 
-// Pure in-memory MessagePack codec. Decoding builds a fresh, clean catalog;
+// Pure in-memory MessagePack codec. Decoding builds a fresh, persisted catalog;
 // errors never mutate an existing catalog or authoritative Entry files.
 [[nodiscard]] Result<std::string> encode_index(const MetadataCatalog& catalog);
 [[nodiscard]] Result<MetadataCatalog> decode_index(std::string_view bytes);

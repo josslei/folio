@@ -631,7 +631,7 @@ Result<MetadataCatalog> decode_index(std::string_view bytes) {
       if (const auto* problem = std::get_if<StorageError>(&result))
         fail(IndexCodecErrorCode::InvalidMetadata, path, problem->message);
     }
-    catalog.mark_clean();
+    catalog.mark_persisted();
     return catalog;
   } catch (const Failure& failure) {
     return failure.error;

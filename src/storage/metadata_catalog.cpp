@@ -321,7 +321,7 @@ Result<std::monostate> MetadataCatalog::insert_entry(EntryMetadata m) {
     members.erase(key);
     throw;
   }
-  dirty_ = true;
+  unpersisted_ = true;
   return std::monostate{};
 }
 
@@ -366,7 +366,7 @@ Result<std::monostate> MetadataCatalog::update_entry(EntryMetadata m) {
     }
   }, m);
   if (old_members) old_members->erase(key);
-  dirty_ = true;
+  unpersisted_ = true;
   return std::monostate{};
 }
 
@@ -381,7 +381,7 @@ Result<std::monostate> MetadataCatalog::remove_entry(const Id& id) {
     case EntryType::Memo: memos_.erase(key); break;
     case EntryType::Todo: todos_.erase(key); break;
   }
-  dirty_ = true;
+  unpersisted_ = true;
   return std::monostate{};
 }
 
@@ -403,7 +403,7 @@ Result<std::monostate> MetadataCatalog::insert_directory(DirectoryMetadata m) {
     directory_members_.erase(key);
     throw;
   }
-  dirty_ = true;
+  unpersisted_ = true;
   return std::monostate{};
 }
 
@@ -424,7 +424,7 @@ Result<std::monostate> MetadataCatalog::update_directory(DirectoryMetadata m) {
     return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Locator already occupied");
   static_assert(std::is_nothrow_swappable_v<DirectoryMetadata>);
   std::swap(it->second, m);
-  dirty_ = true;
+  unpersisted_ = true;
   return std::monostate{};
 }
 
@@ -437,7 +437,7 @@ Result<std::monostate> MetadataCatalog::remove_directory(const Id& id) {
                    "Directory is referenced by entries");
   directory_members_.erase(key);
   directories_.erase(it);
-  dirty_ = true;
+  unpersisted_ = true;
   return std::monostate{};
 }
 
@@ -539,7 +539,7 @@ std::vector<EntryMetadata> MetadataCatalog::query(const CatalogQuery& q) const {
   });
   return out;
 }
-bool MetadataCatalog::dirty() const noexcept { return dirty_; }
-void MetadataCatalog::mark_clean() noexcept { dirty_ = false; }
+bool MetadataCatalog::unpersisted() const noexcept { return unpersisted_; }
+void MetadataCatalog::mark_persisted() noexcept { unpersisted_ = false; }
 
 }  // namespace folio::core::storage

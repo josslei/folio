@@ -38,7 +38,7 @@ New Normal entries receive filenames `YYYY-MM-DD_HHMMSS_<uuid>.<ext>`, based on 
 
 ### Normal repository
 
-The Normal repository stores only `Normal` privacy snapshots. Logs live directly in `normal_root/logs/`. Memos and Todos live directly in their module root or in a single `<directory-uuid>/` child. Each child has `.folio-dir.toml` metadata whose ID must match the physical UUID directory name. The UUID stored in an entry is its identity; a path or filename is only a locator and cannot establish that two files are the same entry. A filename whose UUID or timestamp differs from the stored values is valid and is preserved during updates and moves. The official entry scan reads `.md` files for Logs and Memos and `.toml` files for Todos; `.folio-dir.toml` is read separately as Directory metadata. Other extensions are outside this scan. During discovery, two formal entry files with the same stored UUID are reported as an error even when discovery requested a different UUID. Atomic-write temporary files are outside the official entry scan, so their staged copy may contain the same UUID as the destination. Inspecting and resolving pending temporary files belongs to the planned recovery service; the entry scan does not parse, delete, or repair them. Recovery artifacts will likewise remain separate from formal entries when their format and location are defined. The repository still validates module placement, Directory references, and safe paths. Directory display names never determine physical paths. A future index is only a rebuildable lookup cache that maps stored UUIDs to actual paths; entry files remain authoritative.
+The Normal repository stores only `Normal` privacy snapshots. Logs live directly in `normal_root/logs/`. Memos and Todos live directly in their module root or in a single `<directory-uuid>/` child. Each child has `.folio-dir.toml` metadata whose ID must match the physical UUID directory name. The UUID stored in an entry is its identity; a path or filename is only a locator and cannot establish that two files are the same entry. A filename whose UUID or timestamp differs from the stored values is valid and is preserved during updates and moves. The official entry scan reads `.md` files for Logs and Memos and `.toml` files for Todos; `.folio-dir.toml` is read separately as Directory metadata. Other extensions are outside this scan. Across Entry and Directory enumeration, parse only recognized formal Entry files and Directory metadata. Exclude reserved atomic temporary files; unrelated objects may produce nonfatal diagnostics. During discovery, two formal entry files with the same stored UUID are reported as an error even when discovery requested a different UUID. Atomic-write temporary files are outside the official entry scan, so their staged copy may contain the same UUID as the destination. Inspecting and resolving pending temporary files belongs to the planned recovery service; the entry scan does not parse, delete, or repair them. Recovery artifacts will likewise remain separate from formal entries when their format and location are defined. The repository still validates module placement, Directory references, and safe paths. Directory display names never determine physical paths. A future index is only a rebuildable lookup cache that maps stored UUIDs to actual paths; entry files remain authoritative.
 
 Entry load and update methods accept an optional `relative_path`, allowing a future index to supply a cached location. With no path, the repository discovers the entry by its stored UUID using the full formal-file scan. With a path, it validates the relative path and module layout, reads that exact file, and checks its stored UUID against the requested ID or Snapshot ID without a full scan. A missing target or a different stored UUID returns `StaleLocator`; an unsafe path, malformed document, or other filesystem failure retains its own error. The repository does not automatically fall back from a supplied path to discovery. The caller can request discovery and refresh its cache after a stale result. Supplied-path operations validate their target but do not detect duplicates elsewhere; discovery and future index verification provide that global check.
 
@@ -74,7 +74,7 @@ The implementation keeps Logs, Memos, and Todos in separate typed STL maps keyed
 
 UUID lookup uses ordered maps with O(log n) lookup per typed registry. Directory listings resolve only their k indexed members, with O(k log n) metadata lookup and deterministic UUID ordering, rather than scanning every Entry. Root membership sets keep Memo and Todo roots separate. Filtering remains linear in the selected collection sizes, with O(k log k) comparisons to sort k matches, in addition to text comparisons and metadata copying. Locator-conflict validation may still scan metadata; no query reads files.
 
-Successful mutations mark the catalog dirty until an explicit acknowledgement of a persisted snapshot clears that flag. Failed validation and read-only queries leave the flag unchanged. No persistence, scanning, repository callbacks, concurrency, or cache scheduler is provided by the catalog itself. **TODO:** integrate catalog updates after successful repository operations; Entry writes must remain successful even if a subsequent metadata update fails, with enough context to refresh safely.
+Successful mutations set `unpersisted()` until `mark_persisted()` explicitly acknowledges a persisted snapshot. This flag describes changes not yet persisted to the Index, independently of catalog readiness, metadata staleness, and Git synchronization. Failed validation and read-only queries leave the flag unchanged. No persistence, scanning, repository callbacks, concurrency, or cache scheduler is provided by the catalog itself. **TODO:** integrate catalog updates after successful repository operations; Entry writes must remain successful even if a subsequent metadata update fails, with enough context to refresh safely.
 
 ### Binary metadata codec
 
@@ -104,7 +104,7 @@ Encoding sorts Entries and Directories independently by canonical UUID and write
 
 Safety limits are 64 MiB of encoded input/output, 100,000 combined Entry and Directory records, 100,000 elements per array (including tags), 64 pairs per map, nesting depth 16, and 8,000,000 total MessagePack objects. Individual string/binary/extension payloads cannot exceed the overall byte limit. These are cache resource bounds, not new Entry text restrictions; long titles remain supported within the aggregate byte budget. A bounded structural preflight checks lengths, depth, and total objects before msgpack-cxx allocates its decoded object tree. The decoder also rejects truncation, invalid markers, unexpected trailing bytes, unsupported versions, invalid UTF-8 in metadata, wrong/missing field types, invalid enums/dates/UUIDs, duplicate identities, and catalog integrity failures. MessagePack and allocation exceptions become explicit codec errors. Existing catalog locator-conflict validation scans primary records, so rebuilding a large catalog can take quadratic time; optimizing catalog import is deferred rather than introducing an unchecked import path.
 
-Decoding never receives a mutable live catalog. It restores Directory records before Entry records into a temporary catalog using ordinary validated insertions; wire ordering does not determine whether a Directory reference resolves. Missing or wrong-kind references, duplicate identities, and occupied locators fail rather than being repaired. The existing catalog has no unchecked import or independent reference-verification API. Reverse Directory membership and root membership sets are reconstructed from primary records and are not serialized. Only a completely validated catalog is returned, marked clean. Encoding and failed decoding leave existing catalog contents and dirty state unchanged. Callers must check the result before replacing their current catalog; encoding alone does not acknowledge persistence or clear dirty state.
+Decoding never receives a mutable live catalog. It restores Directory records before Entry records into a temporary catalog using ordinary validated insertions; wire ordering does not determine whether a Directory reference resolves. Missing or wrong-kind references, duplicate identities, and occupied locators fail rather than being repaired. The existing catalog has no unchecked import or independent reference-verification API. Reverse Directory membership and root membership sets are reconstructed from primary records and are not serialized. Only a completely validated catalog is returned, marked persisted. Encoding and failed decoding leave existing catalog contents and unpersisted state unchanged. Callers must check the result before replacing their current catalog; encoding alone does not acknowledge persistence or clear unpersisted state.
 
 ### Persistent cache policy and future rebuilding
 
@@ -114,25 +114,59 @@ The Normal index is deliberately local-only: placing it under `state_root` rathe
 
 ### Catalog-centric persistence coordination
 
-`MetadataCatalog` is the central in-memory metadata projection, with primary records, derived reverse membership, queries, and dirty state. Entry and Directory files remain authoritative. The catalog performs no file I/O. `IndexCodec` independently converts primary metadata to/from MessagePack; decoding constructs a temporary complete catalog before publication and reconstructs membership from primary records.
+`MetadataCatalog` is the central in-memory metadata projection, with primary records, derived reverse membership, queries, and unpersisted state. Entry and Directory files remain authoritative. The catalog performs no file I/O. `IndexCodec` independently converts primary metadata to/from MessagePack; decoding constructs a temporary complete catalog before publication and reconstructs membership from primary records.
+
+The intended architecture is catalog-centric:
+
+```text
+                 Folio-managed operations
+                           |
+                           v
+                    NormalRepository
+                           |
+                 Authoritative Entries
+                           |
+                   Successful write
+                           |
+                           v
+                   MetadataCatalog
+                  /        |         \
+                 v         v          v
+              Queries   IndexCodec   Rebuild(metadata)
+                           |
+                           v
+                   CatalogCoordinator
+                   |-- Startup load
+                   |-- Refresh policy (future)
+                   |-- Shutdown save
+                   `-- Catalog consistency status
+                           |
+                           v
+                       Binary I/O
+                           |
+                           v
+             state_root/index/normal.msgpack
+```
+
+This is a responsibility diagram, not a literal call sequence: the coordinator invokes IndexCodec and Binary I/O. `Rebuild(metadata)` means reconstructing the catalog's derived structures from primary metadata, without filesystem I/O. Refresh from authoritative files and Repository-to-Catalog mutation coordination remain future work. The coordinator's current status describes catalog availability; richer consistency reporting will accompany future Refresh integration.
 
 The internal `CatalogCoordinator` owns one active catalog and coordinates explicit startup loading and orderly shutdown saving. It combines configured paths, IndexCodec, and generic Binary I/O. It does not write authoritative Entries, implement serialization, or perform filesystem discovery. `startup_load()` and `shutdown_save()` are its explicit lifecycle operations; `catalog()` accesses the single owned in-memory catalog and `status()` reports Unloaded, Ready, or Unavailable. The coordinator is non-copyable and non-movable so session guards and ownership cannot be duplicated. No I/O occurs in its constructor or destructor. Application/TUI wiring remains deferred.
 
 The Normal index location is centralized as `<state_root>/index/normal.msgpack`, outside `normal_root`, `vault_root`, and `cache_root`. Locators in metadata remain relative to the repository data root. Root validation resolves configured roots and rejects overlaps; cache-path checks reject symbolic links at the index directory or target and non-regular destinations. A configured root may resolve through a symlink if it remains safely separate. The existing requirement to exclude concurrent external filesystem mutation still applies.
 
-The coordinator permits at most one explicit startup load attempt, including a failed attempt. Shutdown saving has no attempt guard: a repeated call can skip a clean catalog or retry a failed save. Startup reads the bounded payload through Binary I/O and decodes it before adopting the complete clean catalog. Missing, corrupt, unsupported-schema, resource-limit, invalid-path, and I/O outcomes remain distinct. A failed load never establishes a valid catalog, and ordinary mutations cannot turn that failure into permission to overwrite the index. A future authoritative rebuild must establish readiness explicitly; that integration is not implemented here.
+The coordinator permits at most one explicit startup load attempt, including a failed attempt. Shutdown saving has no attempt guard: a repeated call can skip a persisted catalog or retry a failed save. Startup reads the bounded payload through Binary I/O and decodes it before adopting the complete persisted catalog. Missing, corrupt, unsupported-schema, resource-limit, invalid-path, and I/O outcomes remain distinct. A failed load never establishes a valid catalog, and ordinary mutations cannot turn that failure into permission to overwrite the index. A future authoritative rebuild must establish readiness explicitly; that integration is not implemented here.
 
-Shutdown skips I/O for an unchanged, successfully restored catalog. Otherwise it encodes the complete ready catalog before creating parents and invokes one existing atomic create or replace operation. Only complete persistence success acknowledges the catalog as clean. Failed encoding, writing, syncing, or cleanup preserves dirty state and diagnostic context, including whether publication occurred. Repeated startup loading returns an explicit error without further index I/O. Saving leaves readiness unchanged: after success a repeated call skips the now-clean catalog, while a failed save can be retried. Saving before a valid catalog is available returns an error without consuming a save allowance or preventing startup loading. Post-publication errors still require reconciliation according to the existing atomic-write contract before retrying.
+Shutdown skips I/O for an unchanged, successfully restored catalog. Otherwise it encodes the complete ready catalog before creating parents and invokes one existing atomic create or replace operation. Only complete persistence success acknowledges the catalog as persisted. Failed encoding, writing, syncing, or cleanup preserves unpersisted state and diagnostic context, including whether publication occurred. Repeated startup loading returns an explicit error without further index I/O. Saving leaves readiness unchanged: after success a repeated call skips the now-persisted catalog, while a failed save can be retried. Saving before a valid catalog is available returns an error without consuming a save allowance or preventing startup loading. Post-publication errors still require reconciliation according to the existing atomic-write contract before retrying.
 
 `src/storage/binary_io.hpp` provides `read_binary_file(path, max_bytes)`, a generic bounded opaque-byte reader; its caller supplies the byte limit and owns path confinement/symlink policy. It has no Index, Catalog, Entry, or Vault concepts. Binary bytes use `std::string` with explicit lengths, preserving embedded nulls. Existing `create_file_atomic` and `replace_file_atomic` already accept opaque bytes and are reused directly, without another write wrapper or changed atomic semantics.
 
 ```text
 startup -> coordinator load attempt -> Binary I/O -> IndexCodec
-                                          success -> adopt clean Catalog
+                                          success -> adopt persisted Catalog
                                           failure -> unavailable; no overwrite
 runtime -> in-memory Catalog only
-shutdown -> ready Catalog -> encode -> atomic create/replace -> mark clean
-                         clean restored Catalog -> skip I/O
+shutdown -> ready Catalog -> encode -> atomic create/replace -> mark persisted
+                         unchanged restored Catalog -> skip I/O
 ```
 
 Parent creation is a separate mutation: a later failure can leave empty state/index directories, and newly created ancestors have no stronger crash-durability guarantees than existing primitives. A post-publication failure can leave a visible new index with uncertain durability; no rollback is attempted. **TODO:** address parent creation and partial states with the future transaction/recovery design.
@@ -144,7 +178,7 @@ The planned coordination flow keeps persistence ahead of metadata changes:
 ```text
 Caller -> NormalRepository validates and persists Entry/Directory
        -> successful saved Snapshot + actual locator
-       -> project metadata -> update Catalog and reverse membership -> dirty
+       -> project metadata -> update Catalog and reverse membership -> unpersisted
 ```
 
 A subsequent catalog-update failure preserves the saved Entry and reports the discrepancy for later Refresh. Ordinary catalog updates never scan files. Repository/Catalog CRUD coordination remains deferred.

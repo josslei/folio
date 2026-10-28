@@ -132,8 +132,10 @@ class MetadataCatalog {
       DirectoryKind kind, const Id& id) const;
   [[nodiscard]] std::vector<DirectoryMetadata> list_directories(DirectoryKind kind) const;
   [[nodiscard]] std::vector<EntryMetadata> query(const CatalogQuery& query = {}) const;
-  [[nodiscard]] bool dirty() const noexcept;
-  void mark_clean() noexcept;
+  // Changes since the last acknowledged Index snapshot; unrelated to readiness
+  // or Git synchronization. Acknowledge only after load or successful persistence.
+  [[nodiscard]] bool unpersisted() const noexcept;
+  void mark_persisted() noexcept;
 
  private:
   [[nodiscard]] bool entry_path_occupied(const std::filesystem::path& path,
@@ -150,7 +152,7 @@ class MetadataCatalog {
   std::set<std::string> memo_roots_;
   std::set<std::string> todo_roots_;
   std::map<std::string, std::set<std::string>> directory_members_;
-  bool dirty_ = false;
+  bool unpersisted_ = false;
 };
 
 }  // namespace folio::core::storage

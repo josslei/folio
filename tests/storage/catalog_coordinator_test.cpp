@@ -174,7 +174,7 @@ TEST_F(CatalogCoordinatorTest, ConstructorAndFailedStartupNeverOverwriteCache) {
   EXPECT_FALSE(fs::exists(state));
   auto catalog = make_catalog();
   coordinator.catalog() = std::move(catalog);
-  EXPECT_TRUE(coordinator.catalog().dirty());
+  EXPECT_TRUE(coordinator.catalog().unpersisted());
   expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);
   expect_error(coordinator.shutdown_save(), storage::CoordinatorErrorCode::Unavailable);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Unavailable);
@@ -192,16 +192,16 @@ TEST_F(CatalogCoordinatorTest, ShutdownBeforeStartupDoesNotBlockStartup) {
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   const auto saved = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(saved));
-  EXPECT_EQ(std::get<storage::SaveOutcome>(saved), storage::SaveOutcome::SkippedClean);
+  EXPECT_EQ(std::get<storage::SaveOutcome>(saved), storage::SaveOutcome::SkippedPersisted);
 }
 
-TEST_F(CatalogCoordinatorTest, CleanLoadedCatalogSkipsShutdownIoAndQueriesMemory) {
+TEST_F(CatalogCoordinatorTest, PersistedLoadedCatalogSkipsShutdownIoAndQueriesMemory) {
   const auto original = make_catalog();
   seed(original);
   storage::CatalogCoordinator coordinator{paths()};
   ASSERT_TRUE(std::holds_alternative<std::monostate>(coordinator.startup_load()));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
-  EXPECT_FALSE(coordinator.catalog().dirty());
+  EXPECT_FALSE(coordinator.catalog().unpersisted());
   EXPECT_EQ(coordinator.catalog().query().size(), 5U);
   EXPECT_EQ(coordinator.catalog().list_root(storage::EntryType::Log).entries.size(), 1U);
   EXPECT_EQ(coordinator.catalog().list_root(storage::EntryType::Memo).directories.size(), 1U);
@@ -219,39 +219,39 @@ TEST_F(CatalogCoordinatorTest, CleanLoadedCatalogSkipsShutdownIoAndQueriesMemory
   EXPECT_EQ(coordinator.catalog().query().size(), 5U);
   const auto result = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(result));
-  EXPECT_EQ(std::get<storage::SaveOutcome>(result), storage::SaveOutcome::SkippedClean);
+  EXPECT_EQ(std::get<storage::SaveOutcome>(result), storage::SaveOutcome::SkippedPersisted);
   EXPECT_FALSE(fs::exists(file));
   const auto again = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(again));
-  EXPECT_EQ(std::get<storage::SaveOutcome>(again), storage::SaveOutcome::SkippedClean);
+  EXPECT_EQ(std::get<storage::SaveOutcome>(again), storage::SaveOutcome::SkippedPersisted);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);
   expect_no_data_roots();
 }
 
-TEST_F(CatalogCoordinatorTest, DirtyLoadedCatalogReplacesCacheAndAcknowledgesSave) {
+TEST_F(CatalogCoordinatorTest, UnpersistedLoadedCatalogReplacesCacheAndAcknowledgesSave) {
   seed(make_catalog());
   const auto before = read_bytes(file);
   storage::CatalogCoordinator coordinator{paths()};
   ASSERT_TRUE(std::holds_alternative<std::monostate>(coordinator.startup_load()));
   change_log_title(coordinator.catalog());
-  ASSERT_TRUE(coordinator.catalog().dirty());
+  ASSERT_TRUE(coordinator.catalog().unpersisted());
   const auto result = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(result));
   EXPECT_EQ(std::get<storage::SaveOutcome>(result), storage::SaveOutcome::Saved);
-  EXPECT_FALSE(coordinator.catalog().dirty());
+  EXPECT_FALSE(coordinator.catalog().unpersisted());
   EXPECT_NE(read_bytes(file), before);
   const auto encoded = codec::encode_index(coordinator.catalog());
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
   EXPECT_EQ(read_bytes(file), std::get<std::string>(encoded));
   const auto again = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(again));
-  EXPECT_EQ(std::get<storage::SaveOutcome>(again), storage::SaveOutcome::SkippedClean);
+  EXPECT_EQ(std::get<storage::SaveOutcome>(again), storage::SaveOutcome::SkippedPersisted);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   expect_no_data_roots();
 }
 
-TEST_F(CatalogCoordinatorTest, DirtyEmptyCatalogCanReplaceAndMissingTargetCanBeCreated) {
+TEST_F(CatalogCoordinatorTest, UnpersistedEmptyCatalogCanReplaceAndMissingTargetCanBeCreated) {
   seed(make_catalog());
   storage::CatalogCoordinator coordinator{paths()};
   ASSERT_TRUE(std::holds_alternative<std::monostate>(coordinator.startup_load()));
@@ -265,14 +265,14 @@ TEST_F(CatalogCoordinatorTest, DirtyEmptyCatalogCanReplaceAndMissingTargetCanBeC
       EXPECT_TRUE(std::holds_alternative<std::monostate>(
           coordinator.catalog().remove_directory(directory.id)));
   }
-  EXPECT_TRUE(coordinator.catalog().dirty());
+  EXPECT_TRUE(coordinator.catalog().unpersisted());
   EXPECT_TRUE(coordinator.catalog().query().empty());
   ASSERT_TRUE(fs::remove(file));
   const auto result = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(result));
   EXPECT_EQ(std::get<storage::SaveOutcome>(result), storage::SaveOutcome::Saved);
   EXPECT_TRUE(fs::is_regular_file(file));
-  EXPECT_FALSE(coordinator.catalog().dirty());
+  EXPECT_FALSE(coordinator.catalog().unpersisted());
   const auto decoded = codec::decode_index(read_bytes(file));
   ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
   EXPECT_TRUE(std::get<storage::MetadataCatalog>(decoded).query().empty());
@@ -335,7 +335,7 @@ TEST_F(CatalogCoordinatorTest, InvalidRootsAndIoFailureDoNotCreateCache) {
   expect_no_data_roots();
 }
 
-TEST_F(CatalogCoordinatorTest, EncodingFailurePreservesExistingCacheAndDirtyCatalog) {
+TEST_F(CatalogCoordinatorTest, EncodingFailurePreservesExistingCacheAndUnpersistedCatalog) {
   seed(make_catalog());
   const auto original = read_bytes(file);
   storage::CatalogCoordinator coordinator{paths()};
@@ -349,7 +349,7 @@ TEST_F(CatalogCoordinatorTest, EncodingFailurePreservesExistingCacheAndDirtyCata
   expect_error(failed, storage::CoordinatorErrorCode::CodecError);
   ASSERT_TRUE(std::get<storage::CoordinatorError>(failed).codec_error.has_value());
   EXPECT_EQ(read_bytes(file), original);
-  EXPECT_TRUE(coordinator.catalog().dirty());
+  EXPECT_TRUE(coordinator.catalog().unpersisted());
   log.log_date.date = std::chrono::year{2027} / 1 / 15;
   log.title = "Recovered after failed encoding";
   ASSERT_TRUE(std::holds_alternative<std::monostate>(coordinator.catalog().update_entry(
@@ -357,7 +357,7 @@ TEST_F(CatalogCoordinatorTest, EncodingFailurePreservesExistingCacheAndDirtyCata
   const auto retried = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(retried));
   EXPECT_EQ(std::get<storage::SaveOutcome>(retried), storage::SaveOutcome::Saved);
-  EXPECT_FALSE(coordinator.catalog().dirty());
+  EXPECT_FALSE(coordinator.catalog().unpersisted());
   EXPECT_NE(read_bytes(file), original);
   expect_no_data_roots();
 }
@@ -377,7 +377,7 @@ TEST_F(CatalogCoordinatorTest, PendingTemporaryBlocksReplacementWithoutNewTemp) 
   ASSERT_TRUE(cause.storage_error.has_value());
   EXPECT_EQ(cause.storage_error->code, storage::StorageErrorCode::RecoveryRequired);
   EXPECT_FALSE(cause.storage_error->replacement_completed);
-  EXPECT_TRUE(coordinator.catalog().dirty());
+  EXPECT_TRUE(coordinator.catalog().unpersisted());
   EXPECT_EQ(read_bytes(file), original);
   EXPECT_EQ(read_bytes(pending), "unfinished cache");
   EXPECT_EQ(std::distance(fs::directory_iterator(file.parent_path()),
@@ -386,7 +386,7 @@ TEST_F(CatalogCoordinatorTest, PendingTemporaryBlocksReplacementWithoutNewTemp) 
   const auto retried = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(retried));
   EXPECT_EQ(std::get<storage::SaveOutcome>(retried), storage::SaveOutcome::Saved);
-  EXPECT_FALSE(coordinator.catalog().dirty());
+  EXPECT_FALSE(coordinator.catalog().unpersisted());
   EXPECT_NE(read_bytes(file), original);
   expect_no_data_roots();
 }
@@ -402,7 +402,7 @@ TEST_F(CatalogCoordinatorTest, ParentFileAndSymlinksPreventShutdownWrite) {
   const auto blocked = parent_file.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::CoordinatorError>(blocked));
   EXPECT_EQ(read_bytes(file.parent_path()), "not a directory");
-  EXPECT_TRUE(parent_file.catalog().dirty());
+  EXPECT_TRUE(parent_file.catalog().unpersisted());
   ASSERT_TRUE(fs::remove(file.parent_path()));
 
   seed(make_catalog());
@@ -417,7 +417,7 @@ TEST_F(CatalogCoordinatorTest, ParentFileAndSymlinksPreventShutdownWrite) {
   if (ec) GTEST_SKIP() << "Cannot create file symlink: " << ec.message();
   expect_error(symlinked.shutdown_save(), storage::CoordinatorErrorCode::InvalidPath);
   EXPECT_EQ(read_bytes(outside), "outside bytes");
-  EXPECT_TRUE(symlinked.catalog().dirty());
+  EXPECT_TRUE(symlinked.catalog().unpersisted());
   expect_no_data_roots();
 }
 
@@ -435,13 +435,13 @@ TEST_F(CatalogCoordinatorTest, SymlinkedIndexParentCannotRedirectShutdownWrite) 
   if (ec) GTEST_SKIP() << "Cannot create directory symlink: " << ec.message();
   expect_error(coordinator.shutdown_save(), storage::CoordinatorErrorCode::InvalidPath);
   EXPECT_TRUE(fs::is_empty(outside));
-  EXPECT_TRUE(coordinator.catalog().dirty());
+  EXPECT_TRUE(coordinator.catalog().unpersisted());
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   expect_no_data_roots();
 }
 
 #ifndef _WIN32
-TEST_F(CatalogCoordinatorTest, DirectoryLockFailurePreservesExistingCacheAndDirtyFlag) {
+TEST_F(CatalogCoordinatorTest, DirectoryLockFailurePreservesExistingCacheAndUnpersistedFlag) {
   seed(make_catalog());
   const auto original = read_bytes(file);
   storage::CatalogCoordinator coordinator{paths()};
@@ -462,7 +462,7 @@ TEST_F(CatalogCoordinatorTest, DirectoryLockFailurePreservesExistingCacheAndDirt
   EXPECT_EQ(cause.storage_error->code, storage::StorageErrorCode::IoError);
   EXPECT_FALSE(cause.storage_error->replacement_completed);
   EXPECT_EQ(read_bytes(file), original);
-  EXPECT_TRUE(coordinator.catalog().dirty());
+  EXPECT_TRUE(coordinator.catalog().unpersisted());
   expect_no_data_roots();
 }
 #endif
