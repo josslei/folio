@@ -183,7 +183,10 @@ class CatalogCoordinatorTest : public testing::Test {
 
   storage::MetadataCatalog owned_catalog;
 
-  storage::StoragePaths paths() const { return {normal, vault, state, cache}; }
+  storage::StoragePaths paths() const {
+    return {normal, vault, {temporary.path() / "config", temporary.path() / "data",
+                           state, cache, std::nullopt}};
+  }
   void seed(const storage::MetadataCatalog& catalog) const {
     const auto encoded = codec::encode_index(catalog);
     ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
@@ -197,6 +200,33 @@ class CatalogCoordinatorTest : public testing::Test {
     EXPECT_FALSE(fs::exists(cache));
   }
 };
+
+TEST_F(CatalogCoordinatorTest, SharedApplicationParentKeepsIndexInEffectiveState) {
+  auto effective = paths();
+  effective.application.config = temporary.path() / "application";
+  effective.application.data = effective.application.config;
+  effective.application.state = effective.application.data / "state";
+  const auto expected = effective.application.state / "index/normal.msgpack";
+  {
+    storage::CatalogCoordinator coordinator{effective, owned_catalog};
+    ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
+    EXPECT_TRUE(owned_catalog.unpersisted());
+    EXPECT_FALSE(fs::exists(expected));
+    const auto saved = coordinator.shutdown_save();
+    ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(saved));
+    EXPECT_EQ(std::get<storage::SaveOutcome>(saved), storage::SaveOutcome::Saved);
+    EXPECT_FALSE(owned_catalog.unpersisted());
+  }
+  EXPECT_TRUE(fs::is_regular_file(expected));
+  EXPECT_FALSE(fs::exists(cache));
+  EXPECT_FALSE(fs::exists(normal));
+  EXPECT_FALSE(fs::exists(vault));
+  storage::CatalogCoordinator restored{effective, owned_catalog};
+  const auto loaded = restored.startup_load();
+  ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(loaded));
+  EXPECT_FALSE(std::get<storage::InitializationOutcome>(loaded).index_error);
+  EXPECT_FALSE(owned_catalog.unpersisted());
+}
 
 TEST_F(CatalogCoordinatorTest, BorrowedCatalogSurvivesCoordinatorWithoutConstructorIo) {
   owned_catalog = make_catalog();
@@ -384,7 +414,7 @@ TEST_F(CatalogCoordinatorTest, InvalidRootsAndIoFailureDoNotCreateCache) {
   expect_error(overlap.startup_load(), storage::CoordinatorErrorCode::InvalidPath);
   expect_error(overlap.shutdown_save(), storage::CoordinatorErrorCode::Unavailable);
   invalid = paths();
-  invalid.state_root = temporary.path() / std::string(8192, 'x');
+  invalid.application.state = temporary.path() / std::string(8192, 'x');
   storage::MetadataCatalog io_catalog;
   storage::CatalogCoordinator io{invalid, io_catalog};
   const auto failure = io.startup_load();
@@ -793,7 +823,7 @@ TEST_F(CatalogCoordinatorTest, StartupPropagatesPathAndIoErrorsWithoutScanning) 
   EXPECT_EQ(overlap.status(), storage::CatalogStatus::Unavailable);
   EXPECT_FALSE(fs::exists(normal));
   invalid = paths();
-  invalid.state_root = temporary.path() / std::string(8192, 'x');
+  invalid.application.state = temporary.path() / std::string(8192, 'x');
   storage::MetadataCatalog io_catalog;
   storage::CatalogCoordinator io{invalid, io_catalog};
   expect_error(io.startup_load(), storage::CoordinatorErrorCode::IoError);

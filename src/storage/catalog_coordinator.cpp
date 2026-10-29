@@ -49,8 +49,8 @@ struct Locations { fs::path state_root; fs::path parent; fs::path file; };
   auto checked = validate_storage_paths(paths);
   if (auto* problem = std::get_if<StorageError>(&checked)) return storage_error(*problem);
   std::error_code ec;
-  const auto root = fs::weakly_canonical(paths.state_root, ec);
-  if (ec) return io_error(paths.state_root, "Could not resolve state root", ec);
+  const auto root = fs::weakly_canonical(paths.application.state, ec);
+  if (ec) return io_error(paths.application.state, "Could not resolve state root", ec);
   const auto relative = index_relative_path();
   return Locations{root, root / relative.parent_path(), root / relative};
 }
@@ -218,7 +218,7 @@ CatalogCoordinator::refresh_all() {
   if (!catalog_.unpersisted()) return SaveOutcome::SkippedPersisted;
   auto encoded = index_codec::encode_index(catalog_);
   if (auto* problem = std::get_if<index_codec::IndexCodecError>(&encoded))
-    return codec_error(paths_.state_root / index_relative_path(), *problem, false);
+    return codec_error(paths_.application.state / index_relative_path(), *problem, false);
   auto resolved = locations(paths_);
   if (auto* problem = std::get_if<CoordinatorError>(&resolved)) return *problem;
   const auto& path = std::get<Locations>(resolved);

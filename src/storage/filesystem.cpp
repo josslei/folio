@@ -12,6 +12,7 @@
 #include <locale>
 #include <sstream>
 #include <utility>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -160,9 +161,11 @@ bool sync_file(int descriptor) {
 }  // namespace
 
 ::folio::core::internal::Result<StoragePaths, StorageError> validate_storage_paths(const StoragePaths& paths) {
-  const std::array roots{paths.normal_root, paths.vault_root,
-                          paths.state_root, paths.cache_root};
-  std::array<fs::path, 4> resolved;
+  std::vector<fs::path> roots{paths.normal_root, paths.vault_root,
+      paths.application.config, paths.application.data,
+      paths.application.state, paths.application.cache};
+  if (paths.application.runtime) roots.push_back(*paths.application.runtime);
+  std::vector<fs::path> resolved(roots.size());
   for (std::size_t i = 0; i < roots.size(); ++i) {
     if (roots[i].empty() || !roots[i].is_absolute() || has_nul(roots[i])) {
       return error(StorageErrorCode::InvalidPath, roots[i],
@@ -184,11 +187,11 @@ bool sync_file(int descriptor) {
       return error(StorageErrorCode::InvalidPath, roots[i], "Storage root is not a directory");
     }
   }
-  for (std::size_t i = 0; i < resolved.size(); ++i) {
+  for (std::size_t i = 0; i < 2; ++i) {
     for (std::size_t j = i + 1; j < resolved.size(); ++j) {
       if (overlaps(resolved[i], resolved[j])) {
         return error(StorageErrorCode::InvalidPath, roots[j],
-                     "Storage roots must not overlap");
+                     "Authoritative roots must not overlap each other or application directories");
       }
     }
   }

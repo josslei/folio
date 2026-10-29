@@ -112,7 +112,7 @@ class NormalRepositoryCallbacksTest : public testing::Test {
   storage::NormalRepository repository{normal};
   storage::MetadataCatalog owned_catalog;
   storage::CatalogCoordinator coordinator{
-      storage::StoragePaths{normal, vault, state, cache}, owned_catalog};
+      storage::StoragePaths{normal, vault, {state.parent_path() / "config", state.parent_path() / "data", state, cache, std::nullopt}}, owned_catalog};
 
   void SetUp() override {
     const auto loaded = coordinator.startup_load();
@@ -207,7 +207,7 @@ TEST_F(NormalRepositoryCallbacksTest, StoredCallbackReferencesSurviveRefreshWith
   const auto other_cache = root.path / "other-cache";
   storage::MetadataCatalog other_catalog;
   storage::CatalogCoordinator other{
-      storage::StoragePaths{other_normal, other_vault, other_state, other_cache}, other_catalog};
+      storage::StoragePaths{other_normal, other_vault, {other_state.parent_path() / "config", other_state.parent_path() / "data", other_state, other_cache, std::nullopt}}, other_catalog};
   EXPECT_FALSE(fs::exists(other_normal));
   EXPECT_FALSE(fs::exists(other_vault));
   EXPECT_FALSE(fs::exists(other_state));
@@ -1019,7 +1019,7 @@ TEST_F(NormalRepositoryCallbacksTest, ManagedCreationRejectsAllEntryIdentityColl
 
 TEST_F(NormalRepositoryCallbacksTest, ManagedPreflightRejectsUninitializedAndInconsistentCatalogs) {
   storage::MetadataCatalog empty;
-  storage::CatalogCoordinator unloaded{{normal, vault, state, cache}, empty};
+  storage::CatalogCoordinator unloaded{{normal, vault, {state.parent_path() / "config", state.parent_path() / "data", state, cache, std::nullopt}}, empty};
   expect_code(repository.create_log(log_snapshot(), unloaded.log_creation_callback(),
       unloaded.creation_check()), storage::StorageErrorCode::RecoveryRequired);
   EXPECT_FALSE(fs::exists(normal));

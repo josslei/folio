@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -28,11 +29,23 @@ struct BinaryReadError {
 [[nodiscard]] ::folio::core::internal::Result<std::string, BinaryReadError> read_binary_file(
     const std::filesystem::path& path, std::size_t max_bytes);
 
+// Effective application-owned directories, supplied explicitly for now. Platform
+// default resolution belongs to future configuration setup. No directories are
+// created by constructing or validating these values. Runtime may be unavailable
+// (including platforms whose IPC transport needs no filesystem directory).
+struct ApplicationPaths {
+  std::filesystem::path config;
+  std::filesystem::path data;
+  std::filesystem::path state;
+  std::filesystem::path cache;
+  std::optional<std::filesystem::path> runtime;
+};
+
 struct StoragePaths {
+  // User-configurable authoritative locations, independent of application paths.
   std::filesystem::path normal_root;
   std::filesystem::path vault_root;
-  std::filesystem::path state_root;
-  std::filesystem::path cache_root;
+  ApplicationPaths application;
 };
 
 enum class RecordType { Log, Memo, Todo };
@@ -67,7 +80,9 @@ struct StorageError {
 };
 
 // Validation does not create directories. Existing symlink prefixes are resolved
-// when checking that data roots and the state root do not overlap.
+// when checking authoritative roots against each other and application paths.
+// Application categories may share or nest directories; authoritative storage
+// must remain disjoint from all application-managed directories.
 [[nodiscard]] ::folio::core::internal::Result<StoragePaths, StorageError> validate_storage_paths(const StoragePaths& paths);
 
 [[nodiscard]] ::folio::core::internal::Result<std::string, StorageError> normal_record_filename(

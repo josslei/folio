@@ -85,12 +85,12 @@ Status distinguishes implemented contracts from agreed future direction. This re
 
 ## D10 — Platform-standard paths
 
-- **Status:** Decided/Planned.
+- **Status:** Effective-path model Implemented; platform defaults Decided/Planned.
 - **Decision:** Separate config/data/state/cache/runtime using platform semantics.
 - **Motivation:** Respect OS lifecycle and cleanup rules.
 - **Alternatives considered:** Uniform forced folder hierarchy or configurable internal paths everywhere.
-- **Consequences:** Refactor current StoragePaths; inject paths in tests.
-- **Open/Deferred:** Exact paths, resolver APIs and C++ representation.
+- **Consequences:** Implemented StoragePaths separates configurable authoritative roots from explicitly supplied ApplicationPaths; tests inject temporary paths.
+- **Open/Deferred:** Exact platform paths and resolver APIs are deferred until configuration setup; the effective-path representation is implemented.
 
 ## D11 — Normal Index in Cache
 

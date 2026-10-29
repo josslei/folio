@@ -95,3 +95,10 @@ Snapshot-to-metadata coverage guards in [metadata tests](../tests/storage/metada
 **Decided/Planned:** full scans are reserved for startup fallback, previous Session Marker recovery, and explicit Full Refresh. Explicit targeted discovery and standalone creation discovery remain deliberate API choices. Navigation may enumerate/count immediate formal objects without parsing them; equal counts are a practical indicator, never proof. No watchers, hashes, or periodic verification are required for uncommon external edits.
 
 **Decided/Planned:** Application owns Catalog, Coordinator, and Repositories, presents public CLI/TUI APIs, and runs in one per-user Backend. Storage stays private. Normal Index moves from current State to Cache. Session Marker and locking are not implemented. Follow the [roadmap](roadmap.md), not speculative APIs.
+## Effective storage paths — Implemented
+
+Internal `StoragePaths` separates configurable `normal_root` and `vault_root` from an `ApplicationPaths application` value containing `config`, `data`, `state`, `cache`, and optional `runtime`. Internal callers supply these effective absolute paths; tests inject temporary locations. Platform defaults and configuration-file setup are deferred until application configuration is developed. No environment or home-directory lookup is performed.
+
+`validate_storage_paths()` creates nothing, checks required absolute paths and existing directory types, and resolves existing filesystem aliases for overlap checks. Normal and Vault must be disjoint from each other and every application directory. Application categories may share a location or nest beneath a common parent; this permits native platform layouts without prescribing one. Path validation does not establish ownership, permissions, or a secure IPC location; future resolution/runtime setup must establish those properties. Cache and runtime must not be used to store durable recovery data.
+
+The Index remains at `<application.state>/index/normal.msgpack` during this transition. Cache relocation, Session Marker, platform default resolution, and configuration persistence are not implemented.

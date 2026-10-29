@@ -30,7 +30,7 @@ Review linked architecture/decision documents and the separately proposed Storag
 
 After consolidation review, establish platform-standard configuration, data, state, cache, and runtime paths; refactor internal paths; relocate the Normal Index from State to Cache; and integrate the durable Session Marker with exclusive process/data ownership.
 
-Resolve exact platform defaults, the StoragePaths representation, legacy Index handling, and durable Marker cleanup before implementation. Completion requires isolated platform/path tests and crash-consistency coverage, including failed rebuild/save, Cache loss, and lock release. A Backend must not become Ready before its Marker is durable; failed persistence or Catalog inconsistency must preserve the Marker.
+The effective StoragePaths/ApplicationPaths separation is implemented with explicitly injected paths. Platform default resolution is deferred until configuration setup near application completion. Resolve legacy Index handling and durable Marker cleanup before implementing the remaining Storage lifecycle work. Completion requires isolated platform/path tests and crash-consistency coverage, including failed rebuild/save, Cache loss, and lock release. A Backend must not become Ready before its Marker is durable; failed persistence or Catalog inconsistency must preserve the Marker.
 
 Authoritative roots stay configurable. One configuration per OS user; no Workspace Manager.
 

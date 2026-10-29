@@ -49,7 +49,7 @@ class IndexResourceLimitsTest : public testing::Test {
   fs::path state() const { return root / "state"; }
   fs::path file() const { return state() / "index" / "normal.msgpack"; }
   storage::StoragePaths paths() const {
-    return {normal(), root / "vault", state(), root / "cache"};
+    return {normal(), root / "vault", {root / "config", root / "data", state(), root / "cache", std::nullopt}};
   }
   void write_oversized_cache() const {
     ASSERT_TRUE(fs::create_directories(file().parent_path()));
