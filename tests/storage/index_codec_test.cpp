@@ -193,10 +193,10 @@ storage::MetadataCatalog make_catalog() {
       core::DueDate{context(timestamp_at(std::chrono::seconds{1900000000},
                              std::chrono::nanoseconds{654321000}),
                             "UTC", std::nullopt)}, std::nullopt};
-  for (const storage::EntryMetadata& metadata : {
-           storage::EntryMetadata{log}, storage::EntryMetadata{memo},
-           storage::EntryMetadata{todo_date}, storage::EntryMetadata{todo_time}}) {
-    if (!std::holds_alternative<std::monostate>(catalog.insert_entry(metadata)))
+  for (const storage::RecordMetadata& metadata : {
+           storage::RecordMetadata{log}, storage::RecordMetadata{memo},
+           storage::RecordMetadata{todo_date}, storage::RecordMetadata{todo_time}}) {
+    if (!std::holds_alternative<std::monostate>(catalog.insert_record(metadata)))
       throw std::runtime_error("Invalid Entry fixture");
   }
   return catalog;
@@ -219,10 +219,10 @@ TEST(IndexCodecTest, RoundTripsAllMetadataFieldsAndRestoresPersistedMembership) 
   const auto& restored = value_of(decoded);
   EXPECT_FALSE(restored.unpersisted());
   EXPECT_EQ(restored.query().size(), 4U);
-  EXPECT_EQ(restored.list_root(storage::EntryType::Log).entries.size(), 1U);
-  EXPECT_EQ(restored.list_root(storage::EntryType::Memo).directories.size(), 1U);
-  EXPECT_EQ(restored.list_root(storage::EntryType::Todo).entries.size(), 1U);
-  EXPECT_EQ(restored.list_root(storage::EntryType::Todo).directories.size(), 1U);
+  EXPECT_EQ(restored.list_root(storage::RecordType::Log).records.size(), 1U);
+  EXPECT_EQ(restored.list_root(storage::RecordType::Memo).directories.size(), 1U);
+  EXPECT_EQ(restored.list_root(storage::RecordType::Todo).records.size(), 1U);
+  EXPECT_EQ(restored.list_root(storage::RecordType::Todo).directories.size(), 1U);
 
   const auto memo_dir = id("87183823-2574-4bfd-b411-99ed177d3e43");
   const auto todo_dir = id("97183823-2574-4bfd-b411-99ed177d3e43");
@@ -238,15 +238,15 @@ TEST(IndexCodecTest, RoundTripsAllMetadataFieldsAndRestoresPersistedMembership) 
   EXPECT_EQ(todo_directory->name, "任务");
   const auto memo_children = restored.list_directory(core::DirectoryKind::Memo, memo_dir);
   const auto todo_children = restored.list_directory(core::DirectoryKind::Todo, todo_dir);
-  ASSERT_TRUE(std::holds_alternative<std::vector<storage::EntryMetadata>>(memo_children));
-  ASSERT_TRUE(std::holds_alternative<std::vector<storage::EntryMetadata>>(todo_children));
-  EXPECT_EQ(std::get<std::vector<storage::EntryMetadata>>(memo_children).size(), 1U);
-  EXPECT_EQ(std::get<std::vector<storage::EntryMetadata>>(todo_children).size(), 1U);
+  ASSERT_TRUE(std::holds_alternative<std::vector<storage::RecordMetadata>>(memo_children));
+  ASSERT_TRUE(std::holds_alternative<std::vector<storage::RecordMetadata>>(todo_children));
+  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(memo_children).size(), 1U);
+  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(todo_children).size(), 1U);
 
-  const auto log = restored.find_entry(id("17183823-2574-4bfd-b411-99ed177d3e43"));
-  const auto memo = restored.find_entry(id("27183823-2574-4bfd-b411-99ed177d3e43"));
-  const auto dated = restored.find_entry(id("37183823-2574-4bfd-b411-99ed177d3e43"));
-  const auto timed = restored.find_entry(id("47183823-2574-4bfd-b411-99ed177d3e43"));
+  const auto log = restored.find_record(id("17183823-2574-4bfd-b411-99ed177d3e43"));
+  const auto memo = restored.find_record(id("27183823-2574-4bfd-b411-99ed177d3e43"));
+  const auto dated = restored.find_record(id("37183823-2574-4bfd-b411-99ed177d3e43"));
+  const auto timed = restored.find_record(id("47183823-2574-4bfd-b411-99ed177d3e43"));
   ASSERT_TRUE(log && memo && dated && timed);
   ASSERT_TRUE(std::holds_alternative<storage::LogMetadata>(*log));
   ASSERT_TRUE(std::holds_alternative<storage::MemoMetadata>(*memo));
@@ -327,7 +327,7 @@ TEST(IndexCodecTest, RoundTripsEmptyAndEachEntryTypeAlone) {
 
   const auto fixture = make_catalog();
   for (const auto& item : fixture.query()) {
-    SCOPED_TRACE(static_cast<int>(storage::entry_type(item)));
+    SCOPED_TRACE(static_cast<int>(storage::record_type(item)));
     storage::MetadataCatalog one;
     if (const auto* memo = std::get_if<storage::MemoMetadata>(&item)) {
       ASSERT_TRUE(memo->directory_id.has_value());
@@ -340,15 +340,15 @@ TEST(IndexCodecTest, RoundTripsEmptyAndEachEntryTypeAlone) {
             *fixture.find_directory(*todo->directory_id))));
       }
     }
-    ASSERT_TRUE(std::holds_alternative<std::monostate>(one.insert_entry(item)));
+    ASSERT_TRUE(std::holds_alternative<std::monostate>(one.insert_record(item)));
     const auto bytes = codec::encode_index(one);
     ASSERT_TRUE(std::holds_alternative<std::string>(bytes));
     const auto decoded = codec::decode_index(value_of(bytes));
     ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
-    const auto found = value_of(decoded).find_entry(
+    const auto found = value_of(decoded).find_record(
         std::visit([](const auto& value) { return value.id; }, item));
     ASSERT_TRUE(found.has_value());
-    EXPECT_EQ(storage::entry_type(*found), storage::entry_type(item));
+    EXPECT_EQ(storage::record_type(*found), storage::record_type(item));
     EXPECT_EQ(value_of(decoded).query().size(), 1U);
   }
 }
@@ -366,7 +366,7 @@ TEST(IndexCodecTest, PreservesLongTodoTitleAndNegativeFractionalTimestamp) {
       core::TodoStatus::Pending, core::TodoPriority::None,
       std::nullopt, std::nullopt};
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      catalog.insert_entry(storage::EntryMetadata{todo})));
+      catalog.insert_record(storage::RecordMetadata{todo})));
   const auto encoded = codec::encode_index(catalog);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
   auto wire = unpack_wire(value_of(encoded));
@@ -380,7 +380,7 @@ TEST(IndexCodecTest, PreservesLongTodoTitleAndNegativeFractionalTimestamp) {
                 field(field(entry(wire), "created"), "location").value), "");
   const auto decoded = codec::decode_index(value_of(encoded));
   ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
-  const auto saved = value_of(decoded).find_entry(todo.id);
+  const auto saved = value_of(decoded).find_record(todo.id);
   ASSERT_TRUE(saved.has_value());
   const auto& restored = std::get<storage::TodoMetadata>(*saved);
   EXPECT_EQ(restored.title, todo.title);
@@ -402,7 +402,7 @@ TEST(IndexCodecTest, EncodingIsIndependentOfCatalogInsertionOrder) {
       reversed.insert_directory(*memo_dir)));
   const auto entries = first.query();
   for (auto it = entries.rbegin(); it != entries.rend(); ++it)
-    ASSERT_TRUE(std::holds_alternative<std::monostate>(reversed.insert_entry(*it)));
+    ASSERT_TRUE(std::holds_alternative<std::monostate>(reversed.insert_record(*it)));
   const auto forward_bytes = codec::encode_index(first);
   const auto reverse_bytes = codec::encode_index(reversed);
   ASSERT_TRUE(std::holds_alternative<std::string>(forward_bytes));
@@ -429,7 +429,7 @@ TEST(IndexCodecTest, OmitsAbsentOptionalFieldsAndRejectsExplicitNil) {
       core::TodoStatus::Pending, core::TodoPriority::None,
       std::nullopt, std::nullopt};
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      catalog.insert_entry(storage::EntryMetadata{todo})));
+      catalog.insert_record(storage::RecordMetadata{todo})));
   const auto encoded = codec::encode_index(catalog);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
   auto wire = unpack_wire(value_of(encoded));
@@ -451,12 +451,12 @@ TEST(IndexCodecTest, PreservesNativeTimestampPrecisionAtMinAndMax) {
       context(core::Timestamp::max(), "UTC", std::nullopt),
       "Extreme", {}, {{std::chrono::year{9999} / 12 / 31}, "UTC", std::nullopt}};
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      catalog.insert_entry(storage::EntryMetadata{log})));
+      catalog.insert_record(storage::RecordMetadata{log})));
   const auto encoded = codec::encode_index(catalog);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
   const auto decoded = codec::decode_index(value_of(encoded));
   ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
-  const auto restored = value_of(decoded).find_entry(log.id);
+  const auto restored = value_of(decoded).find_record(log.id);
   ASSERT_TRUE(restored.has_value());
   const auto& saved = std::get<storage::LogMetadata>(*restored);
   EXPECT_EQ(saved.created.timestamp, core::Timestamp::min());

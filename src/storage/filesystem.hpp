@@ -35,13 +35,13 @@ struct StoragePaths {
   std::filesystem::path cache_root;
 };
 
-enum class EntryType { Log, Memo, Todo };
+enum class RecordType { Log, Memo, Todo };
 using core::DirectoryKind;
 
 enum class StorageErrorCode {
   InvalidPath,
   InvalidTimestamp,
-  InvalidEntryType,
+  InvalidRecordType,
   IoError,
   DurabilityFailure,
   RecoveryRequired,
@@ -70,8 +70,8 @@ struct StorageError {
 // when checking that data roots and the state root do not overlap.
 [[nodiscard]] ::folio::core::internal::Result<StoragePaths, StorageError> validate_storage_paths(const StoragePaths& paths);
 
-[[nodiscard]] ::folio::core::internal::Result<std::string, StorageError> normal_entry_filename(
-    EntryType type, const core::Id& id, core::Timestamp created);
+[[nodiscard]] ::folio::core::internal::Result<std::string, StorageError> normal_record_filename(
+    RecordType type, const core::Id& id, core::Timestamp created);
 
 // Contents are opaque bytes: no text encoding, parsing, or encryption occurs
 // here. Normal storage can pass serialized text, and Vault can pass an already

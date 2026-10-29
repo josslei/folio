@@ -203,11 +203,11 @@ TEST_F(NormalRepositoryTest, CreatesLoadsUpdatesAndReloadsCompleteLogSnapshot) {
   ASSERT_TRUE(std::holds_alternative<core::Log::Snapshot>(first));
   expect_log(std::get<core::Log::Snapshot>(first), original);
 
-  const auto before = repository.locate_entry(storage::EntryType::Log, original.id);
+  const auto before = repository.locate_record(storage::RecordType::Log, original.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(before));
   EXPECT_EQ(std::get<fs::path>(before).parent_path(), fs::path{"logs"});
-  const auto canonical_name = storage::normal_entry_filename(
-      storage::EntryType::Log, original.id, original.created.timestamp);
+  const auto canonical_name = storage::normal_record_filename(
+      storage::RecordType::Log, original.id, original.created.timestamp);
   ASSERT_TRUE(std::holds_alternative<std::string>(canonical_name));
   EXPECT_EQ(std::get<fs::path>(before).filename(),
             std::get<std::string>(canonical_name));
@@ -220,7 +220,7 @@ TEST_F(NormalRepositoryTest, CreatesLoadsUpdatesAndReloadsCompleteLogSnapshot) {
   const auto second = repository.load_log(original.id);
   ASSERT_TRUE(std::holds_alternative<core::Log::Snapshot>(second));
   expect_log(std::get<core::Log::Snapshot>(second), original);
-  const auto after = repository.locate_entry(storage::EntryType::Log, original.id);
+  const auto after = repository.locate_record(storage::RecordType::Log, original.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(after));
   EXPECT_EQ(std::get<fs::path>(after), std::get<fs::path>(before));
 }
@@ -232,11 +232,11 @@ TEST_F(NormalRepositoryTest, CreatesLoadsUpdatesAndReloadsCompleteMemoSnapshot) 
   ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(first));
   expect_memo(std::get<core::Memo::Snapshot>(first), original);
 
-  const auto before = repository.locate_entry(storage::EntryType::Memo, original.id);
+  const auto before = repository.locate_record(storage::RecordType::Memo, original.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(before));
   EXPECT_EQ(std::get<fs::path>(before).parent_path(), fs::path{"memos"});
-  const auto canonical_name = storage::normal_entry_filename(
-      storage::EntryType::Memo, original.id, original.created.timestamp);
+  const auto canonical_name = storage::normal_record_filename(
+      storage::RecordType::Memo, original.id, original.created.timestamp);
   ASSERT_TRUE(std::holds_alternative<std::string>(canonical_name));
   EXPECT_EQ(std::get<fs::path>(before).filename(),
             std::get<std::string>(canonical_name));
@@ -248,7 +248,7 @@ TEST_F(NormalRepositoryTest, CreatesLoadsUpdatesAndReloadsCompleteMemoSnapshot) 
   const auto second = repository.load_memo(original.id);
   ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(second));
   expect_memo(std::get<core::Memo::Snapshot>(second), original);
-  const auto after = repository.locate_entry(storage::EntryType::Memo, original.id);
+  const auto after = repository.locate_record(storage::RecordType::Memo, original.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(after));
   EXPECT_EQ(std::get<fs::path>(after), std::get<fs::path>(before));
 }
@@ -260,11 +260,11 @@ TEST_F(NormalRepositoryTest, CreatesLoadsUpdatesAndReloadsCompleteTodoSnapshot) 
   ASSERT_TRUE(std::holds_alternative<core::Todo::Snapshot>(first));
   expect_todo(std::get<core::Todo::Snapshot>(first), original);
 
-  const auto before = repository.locate_entry(storage::EntryType::Todo, original.id);
+  const auto before = repository.locate_record(storage::RecordType::Todo, original.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(before));
   EXPECT_EQ(std::get<fs::path>(before).parent_path(), fs::path{"todos"});
-  const auto canonical_name = storage::normal_entry_filename(
-      storage::EntryType::Todo, original.id, original.created.timestamp);
+  const auto canonical_name = storage::normal_record_filename(
+      storage::RecordType::Todo, original.id, original.created.timestamp);
   ASSERT_TRUE(std::holds_alternative<std::string>(canonical_name));
   EXPECT_EQ(std::get<fs::path>(before).filename(),
             std::get<std::string>(canonical_name));
@@ -280,7 +280,7 @@ TEST_F(NormalRepositoryTest, CreatesLoadsUpdatesAndReloadsCompleteTodoSnapshot) 
   const auto second = repository.load_todo(original.id);
   ASSERT_TRUE(std::holds_alternative<core::Todo::Snapshot>(second));
   expect_todo(std::get<core::Todo::Snapshot>(second), original);
-  const auto after = repository.locate_entry(storage::EntryType::Todo, original.id);
+  const auto after = repository.locate_record(storage::RecordType::Todo, original.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(after));
   EXPECT_EQ(std::get<fs::path>(after), std::get<fs::path>(before));
 
@@ -295,7 +295,7 @@ TEST_F(NormalRepositoryTest, CreatesLoadsUpdatesAndReloadsCompleteTodoSnapshot) 
 TEST_F(NormalRepositoryTest, SuppliedLogPathBypassesUnrelatedMalformedEntry) {
   auto log = log_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_log(log)));
-  const auto locator = repository.locate_entry(storage::EntryType::Log, log.id);
+  const auto locator = repository.locate_record(storage::RecordType::Log, log.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto path = root / std::get<fs::path>(locator);
   const auto malformed_path = root / "logs" / "unrelated.md";
@@ -332,8 +332,8 @@ TEST_F(NormalRepositoryTest, SuppliedMemoPathRejectsStaleAndUnsafeLocators) {
   second.title = "Other memo";
   ASSERT_TRUE(operation_succeeded(repository.create_memo(first)));
   ASSERT_TRUE(operation_succeeded(repository.create_memo(second)));
-  const auto first_locator = repository.locate_entry(storage::EntryType::Memo, first.id);
-  const auto second_locator = repository.locate_entry(storage::EntryType::Memo, second.id);
+  const auto first_locator = repository.locate_record(storage::RecordType::Memo, first.id);
+  const auto second_locator = repository.locate_record(storage::RecordType::Memo, second.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(first_locator));
   ASSERT_TRUE(std::holds_alternative<fs::path>(second_locator));
   const auto first_path = root / std::get<fs::path>(first_locator);
@@ -388,7 +388,7 @@ TEST_F(NormalRepositoryTest, SuppliedMemoPathValidatesDirectoryMetadata) {
   auto memo = memo_snapshot();
   memo.directory_id = directory.id;
   ASSERT_TRUE(operation_succeeded(repository.create_memo(memo)));
-  const auto locator = repository.locate_entry(storage::EntryType::Memo, memo.id);
+  const auto locator = repository.locate_record(storage::RecordType::Memo, memo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto relative = std::get<fs::path>(locator);
   EXPECT_EQ(relative.parent_path(),
@@ -423,13 +423,13 @@ TEST_F(NormalRepositoryTest, SuppliedMemoPathValidatesDirectoryMetadata) {
 TEST_F(NormalRepositoryTest, SuppliedTodoPathBypassesUnrelatedDuplicateId) {
   auto todo = todo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_todo(todo)));
-  const auto locator = repository.locate_entry(storage::EntryType::Todo, todo.id);
+  const auto locator = repository.locate_record(storage::RecordType::Todo, todo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto todo_path = root / std::get<fs::path>(locator);
 
   auto unrelated = memo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_memo(unrelated)));
-  const auto unrelated_locator = repository.locate_entry(storage::EntryType::Memo,
+  const auto unrelated_locator = repository.locate_record(storage::RecordType::Memo,
                                                           unrelated.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(unrelated_locator));
   const auto unrelated_path = root / std::get<fs::path>(unrelated_locator);
@@ -566,8 +566,8 @@ TEST_F(NormalRepositoryTest, MovesMemoAndTodoBetweenRootAndDirectories) {
   auto todo = todo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_memo(memo)));
   ASSERT_TRUE(operation_succeeded(repository.create_todo(todo)));
-  const auto memo_before = repository.locate_entry(storage::EntryType::Memo, memo.id);
-  const auto todo_before = repository.locate_entry(storage::EntryType::Todo, todo.id);
+  const auto memo_before = repository.locate_record(storage::RecordType::Memo, memo.id);
+  const auto todo_before = repository.locate_record(storage::RecordType::Todo, todo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(memo_before));
   ASSERT_TRUE(std::holds_alternative<fs::path>(todo_before));
 
@@ -575,8 +575,8 @@ TEST_F(NormalRepositoryTest, MovesMemoAndTodoBetweenRootAndDirectories) {
       memo.id, memo_directory.id, modified())));
   ASSERT_TRUE(operation_succeeded(repository.move_todo(
       todo.id, todo_directory.id, modified())));
-  const auto memo_in_folder = repository.locate_entry(storage::EntryType::Memo, memo.id);
-  const auto todo_in_folder = repository.locate_entry(storage::EntryType::Todo, todo.id);
+  const auto memo_in_folder = repository.locate_record(storage::RecordType::Memo, memo.id);
+  const auto todo_in_folder = repository.locate_record(storage::RecordType::Todo, todo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(memo_in_folder));
   ASSERT_TRUE(std::holds_alternative<fs::path>(todo_in_folder));
   EXPECT_EQ(std::get<fs::path>(memo_in_folder).parent_path(),
@@ -600,7 +600,7 @@ TEST_F(NormalRepositoryTest, MovesMemoAndTodoBetweenRootAndDirectories) {
 
   ASSERT_TRUE(operation_succeeded(repository.move_memo(
       memo.id, second_memo_directory.id, modified())));
-  const auto memo_in_second_folder = repository.locate_entry(storage::EntryType::Memo,
+  const auto memo_in_second_folder = repository.locate_record(storage::RecordType::Memo,
                                                               memo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(memo_in_second_folder));
   EXPECT_EQ(std::get<fs::path>(memo_in_second_folder).parent_path(),
@@ -616,8 +616,8 @@ TEST_F(NormalRepositoryTest, MovesMemoAndTodoBetweenRootAndDirectories) {
       memo.id, std::nullopt, modified())));
   ASSERT_TRUE(operation_succeeded(repository.move_todo(
       todo.id, std::nullopt, modified())));
-  const auto memo_after = repository.locate_entry(storage::EntryType::Memo, memo.id);
-  const auto todo_after = repository.locate_entry(storage::EntryType::Todo, todo.id);
+  const auto memo_after = repository.locate_record(storage::RecordType::Memo, memo.id);
+  const auto todo_after = repository.locate_record(storage::RecordType::Todo, todo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(memo_after));
   ASSERT_TRUE(std::holds_alternative<fs::path>(todo_after));
   EXPECT_EQ(std::get<fs::path>(memo_after), std::get<fs::path>(memo_before));
@@ -644,13 +644,13 @@ TEST_F(NormalRepositoryTest, RejectsDuplicateIdInAnotherPhysicalDirectory) {
       storage::DirectoryKind::Memo, directory)));
   const auto memo = memo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_memo(memo)));
-  const auto locator = repository.locate_entry(storage::EntryType::Memo, memo.id);
+  const auto locator = repository.locate_record(storage::RecordType::Memo, memo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto original = root / std::get<fs::path>(locator);
   const auto duplicate = root / "memos" / directory.id.to_string() /
       original.filename();
   fs::copy_file(original, duplicate);
-  expect_error(repository.locate_entry(storage::EntryType::Memo, memo.id));
+  expect_error(repository.locate_record(storage::RecordType::Memo, memo.id));
   expect_error(repository.load_memo(memo.id));
   EXPECT_EQ(read_bytes(original), read_bytes(duplicate));
 }
@@ -658,7 +658,7 @@ TEST_F(NormalRepositoryTest, RejectsDuplicateIdInAnotherPhysicalDirectory) {
 TEST_F(NormalRepositoryTest, UnrelatedDuplicateStoredIdBlocksOtherEntry) {
   auto original = memo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_memo(original)));
-  const auto original_locator = repository.locate_entry(storage::EntryType::Memo,
+  const auto original_locator = repository.locate_record(storage::RecordType::Memo,
                                                          original.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(original_locator));
   const auto original_path = root / std::get<fs::path>(original_locator);
@@ -669,15 +669,15 @@ TEST_F(NormalRepositoryTest, UnrelatedDuplicateStoredIdBlocksOtherEntry) {
   duplicate.title = "Unrelated duplicate";
   const auto encoded = core::storage::codec::serialize_markdown(duplicate);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
-  const auto first_name = storage::normal_entry_filename(
-      storage::EntryType::Memo, duplicate.id, duplicate.created.timestamp);
+  const auto first_name = storage::normal_record_filename(
+      storage::RecordType::Memo, duplicate.id, duplicate.created.timestamp);
   ASSERT_TRUE(std::holds_alternative<std::string>(first_name));
   const auto first_path = root / "memos" / std::get<std::string>(first_name);
   const auto second_path = root / "memos" / "unrelated-renamed.md";
   ASSERT_NO_FATAL_FAILURE(write_bytes(first_path, std::get<std::string>(encoded)));
   fs::copy_file(first_path, second_path);
 
-  const auto located = repository.locate_entry(storage::EntryType::Memo, original.id);
+  const auto located = repository.locate_record(storage::RecordType::Memo, original.id);
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(located));
   EXPECT_EQ(std::get<storage::StorageError>(located).code,
             storage::StorageErrorCode::DuplicateId);
@@ -702,15 +702,15 @@ TEST_F(NormalRepositoryTest, StoredIdSurvivesRenamedFilenameUpdateAndMove) {
       storage::DirectoryKind::Memo, directory)));
   auto stored = memo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_memo(stored)));
-  const auto original_locator = repository.locate_entry(storage::EntryType::Memo,
+  const auto original_locator = repository.locate_record(storage::RecordType::Memo,
                                                          stored.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(original_locator));
   const auto original_path = root / std::get<fs::path>(original_locator);
   const auto original_bytes = read_bytes(original_path);
 
   const auto filename_id = id("c9183823-2574-4bfd-b411-99ed177d3e43");
-  const auto other_name = storage::normal_entry_filename(
-      storage::EntryType::Memo, filename_id, stored.created.timestamp);
+  const auto other_name = storage::normal_record_filename(
+      storage::RecordType::Memo, filename_id, stored.created.timestamp);
   ASSERT_TRUE(std::holds_alternative<std::string>(other_name));
   const auto mismatched_path = original_path.parent_path() /
       std::get<std::string>(other_name);
@@ -718,17 +718,17 @@ TEST_F(NormalRepositoryTest, StoredIdSurvivesRenamedFilenameUpdateAndMove) {
   ASSERT_FALSE(fs::exists(original_path));
   ASSERT_EQ(read_bytes(mismatched_path), original_bytes);
 
-  const auto located = repository.locate_entry(storage::EntryType::Memo, stored.id);
+  const auto located = repository.locate_record(storage::RecordType::Memo, stored.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(located));
   EXPECT_EQ(root / std::get<fs::path>(located), mismatched_path);
-  const auto known_path = repository.locate_entry(
-      storage::EntryType::Memo, std::get<fs::path>(located));
+  const auto known_path = repository.locate_record(
+      storage::RecordType::Memo, std::get<fs::path>(located));
   ASSERT_TRUE(std::holds_alternative<fs::path>(known_path));
   EXPECT_EQ(std::get<fs::path>(known_path), std::get<fs::path>(located));
   const auto loaded = repository.load_memo(stored.id);
   ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(loaded));
   expect_memo(std::get<core::Memo::Snapshot>(loaded), stored);
-  expect_error(repository.locate_entry(storage::EntryType::Memo, filename_id));
+  expect_error(repository.locate_record(storage::RecordType::Memo, filename_id));
   expect_error(repository.load_memo(filename_id));
 
   expect_error(repository.create_memo(stored));
@@ -740,7 +740,7 @@ TEST_F(NormalRepositoryTest, StoredIdSurvivesRenamedFilenameUpdateAndMove) {
   stored.title = "Updated through stored ID";
   stored.modified = modified();
   ASSERT_TRUE(operation_succeeded(repository.update_memo(stored)));
-  const auto after_update = repository.locate_entry(storage::EntryType::Memo, stored.id);
+  const auto after_update = repository.locate_record(storage::RecordType::Memo, stored.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(after_update));
   EXPECT_EQ(root / std::get<fs::path>(after_update), mismatched_path);
   const auto updated = repository.load_memo(stored.id);
@@ -750,7 +750,7 @@ TEST_F(NormalRepositoryTest, StoredIdSurvivesRenamedFilenameUpdateAndMove) {
   ASSERT_TRUE(operation_succeeded(repository.move_memo(
       stored.id, directory.id, modified())));
   stored.directory_id = directory.id;
-  const auto moved = repository.locate_entry(storage::EntryType::Memo, stored.id);
+  const auto moved = repository.locate_record(storage::RecordType::Memo, stored.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(moved));
   EXPECT_EQ(std::get<fs::path>(moved).filename(), mismatched_path.filename());
   EXPECT_EQ(std::get<fs::path>(moved).parent_path(),
@@ -764,12 +764,12 @@ TEST_F(NormalRepositoryTest, StoredIdSurvivesRenamedFilenameUpdateAndMove) {
   const auto moved_path = root / std::get<fs::path>(moved);
   const auto arbitrary_path = moved_path.parent_path() / ".notes.tmp-draft.md";
   fs::rename(moved_path, arbitrary_path);
-  const auto arbitrary_locator = repository.locate_entry(storage::EntryType::Memo,
+  const auto arbitrary_locator = repository.locate_record(storage::RecordType::Memo,
                                                           stored.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(arbitrary_locator));
   EXPECT_EQ(root / std::get<fs::path>(arbitrary_locator), arbitrary_path);
-  const auto known_arbitrary = repository.locate_entry(
-      storage::EntryType::Memo, std::get<fs::path>(arbitrary_locator));
+  const auto known_arbitrary = repository.locate_record(
+      storage::RecordType::Memo, std::get<fs::path>(arbitrary_locator));
   ASSERT_TRUE(std::holds_alternative<fs::path>(known_arbitrary));
   EXPECT_EQ(std::get<fs::path>(known_arbitrary), std::get<fs::path>(arbitrary_locator));
   const auto arbitrary_loaded = repository.load_memo(stored.id);
@@ -778,8 +778,8 @@ TEST_F(NormalRepositoryTest, StoredIdSurvivesRenamedFilenameUpdateAndMove) {
 
   stored.title = "Updated after basename changed";
   ASSERT_TRUE(operation_succeeded(repository.update_memo(stored)));
-  const auto after_rename_update = repository.locate_entry(
-      storage::EntryType::Memo, stored.id);
+  const auto after_rename_update = repository.locate_record(
+      storage::RecordType::Memo, stored.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(after_rename_update));
   EXPECT_EQ(root / std::get<fs::path>(after_rename_update), arbitrary_path);
   const auto updated_after_rename = repository.load_memo(stored.id);
@@ -788,7 +788,7 @@ TEST_F(NormalRepositoryTest, StoredIdSurvivesRenamedFilenameUpdateAndMove) {
 
   const auto duplicate_path = arbitrary_path.parent_path() / "duplicate.md";
   fs::copy_file(arbitrary_path, duplicate_path);
-  expect_error(repository.locate_entry(storage::EntryType::Memo, stored.id));
+  expect_error(repository.locate_record(storage::RecordType::Memo, stored.id));
   expect_error(repository.load_memo(stored.id));
   EXPECT_EQ(read_bytes(arbitrary_path), read_bytes(duplicate_path));
 }
@@ -796,7 +796,7 @@ TEST_F(NormalRepositoryTest, StoredIdSurvivesRenamedFilenameUpdateAndMove) {
 TEST_F(NormalRepositoryTest, OldIdCannotOverwriteDifferentEntryAtSamePath) {
   auto original = memo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_memo(original)));
-  const auto locator = repository.locate_entry(storage::EntryType::Memo, original.id);
+  const auto locator = repository.locate_record(storage::RecordType::Memo, original.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto path = root / std::get<fs::path>(locator);
 
@@ -808,13 +808,13 @@ TEST_F(NormalRepositoryTest, OldIdCannotOverwriteDifferentEntryAtSamePath) {
   const auto injected_bytes = std::get<std::string>(encoded);
   ASSERT_NO_FATAL_FAILURE(write_bytes(path, injected_bytes));
 
-  expect_error(repository.locate_entry(storage::EntryType::Memo, original.id));
+  expect_error(repository.locate_record(storage::RecordType::Memo, original.id));
   expect_error(repository.load_memo(original.id));
-  const auto by_stored_id = repository.locate_entry(storage::EntryType::Memo, injected.id);
+  const auto by_stored_id = repository.locate_record(storage::RecordType::Memo, injected.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(by_stored_id));
   EXPECT_EQ(std::get<fs::path>(by_stored_id), std::get<fs::path>(locator));
-  const auto by_known_path = repository.locate_entry(
-      storage::EntryType::Memo, std::get<fs::path>(locator));
+  const auto by_known_path = repository.locate_record(
+      storage::RecordType::Memo, std::get<fs::path>(locator));
   ASSERT_TRUE(std::holds_alternative<fs::path>(by_known_path));
   EXPECT_EQ(std::get<fs::path>(by_known_path), std::get<fs::path>(locator));
   const auto loaded = repository.load_memo(injected.id);
@@ -831,7 +831,7 @@ TEST_F(NormalRepositoryTest, OldIdCannotOverwriteDifferentEntryAtSamePath) {
 TEST_F(NormalRepositoryTest, IgnoresNonformalFilesAndRejectsThemAsKnownPaths) {
   const auto memo = memo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_memo(memo)));
-  const auto locator = repository.locate_entry(storage::EntryType::Memo, memo.id);
+  const auto locator = repository.locate_record(storage::RecordType::Memo, memo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto formal_path = root / std::get<fs::path>(locator);
   const auto formal_bytes = read_bytes(formal_path);
@@ -840,16 +840,16 @@ TEST_F(NormalRepositoryTest, IgnoresNonformalFilesAndRejectsThemAsKnownPaths) {
   ASSERT_NO_FATAL_FAILURE(write_bytes(duplicate_text_path, formal_bytes));
   ASSERT_NO_FATAL_FAILURE(write_bytes(malformed_text_path, "not valid TOML or Markdown"));
 
-  const auto still_located = repository.locate_entry(storage::EntryType::Memo, memo.id);
+  const auto still_located = repository.locate_record(storage::RecordType::Memo, memo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(still_located));
   EXPECT_EQ(std::get<fs::path>(still_located), std::get<fs::path>(locator));
   const auto loaded = repository.load_memo(memo.id);
   ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(loaded));
   expect_memo(std::get<core::Memo::Snapshot>(loaded), memo);
-  expect_error(repository.locate_entry(
-      storage::EntryType::Memo, fs::path{"memos/copied-entry.txt"}));
-  expect_error(repository.locate_entry(
-      storage::EntryType::Memo, fs::path{"memos/malformed.txt"}));
+  expect_error(repository.locate_record(
+      storage::RecordType::Memo, fs::path{"memos/copied-entry.txt"}));
+  expect_error(repository.locate_record(
+      storage::RecordType::Memo, fs::path{"memos/malformed.txt"}));
 
   auto other = memo_snapshot();
   other.id = id("d7183823-2574-4bfd-b411-99ed177d3e43");
@@ -890,13 +890,13 @@ TEST_F(NormalRepositoryTest, RejectsMissingOrInvalidDirectoryMetadataAndReferenc
   ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(loaded));
   EXPECT_EQ(std::get<core::Memo::Snapshot>(loaded).directory_id, directory.id);
 
-  const auto locator = repository.locate_entry(storage::EntryType::Memo, memo.id);
+  const auto locator = repository.locate_record(storage::RecordType::Memo, memo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto entry_path = root / std::get<fs::path>(locator);
   const auto entry_bytes = read_bytes(entry_path);
   ASSERT_NO_FATAL_FAILURE(write_bytes(metadata, wrong_id_metadata));
   expect_error(repository.load_directory(storage::DirectoryKind::Memo, directory.id));
-  expect_error(repository.locate_entry(storage::EntryType::Memo, memo.id));
+  expect_error(repository.locate_record(storage::RecordType::Memo, memo.id));
   expect_error(repository.load_memo(memo.id));
   expect_error(repository.rename_directory(storage::DirectoryKind::Memo,
                                            directory.id, "Must not rename"));
@@ -923,7 +923,7 @@ TEST_F(NormalRepositoryTest, RejectsDirectoryReferenceFromWrongEntryModule) {
 TEST_F(NormalRepositoryTest, RejectsMalformedEntryWithoutReplacingItsBytes) {
   auto todo = todo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_todo(todo)));
-  const auto locator = repository.locate_entry(storage::EntryType::Todo, todo.id);
+  const auto locator = repository.locate_record(storage::RecordType::Todo, todo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto path = root / std::get<fs::path>(locator);
   const std::string malformed = "schema_version = 1\ninvalid = [";
@@ -935,9 +935,9 @@ TEST_F(NormalRepositoryTest, RejectsMalformedEntryWithoutReplacingItsBytes) {
 }
 
 TEST_F(NormalRepositoryTest, RejectsTraversalAndSymbolicLinkEscape) {
-  expect_error(repository.locate_entry(storage::EntryType::Memo,
+  expect_error(repository.locate_record(storage::RecordType::Memo,
                                        fs::path{"../outside.md"}));
-  expect_error(repository.locate_entry(storage::EntryType::Memo,
+  expect_error(repository.locate_record(storage::RecordType::Memo,
                                        fs::path{"memos/../logs/entry.md"}));
 
   const auto outside = temporary.path() / "outside";
@@ -953,7 +953,7 @@ TEST_F(NormalRepositoryTest, RejectsTraversalAndSymbolicLinkEscape) {
 TEST_F(NormalRepositoryTest, RejectsSymbolicLinkEntry) {
   auto memo = memo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_memo(memo)));
-  const auto locator = repository.locate_entry(storage::EntryType::Memo, memo.id);
+  const auto locator = repository.locate_record(storage::RecordType::Memo, memo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto entry_path = root / std::get<fs::path>(locator);
   const auto outside_file = temporary.path() / "outside.md";
@@ -997,7 +997,7 @@ TEST_F(NormalRepositoryTest, RejectsSymbolicLinkChildDirectory) {
 TEST_F(NormalRepositoryTest, FailedAtomicUpdatePreservesExistingBytesAndSnapshot) {
   auto memo = memo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_memo(memo)));
-  const auto locator = repository.locate_entry(storage::EntryType::Memo, memo.id);
+  const auto locator = repository.locate_record(storage::RecordType::Memo, memo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto path = root / std::get<fs::path>(locator);
   const auto original_bytes = read_bytes(path);
@@ -1005,7 +1005,7 @@ TEST_F(NormalRepositoryTest, FailedAtomicUpdatePreservesExistingBytesAndSnapshot
       ("." + path.filename().string() + ".tmp-" +
        core::Id::generate().to_string());
   ASSERT_NO_FATAL_FAILURE(write_bytes(pending, original_bytes));
-  const auto while_pending = repository.locate_entry(storage::EntryType::Memo,
+  const auto while_pending = repository.locate_record(storage::RecordType::Memo,
                                                       memo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(while_pending));
   EXPECT_EQ(std::get<fs::path>(while_pending), std::get<fs::path>(locator));

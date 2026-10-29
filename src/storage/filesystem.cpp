@@ -195,20 +195,20 @@ bool sync_file(int descriptor) {
   return paths;
 }
 
-::folio::core::internal::Result<std::string, StorageError> normal_entry_filename(EntryType type, const core::Id& id,
+::folio::core::internal::Result<std::string, StorageError> normal_record_filename(RecordType type, const core::Id& id,
                                          core::Timestamp created) {
   using namespace std::chrono;
   const char* extension;
   switch (type) {
-    case EntryType::Log:
-    case EntryType::Memo:
+    case RecordType::Log:
+    case RecordType::Memo:
       extension = ".md";
       break;
-    case EntryType::Todo:
+    case RecordType::Todo:
       extension = ".toml";
       break;
     default:
-      return error(StorageErrorCode::InvalidEntryType, {}, "Invalid entry type");
+      return error(StorageErrorCode::InvalidRecordType, {}, "Invalid entry type");
   }
   const auto whole_seconds = floor<seconds>(created);
   const auto day = floor<days>(whole_seconds);

@@ -2,7 +2,7 @@
 
 ## Project Context & Structure
 
-Folio is a personal TUI application written in C++20, built with CMake and FTXUI, with GoogleTest, GoogleMock, and CTest for testing. Log, Memo, and Todo are its three primary Core structures. Core provides in-memory domain models and shared types, while the same `folio_core` target contains a private Storage subsystem for codecs and Normal persistence. Subtasks belong to Todo. The TUI provides a welcome screen with `q` to exit.
+Folio is a personal TUI application written in C++20, built with CMake and FTXUI, with GoogleTest, GoogleMock, and CTest for testing. Log, Memo, Todo, and Directory are its four first-class Entry types. Core provides in-memory domain models and shared types, while the same `folio_core` target contains a private Storage subsystem for codecs and Normal persistence. Subtasks belong to Todo. The TUI provides a welcome screen with `q` to exit.
 
 - `include/folio/core/`: public domain-model headers available to frontends.
 - `src/core/`: domain implementations and `src/core/internal/`: private domain helpers.
@@ -12,6 +12,8 @@ Folio is a personal TUI application written in C++20, built with CMake and FTXUI
 - `thirdparty/`: pinned dependency submodules.
 
 ## Architecture Rules
+
+An Entry is an independently identifiable persistent Folio object: Log, Memo, Todo, or Directory. Use Entry to describe all four conceptually; terminology alignment must preserve existing program behavior and does not require every API to support all four types. Distinguish a type only when its fields, membership rules, or persistence layout require it; never use “Entry” to implicitly exclude Directory. Record is shorthand for Log, Memo, and Todo only. Use it for genuinely narrower APIs; do not introduce separate behavior for Records and Directories when their behavior is shared. Directory membership is a relationship between Entries, not a domain hierarchy. Keep independent classes without a common Entry base class. Directory has no parent ID: only Memo/Todo single-level organization is supported. Persisted Folio Entries are authoritative; the Catalog and binary Index are rebuildable projections.
 
 Keep dependency direction `folio (TUI) -> folio_core`. Core must remain independent of FTXUI and all presentation frameworks, with APIs reusable by a future CLI or alternative frontend. Keep business logic, storage, encryption, and synchronization out of UI components. Prefer clear module boundaries and straightforward solutions; do not create speculative modules, interfaces, placeholder classes, or unnecessary abstractions.
 

@@ -32,7 +32,7 @@ bool common_equal(const T& a, const T& b) {
          a.privacy == b.privacy && equal(a.created, b.created) &&
          equal(a.modified, b.modified) && a.title == b.title;
 }
-bool equal(const EntryMetadata& a, const EntryMetadata& b) {
+bool equal(const RecordMetadata& a, const RecordMetadata& b) {
   if (a.index() != b.index()) return false;
   if (const auto* x = std::get_if<LogMetadata>(&a)) {
     const auto& y = std::get<LogMetadata>(b);
@@ -103,36 +103,36 @@ bool valid_context(const DateContext& c) {
   return c.date.ok() && valid_utf8(c.timezone) &&
          (!c.location || valid_utf8(*c.location));
 }
-const Id& entry_id(const EntryMetadata& e) {
+const Id& entry_id(const RecordMetadata& e) {
   return std::visit([](const auto& value) -> const Id& { return value.id; }, e);
 }
-const std::filesystem::path& entry_path(const EntryMetadata& e) {
+const std::filesystem::path& entry_path(const RecordMetadata& e) {
   return std::visit([](const auto& value) -> const std::filesystem::path& {
     return value.relative_path;
   }, e);
 }
-std::optional<Id> entry_directory(const EntryMetadata& e) {
+std::optional<Id> entry_directory(const RecordMetadata& e) {
   return std::visit([](const auto& value) -> std::optional<Id> {
     if constexpr (std::is_same_v<std::decay_t<decltype(value)>, LogMetadata>) return std::nullopt;
     else return value.directory_id;
   }, e);
 }
-Privacy entry_privacy(const EntryMetadata& e) {
+Privacy entry_privacy(const RecordMetadata& e) {
   return std::visit([](const auto& value) { return value.privacy; }, e);
 }
-const TimestampContext& entry_created(const EntryMetadata& e) {
+const TimestampContext& entry_created(const RecordMetadata& e) {
   return std::visit([](const auto& value) -> const TimestampContext& { return value.created; }, e);
 }
-const TimestampContext& entry_modified(const EntryMetadata& e) {
+const TimestampContext& entry_modified(const RecordMetadata& e) {
   return std::visit([](const auto& value) -> const TimestampContext& { return value.modified; }, e);
 }
-const std::string& entry_title(const EntryMetadata& e) {
+const std::string& entry_title(const RecordMetadata& e) {
   return std::visit([](const auto& value) -> const std::string& {
     return value.title;
   }, e);
 }
 
-bool valid_entry(const EntryMetadata& e) {
+bool valid_entry(const RecordMetadata& e) {
   if (!valid_path(entry_path(e)) || !valid_privacy(entry_privacy(e)) ||
       !valid_context(entry_created(e)) || !valid_context(entry_modified(e)) ||
       !valid_utf8(entry_title(e))) return false;
@@ -187,10 +187,10 @@ int cmp_due(const DueDate& a, const DueDate& b) {
                     std::get<TimestampContext>(b).timestamp);
 }
 // -2 means an inapplicable or absent key. Callers keep it last in both directions.
-int compare_key(const EntryMetadata& a, const EntryMetadata& b, MetadataSort sort) {
+int compare_key(const RecordMetadata& a, const RecordMetadata& b, MetadataSort sort) {
   switch (sort) {
     case MetadataSort::Id: return cmp_string(entry_id(a).to_string(), entry_id(b).to_string());
-    case MetadataSort::Type: return cmp_scalar(static_cast<int>(entry_type(a)), static_cast<int>(entry_type(b)));
+    case MetadataSort::Type: return cmp_scalar(static_cast<int>(record_type(a)), static_cast<int>(record_type(b)));
     case MetadataSort::Created: return cmp_scalar(entry_created(a).timestamp, entry_created(b).timestamp);
     case MetadataSort::Modified: return cmp_scalar(entry_modified(a).timestamp, entry_modified(b).timestamp);
     case MetadataSort::Title: return cmp_string(entry_title(a), entry_title(b));
@@ -227,11 +227,11 @@ int compare_key(const EntryMetadata& a, const EntryMetadata& b, MetadataSort sor
 }
 
 template <class T>
-bool matches(const T& e, const CatalogQuery& q) {
+bool matches(const T& e, const RecordQuery& q) {
   constexpr bool log = std::is_same_v<T, LogMetadata>;
   constexpr bool memo = std::is_same_v<T, MemoMetadata>;
   constexpr bool todo = std::is_same_v<T, TodoMetadata>;
-  constexpr EntryType type = log ? EntryType::Log : (memo ? EntryType::Memo : EntryType::Todo);
+  constexpr RecordType type = log ? RecordType::Log : (memo ? RecordType::Memo : RecordType::Todo);
   if (q.type && *q.type != type) return false;
   if (q.directory) {
     if constexpr (log) {
@@ -275,24 +275,24 @@ bool matches(const T& e, const CatalogQuery& q) {
 }
 }  // namespace
 
-EntryType entry_type(const EntryMetadata& metadata) noexcept {
+RecordType record_type(const RecordMetadata& metadata) noexcept {
   return std::visit([](const auto& value) {
     using T = std::decay_t<decltype(value)>;
-    if constexpr (std::is_same_v<T, LogMetadata>) return EntryType::Log;
-    else if constexpr (std::is_same_v<T, MemoMetadata>) return EntryType::Memo;
-    else return EntryType::Todo;
+    if constexpr (std::is_same_v<T, LogMetadata>) return RecordType::Log;
+    else if constexpr (std::is_same_v<T, MemoMetadata>) return RecordType::Memo;
+    else return RecordType::Todo;
   }, metadata);
 }
 
-EntryMetadata metadata_from(const Log::Snapshot& s, std::filesystem::path path) {
+RecordMetadata metadata_from(const Log::Snapshot& s, std::filesystem::path path) {
   return LogMetadata{s.id, std::move(path), s.privacy, s.created, s.modified,
                      s.title, s.tags, s.log_date};
 }
-EntryMetadata metadata_from(const Memo::Snapshot& s, std::filesystem::path path) {
+RecordMetadata metadata_from(const Memo::Snapshot& s, std::filesystem::path path) {
   return MemoMetadata{s.id, std::move(path), s.privacy, s.created, s.modified,
                       s.title, s.tags, s.directory_id};
 }
-EntryMetadata metadata_from(const Todo::Snapshot& s, std::filesystem::path path) {
+RecordMetadata metadata_from(const Todo::Snapshot& s, std::filesystem::path path) {
   return TodoMetadata{s.id, std::move(path), s.privacy, s.created, s.modified,
                       s.title, s.status, s.priority, s.due_date, s.directory_id};
 }
@@ -301,7 +301,7 @@ DirectoryMetadata metadata_from(const Directory::Snapshot& s,
   return DirectoryMetadata{s.id, s.kind, std::move(path), s.name};
 }
 
-bool MetadataCatalog::entry_path_occupied(const std::filesystem::path& path,
+bool MetadataCatalog::record_path_occupied(const std::filesystem::path& path,
                                           std::optional<Id> except) const {
   auto occupied = [&](const auto& collection) {
     return std::any_of(collection.begin(), collection.end(), [&](const auto& pair) {
@@ -317,32 +317,32 @@ bool MetadataCatalog::directory_referenced(const DirectoryMetadata& directory) c
   return it != directory_members_.end() && !it->second.empty();
 }
 
-std::set<std::string>& MetadataCatalog::members_for(EntryType type,
+std::set<std::string>& MetadataCatalog::members_for(RecordType type,
                                                     std::optional<Id> directory_id) {
   if (directory_id) return directory_members_.at(directory_id->to_string());
   switch (type) {
-    case EntryType::Log: return log_roots_;
-    case EntryType::Memo: return memo_roots_;
-    case EntryType::Todo: return todo_roots_;
+    case RecordType::Log: return log_roots_;
+    case RecordType::Memo: return memo_roots_;
+    case RecordType::Todo: return todo_roots_;
   }
   return log_roots_;
 }
 
-::folio::core::internal::Result<std::monostate, StorageError> MetadataCatalog::insert_entry(EntryMetadata m) {
+::folio::core::internal::Result<std::monostate, StorageError> MetadataCatalog::insert_record(RecordMetadata m) {
   if (!valid_entry(m)) return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Invalid entry metadata");
   const Id id = entry_id(m);
   const auto key = id.to_string();
-  if (find_entry(id)) return failure(StorageErrorCode::DuplicateId, entry_path(m), "Entry UUID already exists");
-  if (entry_path_occupied(entry_path(m)))
+  if (find_record(id)) return failure(StorageErrorCode::DuplicateId, entry_path(m), "Entry UUID already exists");
+  if (record_path_occupied(entry_path(m)))
     return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Locator already occupied");
   for (const auto& [directory_key, d] : directories_)
     if (d.relative_path == entry_path(m))
       return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Locator already occupied");
-  const auto type = entry_type(m);
+  const auto type = record_type(m);
   const auto directory_id = entry_directory(m);
   if (directory_id) {
     const auto found = find_directory(*directory_id);
-    const auto kind = type == EntryType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo;
+    const auto kind = type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo;
     if (!found || found->kind != kind)
       return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Missing or wrong-kind Directory");
   }
@@ -363,16 +363,16 @@ std::set<std::string>& MetadataCatalog::members_for(EntryType type,
   return std::monostate{};
 }
 
-::folio::core::internal::Result<std::monostate, StorageError> MetadataCatalog::update_entry(EntryMetadata m) {
+::folio::core::internal::Result<std::monostate, StorageError> MetadataCatalog::update_record(RecordMetadata m) {
   if (!valid_entry(m)) return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Invalid entry metadata");
   const Id id = entry_id(m);
   const auto key = id.to_string();
-  const auto existing = find_entry(id);
+  const auto existing = find_record(id);
   if (!existing) return failure(StorageErrorCode::NotFound, entry_path(m), "Entry UUID not found");
-  const auto type = entry_type(m);
-  if (entry_type(*existing) != type)
+  const auto type = record_type(m);
+  if (record_type(*existing) != type)
     return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Entry type changed");
-  if (entry_path_occupied(entry_path(m), id))
+  if (record_path_occupied(entry_path(m), id))
     return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Locator already occupied");
   for (const auto& [directory_key, d] : directories_)
     if (d.relative_path == entry_path(m))
@@ -381,7 +381,7 @@ std::set<std::string>& MetadataCatalog::members_for(EntryType type,
   const auto new_directory = entry_directory(m);
   if (new_directory) {
     const auto found = find_directory(*new_directory);
-    const auto kind = type == EntryType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo;
+    const auto kind = type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo;
     if (!found || found->kind != kind)
       return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Missing or wrong-kind Directory");
   }
@@ -409,16 +409,16 @@ std::set<std::string>& MetadataCatalog::members_for(EntryType type,
   return std::monostate{};
 }
 
-::folio::core::internal::Result<std::monostate, StorageError> MetadataCatalog::remove_entry(const Id& id) {
+::folio::core::internal::Result<std::monostate, StorageError> MetadataCatalog::remove_record(const Id& id) {
   const auto key = id.to_string();
-  const auto existing = find_entry(id);
+  const auto existing = find_record(id);
   if (!existing) return failure(StorageErrorCode::NotFound, {}, "Entry UUID not found");
-  const auto type = entry_type(*existing);
+  const auto type = record_type(*existing);
   members_for(type, entry_directory(*existing)).erase(key);
   switch (type) {
-    case EntryType::Log: logs_.erase(key); break;
-    case EntryType::Memo: memos_.erase(key); break;
-    case EntryType::Todo: todos_.erase(key); break;
+    case RecordType::Log: logs_.erase(key); break;
+    case RecordType::Memo: memos_.erase(key); break;
+    case RecordType::Todo: todos_.erase(key); break;
   }
   unpersisted_ = true;
   return std::monostate{};
@@ -433,7 +433,7 @@ std::set<std::string>& MetadataCatalog::members_for(EntryType type,
   for (const auto& [directory_key, d] : directories_)
     if (d.relative_path == m.relative_path)
       return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Locator already occupied");
-  if (entry_path_occupied(m.relative_path))
+  if (record_path_occupied(m.relative_path))
     return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Locator already occupied");
   directory_members_.try_emplace(key);
   try {
@@ -459,7 +459,7 @@ std::set<std::string>& MetadataCatalog::members_for(EntryType type,
   for (const auto& [directory_key, d] : directories_)
     if (directory_key != key && d.relative_path == m.relative_path)
       return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Locator already occupied");
-  if (entry_path_occupied(m.relative_path))
+  if (record_path_occupied(m.relative_path))
     return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Locator already occupied");
   if (equal(it->second, m)) return std::monostate{};
   static_assert(std::is_nothrow_swappable_v<DirectoryMetadata>);
@@ -493,7 +493,7 @@ std::set<std::string>& MetadataCatalog::members_for(EntryType type,
   }
   auto insert_records = [&](auto& records) -> ::folio::core::internal::Result<std::monostate, StorageError> {
     for (auto& record : records) {
-      auto inserted = candidate.insert_entry(std::move(record));
+      auto inserted = candidate.insert_record(std::move(record));
       if (const auto* problem = std::get_if<StorageError>(&inserted)) return *problem;
     }
     return std::monostate{};
@@ -510,40 +510,40 @@ std::set<std::string>& MetadataCatalog::members_for(EntryType type,
   return std::monostate{};
 }
 
-std::optional<EntryMetadata> MetadataCatalog::find_entry(const Id& id) const {
+std::optional<RecordMetadata> MetadataCatalog::find_record(const Id& id) const {
   const auto key = id.to_string();
-  if (const auto it = logs_.find(key); it != logs_.end()) return EntryMetadata{it->second};
-  if (const auto it = memos_.find(key); it != memos_.end()) return EntryMetadata{it->second};
-  if (const auto it = todos_.find(key); it != todos_.end()) return EntryMetadata{it->second};
+  if (const auto it = logs_.find(key); it != logs_.end()) return RecordMetadata{it->second};
+  if (const auto it = memos_.find(key); it != memos_.end()) return RecordMetadata{it->second};
+  if (const auto it = todos_.find(key); it != todos_.end()) return RecordMetadata{it->second};
   return std::nullopt;
 }
 std::optional<DirectoryMetadata> MetadataCatalog::find_directory(const Id& id) const {
   const auto it = directories_.find(id.to_string());
   return it == directories_.end() ? std::nullopt : std::optional<DirectoryMetadata>{it->second};
 }
-RootListing MetadataCatalog::list_root(EntryType module) const {
+RootListing MetadataCatalog::list_root(RecordType module) const {
   RootListing out;
   switch (module) {
-    case EntryType::Log:
-      for (const auto& key : log_roots_) out.entries.emplace_back(logs_.at(key));
+    case RecordType::Log:
+      for (const auto& key : log_roots_) out.records.emplace_back(logs_.at(key));
       break;
-    case EntryType::Memo:
-      for (const auto& key : memo_roots_) out.entries.emplace_back(memos_.at(key));
+    case RecordType::Memo:
+      for (const auto& key : memo_roots_) out.records.emplace_back(memos_.at(key));
       break;
-    case EntryType::Todo:
-      for (const auto& key : todo_roots_) out.entries.emplace_back(todos_.at(key));
+    case RecordType::Todo:
+      for (const auto& key : todo_roots_) out.records.emplace_back(todos_.at(key));
       break;
   }
   for (const auto& [key, d] : directories_)
-    if ((module == EntryType::Memo && d.kind == DirectoryKind::Memo) ||
-        (module == EntryType::Todo && d.kind == DirectoryKind::Todo)) out.directories.push_back(d);
+    if ((module == RecordType::Memo && d.kind == DirectoryKind::Memo) ||
+        (module == RecordType::Todo && d.kind == DirectoryKind::Todo)) out.directories.push_back(d);
   return out;
 }
-::folio::core::internal::Result<std::vector<EntryMetadata>, StorageError> MetadataCatalog::list_directory(DirectoryKind kind, const Id& id) const {
+::folio::core::internal::Result<std::vector<RecordMetadata>, StorageError> MetadataCatalog::list_directory(DirectoryKind kind, const Id& id) const {
   const auto dir = find_directory(id);
   if (!dir || dir->kind != kind)
     return StorageError{StorageErrorCode::NotFound, {}, "Directory UUID not found in module", {}, false};
-  std::vector<EntryMetadata> out;
+  std::vector<RecordMetadata> out;
   const auto& members = directory_members_.at(id.to_string());
   if (kind == DirectoryKind::Memo) {
     for (const auto& key : members) out.emplace_back(memos_.at(key));
@@ -557,37 +557,37 @@ std::vector<DirectoryMetadata> MetadataCatalog::list_directories(DirectoryKind k
   for (const auto& [key, d] : directories_) if (d.kind == kind) out.push_back(d);
   return out;
 }
-std::vector<EntryMetadata> MetadataCatalog::query(const CatalogQuery& q) const {
-  std::vector<EntryMetadata> out;
+std::vector<RecordMetadata> MetadataCatalog::query(const RecordQuery& q) const {
+  std::vector<RecordMetadata> out;
   auto append_matching = [&](const auto& collection) {
     for (const auto& [key, e] : collection)
       if (matches(e, q)) out.emplace_back(e);
   };
   if (q.directory) {
     const std::set<std::string>* members = nullptr;
-    std::optional<EntryType> constrained_type;
+    std::optional<RecordType> constrained_type;
     if (*q.directory) {
       const auto d = find_directory(**q.directory);
       if (!d) return out;
-      constrained_type = d->kind == DirectoryKind::Memo ? EntryType::Memo : EntryType::Todo;
+      constrained_type = d->kind == DirectoryKind::Memo ? RecordType::Memo : RecordType::Todo;
       members = &directory_members_.at(d->id.to_string());
     }
-    if (!constrained_type && (!q.type || *q.type == EntryType::Log)) {
+    if (!constrained_type && (!q.type || *q.type == RecordType::Log)) {
       for (const auto& key : log_roots_) {
         const auto& e = logs_.at(key);
         if (matches(e, q)) out.emplace_back(e);
       }
     }
-    if ((!constrained_type || *constrained_type == EntryType::Memo) &&
-        (!q.type || *q.type == EntryType::Memo)) {
+    if ((!constrained_type || *constrained_type == RecordType::Memo) &&
+        (!q.type || *q.type == RecordType::Memo)) {
       const auto& ids = members ? *members : memo_roots_;
       for (const auto& key : ids) {
         const auto& e = memos_.at(key);
         if (matches(e, q)) out.emplace_back(e);
       }
     }
-    if ((!constrained_type || *constrained_type == EntryType::Todo) &&
-        (!q.type || *q.type == EntryType::Todo)) {
+    if ((!constrained_type || *constrained_type == RecordType::Todo) &&
+        (!q.type || *q.type == RecordType::Todo)) {
       const auto& ids = members ? *members : todo_roots_;
       for (const auto& key : ids) {
         const auto& e = todos_.at(key);
@@ -595,11 +595,11 @@ std::vector<EntryMetadata> MetadataCatalog::query(const CatalogQuery& q) const {
       }
     }
   } else {
-    if (!q.type || *q.type == EntryType::Log) append_matching(logs_);
-    if (!q.type || *q.type == EntryType::Memo) append_matching(memos_);
-    if (!q.type || *q.type == EntryType::Todo) append_matching(todos_);
+    if (!q.type || *q.type == RecordType::Log) append_matching(logs_);
+    if (!q.type || *q.type == RecordType::Memo) append_matching(memos_);
+    if (!q.type || *q.type == RecordType::Todo) append_matching(todos_);
   }
-  std::sort(out.begin(), out.end(), [&](const EntryMetadata& a, const EntryMetadata& b) {
+  std::sort(out.begin(), out.end(), [&](const RecordMetadata& a, const RecordMetadata& b) {
     const int cmp = compare_key(a, b, q.sort);
     if (cmp == -2) return false;
     if (cmp == 2) return true;

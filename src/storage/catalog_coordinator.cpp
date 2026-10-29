@@ -89,27 +89,27 @@ CatalogCoordinator::CatalogCoordinator(StoragePaths paths, MetadataCatalog& cata
       catalog_(catalog),
       log_creation_callback_(wrap_catalog_update(
           [this](const LogMetadata& metadata) {
-            return catalog_.insert_entry(metadata);
+            return catalog_.insert_record(metadata);
           })),
       log_update_callback_(wrap_catalog_update(
           [this](const LogMetadata& metadata) {
-            return catalog_.update_entry(metadata);
+            return catalog_.update_record(metadata);
           })),
       memo_creation_callback_(wrap_catalog_update(
           [this](const MemoMetadata& metadata) {
-            return catalog_.insert_entry(metadata);
+            return catalog_.insert_record(metadata);
           })),
       memo_update_callback_(wrap_catalog_update(
           [this](const MemoMetadata& metadata) {
-            return catalog_.update_entry(metadata);
+            return catalog_.update_record(metadata);
           })),
       todo_creation_callback_(wrap_catalog_update(
           [this](const TodoMetadata& metadata) {
-            return catalog_.insert_entry(metadata);
+            return catalog_.insert_record(metadata);
           })),
       todo_update_callback_(wrap_catalog_update(
           [this](const TodoMetadata& metadata) {
-            return catalog_.update_entry(metadata);
+            return catalog_.update_record(metadata);
           })),
       directory_creation_callback_(wrap_catalog_update(
           [this](const DirectoryMetadata& metadata) {

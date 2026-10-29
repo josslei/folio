@@ -164,16 +164,16 @@ TEST(StorageFilenameTest, UsesUtcCreationTimeAndTypeSpecificExtensions) {
       {midnight - milliseconds{1}, "2000-02-29_235959_"},
       {midnight, "2000-03-01_000000_"}}};
   for (const auto& [created, prefix] : cases) {
-    for (const auto type : {storage::EntryType::Log, storage::EntryType::Memo,
-                            storage::EntryType::Todo}) {
-      const auto filename = storage::normal_entry_filename(type, *id, created);
+    for (const auto type : {storage::RecordType::Log, storage::RecordType::Memo,
+                            storage::RecordType::Todo}) {
+      const auto filename = storage::normal_record_filename(type, *id, created);
       ASSERT_TRUE(std::holds_alternative<std::string>(filename));
-      const auto extension = type == storage::EntryType::Todo ? ".toml" : ".md";
+      const auto extension = type == storage::RecordType::Todo ? ".toml" : ".md";
       EXPECT_EQ(std::get<std::string>(filename), prefix + id->to_string() + extension);
     }
   }
-  expect_storage_error(storage::normal_entry_filename(
-      static_cast<storage::EntryType>(999), *id, Timestamp{}));
+  expect_storage_error(storage::normal_record_filename(
+      static_cast<storage::RecordType>(999), *id, Timestamp{}));
 }
 
 TEST(StorageFilenameTest, HasNoDependenceOnUnicodeTitles) {
@@ -182,8 +182,8 @@ TEST(StorageFilenameTest, HasNoDependenceOnUnicodeTitles) {
   // Titles cannot enter the filename API; changing a model title keeps these inputs.
   for (const auto* title : {"研究メモ", "café / 旅行", ""}) {
     SCOPED_TRACE(title);
-    const auto result = storage::normal_entry_filename(
-        storage::EntryType::Memo, *id, Timestamp{});
+    const auto result = storage::normal_record_filename(
+        storage::RecordType::Memo, *id, Timestamp{});
     ASSERT_TRUE(std::holds_alternative<std::string>(result));
     EXPECT_EQ(std::get<std::string>(result),
               "1970-01-01_000000_47183823-2574-4bfd-b411-99ed177d3e43.md");

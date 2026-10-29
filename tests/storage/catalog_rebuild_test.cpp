@@ -146,19 +146,19 @@ TEST_F(CatalogRebuildTest, EnumeratesCompleteMetadataAndActualRenamedLocators) {
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_todo(t)));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(root_memo)));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_todo(root_todo)));
-  const auto root_memo_path = repository.locate_entry(storage::EntryType::Memo, root_memo.id);
-  const auto root_todo_path = repository.locate_entry(storage::EntryType::Todo, root_todo.id);
+  const auto root_memo_path = repository.locate_record(storage::RecordType::Memo, root_memo.id);
+  const auto root_todo_path = repository.locate_record(storage::RecordType::Todo, root_todo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(root_memo_path));
   ASSERT_TRUE(std::holds_alternative<fs::path>(root_todo_path));
-  const auto log_locator = repository.locate_entry(storage::EntryType::Log, l.id);
+  const auto log_locator = repository.locate_record(storage::RecordType::Log, l.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(log_locator));
   const fs::path renamed_log{"logs/manual-name.md"};
   fs::rename(root / std::get<fs::path>(log_locator), root / renamed_log);
-  const auto memo_locator = repository.locate_entry(storage::EntryType::Memo, m.id);
+  const auto memo_locator = repository.locate_record(storage::RecordType::Memo, m.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(memo_locator));
   const fs::path renamed_memo = fs::path{"memos"} / md.id.to_string() / "draft.tmp-not-atomic.md";
   fs::rename(root / std::get<fs::path>(memo_locator), root / renamed_memo);
-  const auto todo_locator = repository.locate_entry(storage::EntryType::Todo, t.id);
+  const auto todo_locator = repository.locate_record(storage::RecordType::Todo, t.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(todo_locator));
   const fs::path renamed_todo = fs::path{"todos"} / td.id.to_string() / "manual.toml";
   fs::rename(root / std::get<fs::path>(todo_locator), root / renamed_todo);
@@ -190,15 +190,15 @@ TEST_F(CatalogRebuildTest, EnumeratesCompleteMetadataAndActualRenamedLocators) {
       storage::metadata_from(md, fs::path{"memos"} / md.id.to_string()))));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_directory(
       storage::metadata_from(td, fs::path{"todos"} / td.id.to_string()))));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_entry(
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
       storage::metadata_from(l, renamed_log))));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_entry(
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
       storage::metadata_from(m, renamed_memo))));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_entry(
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
       storage::metadata_from(t, renamed_todo))));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_entry(
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
       storage::metadata_from(root_memo, std::get<fs::path>(root_memo_path)))));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_entry(
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
       storage::metadata_from(root_todo, std::get<fs::path>(root_todo_path)))));
   const auto encoded_actual = storage::index_codec::encode_index(catalog);
   const auto encoded_expected = storage::index_codec::encode_index(expected);
@@ -206,7 +206,7 @@ TEST_F(CatalogRebuildTest, EnumeratesCompleteMetadataAndActualRenamedLocators) {
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded_expected));
   EXPECT_EQ(std::get<std::string>(encoded_actual),
             std::get<std::string>(encoded_expected));
-  const auto loaded_log = catalog.find_entry(l.id);
+  const auto loaded_log = catalog.find_record(l.id);
   ASSERT_TRUE(loaded_log.has_value());
   const auto& log_metadata = std::get<storage::LogMetadata>(*loaded_log);
   EXPECT_EQ(log_metadata.relative_path, renamed_log);
@@ -216,13 +216,13 @@ TEST_F(CatalogRebuildTest, EnumeratesCompleteMetadataAndActualRenamedLocators) {
   EXPECT_EQ(log_metadata.created.timezone, l.created.timezone);
   EXPECT_EQ(log_metadata.created.location, l.created.location);
   EXPECT_EQ(log_metadata.log_date.date, l.log_date.date);
-  const auto loaded_memo = catalog.find_entry(m.id);
+  const auto loaded_memo = catalog.find_record(m.id);
   ASSERT_TRUE(loaded_memo.has_value());
   const auto& memo_metadata = std::get<storage::MemoMetadata>(*loaded_memo);
   EXPECT_EQ(memo_metadata.relative_path, renamed_memo);
   EXPECT_EQ(memo_metadata.directory_id, md.id);
   EXPECT_EQ(memo_metadata.title, m.title);
-  const auto loaded_todo = catalog.find_entry(t.id);
+  const auto loaded_todo = catalog.find_record(t.id);
   ASSERT_TRUE(loaded_todo.has_value());
   const auto& todo_metadata = std::get<storage::TodoMetadata>(*loaded_todo);
   EXPECT_EQ(todo_metadata.relative_path, renamed_todo);
@@ -231,14 +231,14 @@ TEST_F(CatalogRebuildTest, EnumeratesCompleteMetadataAndActualRenamedLocators) {
   EXPECT_EQ(todo_metadata.status, t.status);
   EXPECT_EQ(todo_metadata.priority, t.priority);
   EXPECT_EQ(todo_metadata.due_date.has_value(), t.due_date.has_value());
-  EXPECT_EQ(catalog.list_root(storage::EntryType::Log).entries.size(), 1U);
-  EXPECT_EQ(catalog.list_root(storage::EntryType::Memo).directories.size(), 1U);
-  EXPECT_EQ(catalog.list_root(storage::EntryType::Todo).directories.size(), 1U);
-  EXPECT_EQ(catalog.list_root(storage::EntryType::Memo).entries.size(), 1U);
-  EXPECT_EQ(catalog.list_root(storage::EntryType::Todo).entries.size(), 1U);
-  EXPECT_EQ(std::get<std::vector<storage::EntryMetadata>>(
+  EXPECT_EQ(catalog.list_root(storage::RecordType::Log).records.size(), 1U);
+  EXPECT_EQ(catalog.list_root(storage::RecordType::Memo).directories.size(), 1U);
+  EXPECT_EQ(catalog.list_root(storage::RecordType::Todo).directories.size(), 1U);
+  EXPECT_EQ(catalog.list_root(storage::RecordType::Memo).records.size(), 1U);
+  EXPECT_EQ(catalog.list_root(storage::RecordType::Todo).records.size(), 1U);
+  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
       catalog.list_directory(core::DirectoryKind::Memo, md.id)).size(), 1U);
-  EXPECT_EQ(std::get<std::vector<storage::EntryMetadata>>(
+  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
       catalog.list_directory(core::DirectoryKind::Todo, td.id)).size(), 1U);
   EXPECT_EQ(bytes(root / renamed_log), before_log);
   EXPECT_EQ(bytes(root / renamed_memo), before_memo);
@@ -254,7 +254,7 @@ TEST_F(CatalogRebuildTest, AtomicTemporariesAreIgnoredAndUnrelatedObjectsDiagnos
   storage::NormalRepository repository{root};
   const auto l = log();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(l)));
-  const auto locator = repository.locate_entry(storage::EntryType::Log, l.id);
+  const auto locator = repository.locate_record(storage::RecordType::Log, l.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto formal = root / std::get<fs::path>(locator);
   const auto pending = formal.parent_path() /
@@ -280,7 +280,7 @@ TEST_F(CatalogRebuildTest, DuplicateStoredIdentityIsFatalEvenUnderDifferentFilen
   storage::NormalRepository repository{root};
   const auto l = log();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(l)));
-  const auto locator = repository.locate_entry(storage::EntryType::Log, l.id);
+  const auto locator = repository.locate_record(storage::RecordType::Log, l.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto original = root / std::get<fs::path>(locator);
   const auto duplicate = root / "logs" / "other.md";
@@ -341,7 +341,7 @@ TEST_F(CatalogRebuildTest, EntrySchemaAndPhysicalDirectoryMembershipAreValidated
   storage::NormalRepository repository{root};
   const auto l = log();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(l)));
-  const auto locator = repository.locate_entry(storage::EntryType::Log, l.id);
+  const auto locator = repository.locate_record(storage::RecordType::Log, l.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto log_path = root / std::get<fs::path>(locator);
   const auto original = bytes(log_path);
@@ -357,7 +357,7 @@ TEST_F(CatalogRebuildTest, EntrySchemaAndPhysicalDirectoryMembershipAreValidated
       repository.create_directory(core::DirectoryKind::Memo, other)));
   const auto m = memo(md.id);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(m)));
-  const auto memo_locator = repository.locate_entry(storage::EntryType::Memo, m.id);
+  const auto memo_locator = repository.locate_record(storage::RecordType::Memo, m.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(memo_locator));
   const auto source = root / std::get<fs::path>(memo_locator);
   const auto destination = root / "memos" / other.id.to_string() / source.filename();
@@ -382,7 +382,7 @@ TEST_F(CatalogRebuildTest, NestedAndSymlinkedFormalStructuresAreFatal) {
   ASSERT_TRUE(fs::remove_all(root / "logs" / "nested") > 0);
   const auto l = log();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(l)));
-  const auto locator = repository.locate_entry(storage::EntryType::Log, l.id);
+  const auto locator = repository.locate_record(storage::RecordType::Log, l.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto outside = sandbox / "outside.md";
   ASSERT_NO_FATAL_FAILURE(write(outside, bytes(root / std::get<fs::path>(locator))));
@@ -416,7 +416,7 @@ TEST_F(CatalogRebuildTest, NestedMemoEntryAndSymlinkedUuidDirectoryAreFatal) {
 TEST_F(CatalogRebuildTest, RebuildFailurePreservesOldCatalogAndUnpersistedState) {
   storage::MetadataCatalog catalog;
   const auto old = storage::metadata_from(log(), fs::path{"logs/old.md"});
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_entry(old)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_record(old)));
   catalog.mark_persisted();
   ASSERT_FALSE(catalog.unpersisted());
   auto duplicate_memo = memo();
@@ -428,21 +428,21 @@ TEST_F(CatalogRebuildTest, RebuildFailurePreservesOldCatalogAndUnpersistedState)
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(duplicate));
   EXPECT_EQ(std::get<storage::StorageError>(duplicate).code,
             storage::StorageErrorCode::DuplicateId);
-  EXPECT_TRUE(catalog.find_entry(log().id).has_value());
+  EXPECT_TRUE(catalog.find_record(log().id).has_value());
   EXPECT_FALSE(catalog.unpersisted());
   const auto md = memo_directory();
   auto new_memo = storage::metadata_from(memo(md.id), fs::path{"memos/member.md"});
   const auto bad = catalog.rebuild({}, {std::get<storage::MemoMetadata>(new_memo)}, {}, {});
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(bad));
-  EXPECT_TRUE(catalog.find_entry(log().id).has_value());
-  EXPECT_FALSE(catalog.find_entry(memo().id).has_value());
+  EXPECT_TRUE(catalog.find_record(log().id).has_value());
+  EXPECT_FALSE(catalog.find_record(memo().id).has_value());
   EXPECT_FALSE(catalog.unpersisted());
   const auto cross_kind = catalog.rebuild(
       {}, {}, {std::get<storage::TodoMetadata>(storage::metadata_from(todo(md.id), fs::path{"todos/incorrect.toml"}))},
       {storage::metadata_from(md, fs::path{"memos/group"})});
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(cross_kind));
-  EXPECT_TRUE(catalog.find_entry(log().id).has_value());
-  EXPECT_FALSE(catalog.find_entry(todo().id).has_value());
+  EXPECT_TRUE(catalog.find_record(log().id).has_value());
+  EXPECT_FALSE(catalog.find_record(todo().id).has_value());
   EXPECT_FALSE(catalog.unpersisted());
 
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
@@ -459,15 +459,15 @@ TEST_F(CatalogRebuildTest, SuccessfulEmptyReplacementClearsMembershipAndMarksUnp
   const auto md = memo_directory();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       catalog.insert_directory(storage::metadata_from(md, fs::path{"memos/group"}))));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_entry(
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_record(
       storage::metadata_from(memo(md.id), fs::path{"memos/group/member.md"}))));
   catalog.mark_persisted();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.rebuild({}, {}, {}, {})));
   EXPECT_TRUE(catalog.unpersisted());
   EXPECT_TRUE(catalog.query().empty());
   EXPECT_TRUE(catalog.list_directories(core::DirectoryKind::Memo).empty());
-  EXPECT_TRUE(catalog.list_root(storage::EntryType::Memo).directories.empty());
-  EXPECT_FALSE(catalog.find_entry(memo().id).has_value());
+  EXPECT_TRUE(catalog.list_root(storage::RecordType::Memo).directories.empty());
+  EXPECT_FALSE(catalog.find_record(memo().id).has_value());
   EXPECT_FALSE(catalog.find_directory(md.id).has_value());
 }
 

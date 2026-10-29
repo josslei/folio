@@ -1,6 +1,6 @@
 # Folio
 
-Folio is a cross-platform personal logging application with a terminal user interface. Its core library is independent of the TUI so other frontends can reuse it. Log, Memo, and Todo are the three primary Core structures. Core currently includes in-memory models for all three, with Subtask owned by Todo, plus shared types such as Tag and Directory.
+Folio is a cross-platform personal logging application with a terminal user interface. Its core library is independent of the TUI so other frontends can reuse it. Log, Memo, Todo, and Directory are four first-class Folio Entries with independent Core models. Directory organizes Memo or Todo Entries within one level; Subtask belongs to Todo, and Tag is a shared value type.
 
 ## Technology
 

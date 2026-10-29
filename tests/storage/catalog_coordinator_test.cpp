@@ -121,11 +121,11 @@ storage::MetadataCatalog make_catalog() {
       core::DueDate{core::TimestampContext{
           core::Timestamp{std::chrono::seconds{1900000000}}, "UTC", std::nullopt}},
       std::nullopt};
-  for (const storage::EntryMetadata& entry : {
-           storage::EntryMetadata{log}, storage::EntryMetadata{memo},
-           storage::EntryMetadata{todo}, storage::EntryMetadata{root_todo},
-           storage::EntryMetadata{timed_todo}}) {
-    if (!std::holds_alternative<std::monostate>(catalog.insert_entry(entry)))
+  for (const storage::RecordMetadata& entry : {
+           storage::RecordMetadata{log}, storage::RecordMetadata{memo},
+           storage::RecordMetadata{todo}, storage::RecordMetadata{root_todo},
+           storage::RecordMetadata{timed_todo}}) {
+    if (!std::holds_alternative<std::monostate>(catalog.insert_record(entry)))
       throw std::runtime_error("Invalid Entry fixture");
   }
   return catalog;
@@ -162,13 +162,13 @@ core::Todo::Snapshot authoritative_todo(const core::Id& directory_id) {
 }
 
 void change_log_title(storage::MetadataCatalog& catalog) {
-  const auto found = catalog.find_entry(
+  const auto found = catalog.find_record(
       id("17183823-2574-4bfd-b411-99ed177d3e43"));
   if (!found) throw std::runtime_error("Missing test Log");
   auto log = std::get<storage::LogMetadata>(*found);
   log.title = "Changed after first save";
-  if (!std::holds_alternative<std::monostate>(catalog.update_entry(
-          storage::EntryMetadata{log})))
+  if (!std::holds_alternative<std::monostate>(catalog.update_record(
+          storage::RecordMetadata{log})))
     throw std::runtime_error("Could not update test Log");
 }
 
@@ -259,13 +259,13 @@ TEST_F(CatalogCoordinatorTest, PersistedLoadedCatalogSkipsShutdownIoAndQueriesMe
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_FALSE(owned_catalog.unpersisted());
   EXPECT_EQ(owned_catalog.query().size(), 5U);
-  EXPECT_EQ(owned_catalog.list_root(storage::EntryType::Log).entries.size(), 1U);
-  EXPECT_EQ(owned_catalog.list_root(storage::EntryType::Memo).directories.size(), 1U);
-  EXPECT_EQ(owned_catalog.list_root(storage::EntryType::Todo).directories.size(), 1U);
-  EXPECT_EQ(std::get<std::vector<storage::EntryMetadata>>(
+  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Log).records.size(), 1U);
+  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Memo).directories.size(), 1U);
+  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Todo).directories.size(), 1U);
+  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
       owned_catalog.list_directory(core::DirectoryKind::Memo,
           id("87183823-2574-4bfd-b411-99ed177d3e43"))).size(), 1U);
-  EXPECT_EQ(std::get<std::vector<storage::EntryMetadata>>(
+  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
       owned_catalog.list_directory(core::DirectoryKind::Todo,
           id("97183823-2574-4bfd-b411-99ed177d3e43"))).size(), 1U);
   const auto encoded = codec::encode_index(owned_catalog);
@@ -312,7 +312,7 @@ TEST_F(CatalogCoordinatorTest, UnpersistedEmptyCatalogCanReplaceAndMissingTarget
   storage::CatalogCoordinator coordinator{paths(), owned_catalog};
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
   for (const auto& entry : owned_catalog.query()) {
-    EXPECT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.remove_entry(
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.remove_record(
         std::visit([](const auto& value) { return value.id; }, entry))));
   }
   // Directory records must be removed after their members.
@@ -400,11 +400,11 @@ TEST_F(CatalogCoordinatorTest, EncodingFailurePreservesExistingCacheAndUnpersist
   const auto original = read_bytes(file);
   storage::CatalogCoordinator coordinator{paths(), owned_catalog};
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
-  auto log = std::get<storage::LogMetadata>(*owned_catalog.find_entry(
+  auto log = std::get<storage::LogMetadata>(*owned_catalog.find_record(
       id("17183823-2574-4bfd-b411-99ed177d3e43")));
   log.log_date.date = std::chrono::year{-1} / 1 / 1;
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.update_entry(
-      storage::EntryMetadata{log})));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.update_record(
+      storage::RecordMetadata{log})));
   const auto failed = coordinator.shutdown_save();
   expect_error(failed, storage::CoordinatorErrorCode::CodecError);
   ASSERT_TRUE(std::get<storage::CoordinatorError>(failed).codec_error.has_value());
@@ -412,8 +412,8 @@ TEST_F(CatalogCoordinatorTest, EncodingFailurePreservesExistingCacheAndUnpersist
   EXPECT_TRUE(owned_catalog.unpersisted());
   log.log_date.date = std::chrono::year{2027} / 1 / 15;
   log.title = "Recovered after failed encoding";
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.update_entry(
-      storage::EntryMetadata{log})));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.update_record(
+      storage::RecordMetadata{log})));
   const auto retried = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(retried));
   EXPECT_EQ(std::get<storage::SaveOutcome>(retried), storage::SaveOutcome::Saved);
@@ -518,7 +518,7 @@ TEST_F(CatalogCoordinatorTest, MissingIndexRebuildsAuthoritativeFilesWithoutInde
   EXPECT_TRUE(std::get<std::vector<storage::ExcludedObject>>(rebuilt).empty());
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_TRUE(owned_catalog.unpersisted());
-  const auto found = owned_catalog.find_entry(snapshot.id);
+  const auto found = owned_catalog.find_record(snapshot.id);
   ASSERT_TRUE(found.has_value());
   EXPECT_EQ(std::get<storage::LogMetadata>(*found).title, snapshot.title);
   EXPECT_EQ(std::get<storage::LogMetadata>(*found).created.timestamp,
@@ -623,8 +623,8 @@ TEST_F(CatalogCoordinatorTest, RebuildBeforeStartupPreventsCacheOverwriteByStart
   storage::CatalogCoordinator coordinator{paths(), owned_catalog};
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(
       coordinator.refresh_all()));
-  EXPECT_TRUE(owned_catalog.find_entry(snapshot.id).has_value());
-  EXPECT_FALSE(owned_catalog.find_entry(
+  EXPECT_TRUE(owned_catalog.find_record(snapshot.id).has_value());
+  EXPECT_FALSE(owned_catalog.find_record(
       id("17183823-2574-4bfd-b411-99ed177d3e43")).has_value());
   expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
@@ -665,7 +665,7 @@ TEST_F(CatalogCoordinatorTest, StartupFallsBackForMissingCorruptAndUnsupportedIn
     EXPECT_TRUE(outcome.diagnostics.empty());
     EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
     EXPECT_TRUE(owned_catalog.unpersisted());
-    EXPECT_TRUE(owned_catalog.find_entry(snapshot.id).has_value());
+    EXPECT_TRUE(owned_catalog.find_record(snapshot.id).has_value());
     EXPECT_EQ(fs::exists(file) ? read_bytes(file) : std::string{}, previous);
     expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);
   };
@@ -702,12 +702,12 @@ TEST_F(CatalogCoordinatorTest, StartupFallbackRestoresMixedMetadataAndDirectoryM
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(log)));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(memo)));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_todo(todo)));
-  auto memo_path = repository.locate_entry(storage::EntryType::Memo, memo.id);
+  auto memo_path = repository.locate_record(storage::RecordType::Memo, memo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(memo_path));
   const auto renamed = fs::path{"memos"} / memo_directory.id.to_string() / "renamed.md";
   fs::rename(normal / std::get<fs::path>(memo_path), normal / renamed);
-  const auto log_path = repository.locate_entry(storage::EntryType::Log, log.id);
-  const auto todo_path = repository.locate_entry(storage::EntryType::Todo, todo.id);
+  const auto log_path = repository.locate_record(storage::RecordType::Log, log.id);
+  const auto todo_path = repository.locate_record(storage::RecordType::Todo, todo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(log_path));
   ASSERT_TRUE(std::holds_alternative<fs::path>(todo_path));
   storage::MetadataCatalog expected;
@@ -717,11 +717,11 @@ TEST_F(CatalogCoordinatorTest, StartupFallbackRestoresMixedMetadataAndDirectoryM
   ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_directory(
       storage::metadata_from(todo_directory,
                              fs::path{"todos"} / todo_directory.id.to_string()))));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_entry(
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
       storage::metadata_from(log, std::get<fs::path>(log_path)))));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_entry(
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
       storage::metadata_from(memo, renamed))));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_entry(
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
       storage::metadata_from(todo, std::get<fs::path>(todo_path)))));
   const auto expected_bytes = codec::encode_index(expected);
   ASSERT_TRUE(std::holds_alternative<std::string>(expected_bytes));
@@ -737,13 +737,13 @@ TEST_F(CatalogCoordinatorTest, StartupFallbackRestoresMixedMetadataAndDirectoryM
   const auto actual_bytes = codec::encode_index(owned_catalog);
   ASSERT_TRUE(std::holds_alternative<std::string>(actual_bytes));
   EXPECT_EQ(std::get<std::string>(actual_bytes), std::get<std::string>(expected_bytes));
-  EXPECT_EQ(owned_catalog.list_root(storage::EntryType::Log).entries.size(), 1U);
-  EXPECT_EQ(owned_catalog.list_root(storage::EntryType::Memo).entries.size(), 0U);
-  EXPECT_EQ(owned_catalog.list_root(storage::EntryType::Todo).entries.size(), 0U);
-  EXPECT_EQ(std::get<std::vector<storage::EntryMetadata>>(
+  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Log).records.size(), 1U);
+  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Memo).records.size(), 0U);
+  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Todo).records.size(), 0U);
+  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
       owned_catalog.list_directory(core::DirectoryKind::Memo,
                                            memo_directory.id)).size(), 1U);
-  EXPECT_EQ(std::get<std::vector<storage::EntryMetadata>>(
+  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
       owned_catalog.list_directory(core::DirectoryKind::Todo,
                                            todo_directory.id)).size(), 1U);
   EXPECT_FALSE(fs::exists(state));
@@ -852,8 +852,8 @@ TEST_F(CatalogCoordinatorTest, ExplicitRefreshReplacesCatalogWithoutIndexIo) {
   EXPECT_EQ(std::get<std::vector<storage::ExcludedObject>>(refreshed).size(), 1U);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_TRUE(owned_catalog.unpersisted());
-  EXPECT_TRUE(owned_catalog.find_entry(snapshot.id).has_value());
-  EXPECT_FALSE(owned_catalog.find_entry(
+  EXPECT_TRUE(owned_catalog.find_record(snapshot.id).has_value());
+  EXPECT_FALSE(owned_catalog.find_record(
       id("17183823-2574-4bfd-b411-99ed177d3e43")).has_value());
   EXPECT_EQ(read_bytes(file), cached_bytes);
   const auto saved = coordinator.shutdown_save();

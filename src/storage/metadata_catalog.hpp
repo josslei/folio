@@ -59,8 +59,10 @@ struct DirectoryMetadata {
   std::string name;
 };
 
-using EntryMetadata = std::variant<LogMetadata, MemoMetadata, TodoMetadata>;
-[[nodiscard]] EntryType entry_type(const EntryMetadata& metadata) noexcept;
+// Records are Log/Memo/Todo Entries. Directory remains a first-class Entry
+// with different fields; these types do not change existing query semantics.
+using RecordMetadata = std::variant<LogMetadata, MemoMetadata, TodoMetadata>;
+[[nodiscard]] RecordType record_type(const RecordMetadata& metadata) noexcept;
 
 template <class T>
 struct InclusiveRange {
@@ -73,8 +75,9 @@ enum class MetadataSort {
   Id, Type, Created, Modified, Title, LogDate, DueDate, Status, Priority, Privacy
 };
 
-struct CatalogQuery {
-  std::optional<EntryType> type;
+// Filters only Record metadata; Directory listing remains a separate operation.
+struct RecordQuery {
+  std::optional<RecordType> type;
   // nullopt: any Directory; optional<nullopt>: module root; ID: that Directory.
   std::optional<std::optional<Id>> directory;
   std::optional<Privacy> privacy;
@@ -99,29 +102,29 @@ struct CatalogQuery {
 };
 
 struct RootListing {
-  std::vector<EntryMetadata> entries;
+  std::vector<RecordMetadata> records;
   std::vector<DirectoryMetadata> directories;
 };
 
-[[nodiscard]] EntryMetadata metadata_from(const Log::Snapshot& snapshot,
+[[nodiscard]] RecordMetadata metadata_from(const Log::Snapshot& snapshot,
                                           std::filesystem::path relative_path);
-[[nodiscard]] EntryMetadata metadata_from(const Memo::Snapshot& snapshot,
+[[nodiscard]] RecordMetadata metadata_from(const Memo::Snapshot& snapshot,
                                           std::filesystem::path relative_path);
-[[nodiscard]] EntryMetadata metadata_from(const Todo::Snapshot& snapshot,
+[[nodiscard]] RecordMetadata metadata_from(const Todo::Snapshot& snapshot,
                                           std::filesystem::path relative_path);
 [[nodiscard]] DirectoryMetadata metadata_from(const Directory::Snapshot& snapshot,
                                               std::filesystem::path relative_path);
 
-// In-memory metadata only. Entry and Directory UUID registries are separate.
+// In-memory metadata only. Record and Directory UUID registries are separate.
 // Locators are lexically safe relative paths; physical layout belongs to the
 // repository. Lookups return copies, so callers cannot mutate catalog state
 // indirectly. UUID lookup and Directory membership listing use ordered IDs.
 class MetadataCatalog {
  public:
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> insert_entry(EntryMetadata metadata);
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> insert_record(RecordMetadata metadata);
   // Identical updates are successful no-ops and preserve unpersisted state.
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> update_entry(EntryMetadata metadata);
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> remove_entry(const Id& id);
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> update_record(RecordMetadata metadata);
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> remove_record(const Id& id);
   [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> insert_directory(DirectoryMetadata metadata);
   [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> update_directory(DirectoryMetadata metadata);
   [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> remove_directory(const Id& id);
@@ -133,23 +136,23 @@ class MetadataCatalog {
       std::vector<TodoMetadata> todos,
       std::vector<DirectoryMetadata> directories);
 
-  [[nodiscard]] std::optional<EntryMetadata> find_entry(const Id& id) const;
+  [[nodiscard]] std::optional<RecordMetadata> find_record(const Id& id) const;
   [[nodiscard]] std::optional<DirectoryMetadata> find_directory(const Id& id) const;
-  [[nodiscard]] RootListing list_root(EntryType module) const;
-  [[nodiscard]] ::folio::core::internal::Result<std::vector<EntryMetadata>, StorageError> list_directory(
+  [[nodiscard]] RootListing list_root(RecordType module) const;
+  [[nodiscard]] ::folio::core::internal::Result<std::vector<RecordMetadata>, StorageError> list_directory(
       DirectoryKind kind, const Id& id) const;
   [[nodiscard]] std::vector<DirectoryMetadata> list_directories(DirectoryKind kind) const;
-  [[nodiscard]] std::vector<EntryMetadata> query(const CatalogQuery& query = {}) const;
+  [[nodiscard]] std::vector<RecordMetadata> query(const RecordQuery& query = {}) const;
   // Changes since the last acknowledged Index snapshot; unrelated to readiness
   // or Git synchronization. Acknowledge only after load or successful persistence.
   [[nodiscard]] bool unpersisted() const noexcept;
   void mark_persisted() noexcept;
 
  private:
-  [[nodiscard]] bool entry_path_occupied(const std::filesystem::path& path,
+  [[nodiscard]] bool record_path_occupied(const std::filesystem::path& path,
                                          std::optional<Id> except = std::nullopt) const;
   [[nodiscard]] bool directory_referenced(const DirectoryMetadata& directory) const;
-  [[nodiscard]] std::set<std::string>& members_for(EntryType type,
+  [[nodiscard]] std::set<std::string>& members_for(RecordType type,
                                                   std::optional<Id> directory_id);
 
   std::map<std::string, LogMetadata> logs_;

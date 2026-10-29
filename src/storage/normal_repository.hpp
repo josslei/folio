@@ -103,10 +103,10 @@ class NormalRepository {
       core::TimestampContext modified,
       const PersistedCallback<TodoMetadata>& after_persist = {});
 
-  [[nodiscard]] ::folio::core::internal::Result<std::filesystem::path, StorageError> locate_entry(
-      EntryType type, const core::Id& id) const;
-  [[nodiscard]] ::folio::core::internal::Result<std::filesystem::path, StorageError> locate_entry(
-      EntryType type, const std::filesystem::path& relative_path) const;
+  [[nodiscard]] ::folio::core::internal::Result<std::filesystem::path, StorageError> locate_record(
+      RecordType type, const core::Id& id) const;
+  [[nodiscard]] ::folio::core::internal::Result<std::filesystem::path, StorageError> locate_record(
+      RecordType type, const std::filesystem::path& relative_path) const;
 
   // Collects authoritative metadata for a complete MetadataCatalog rebuild when
   // the Index is unavailable or an explicit Refresh is requested. Unlike UUID

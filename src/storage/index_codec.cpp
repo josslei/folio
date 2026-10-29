@@ -196,7 +196,7 @@ void pack_directory(Packer& p, const DirectoryMetadata& d) {
   pack_key(p, "name"); pack_string(p, d.name);
   pack_key(p, "relative_path"); pack_path(p, d.relative_path);
 }
-void pack_entry(Packer& p, const EntryMetadata& e) {
+void pack_entry(Packer& p, const RecordMetadata& e) {
   std::visit([&](const auto& value) {
     using T = std::decay_t<decltype(value)>;
     constexpr bool log = std::is_same_v<T, LogMetadata>;
@@ -514,7 +514,7 @@ DirectoryMetadata directory_of(const Object& object, std::string_view path) {
           path_of(field(object, "relative_path", path), std::string(path) + ".relative_path"),
           string_of(field(object, "name", path), std::string(path) + ".name")};
 }
-EntryMetadata entry_of(const Object& object, std::string_view path) {
+RecordMetadata entry_of(const Object& object, std::string_view path) {
   as_map(object, path);
   const auto type = string_of(field(object, "type", path), std::string(path) + ".type");
   const auto id = id_of(field(object, "id", path), std::string(path) + ".id");
@@ -564,7 +564,7 @@ EntryMetadata entry_of(const Object& object, std::string_view path) {
     std::sort(directories.begin(), directories.end(), [](const auto& a, const auto& b) {
       return a.id.to_string() < b.id.to_string();
     });
-    CatalogQuery query;
+    RecordQuery query;
     query.sort = MetadataSort::Id;
     auto entries = catalog.query(query);
     require(directories.size() + entries.size() <= kMaxRecords,
@@ -627,7 +627,7 @@ EntryMetadata entry_of(const Object& object, std::string_view path) {
     }
     for (std::uint32_t i = 0; i < entries.via.array.size; ++i) {
       const auto path = "entries[" + std::to_string(i) + "]";
-      auto result = catalog.insert_entry(entry_of(entries.via.array.ptr[i], path));
+      auto result = catalog.insert_record(entry_of(entries.via.array.ptr[i], path));
       if (const auto* problem = std::get_if<StorageError>(&result))
         fail(IndexCodecErrorCode::InvalidMetadata, path, problem->message);
     }

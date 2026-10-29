@@ -141,11 +141,11 @@ TEST_F(NormalRepositoryCallbacksTest, CreatesAndUpdatesAllTypesWithoutIndexIo) {
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(memo, coordinator.memo_creation_callback())));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_todo(todo, coordinator.todo_creation_callback())));
   const auto log_path = std::get<storage::LogMetadata>(
-      *owned_catalog.find_entry(log.id)).relative_path;
+      *owned_catalog.find_record(log.id)).relative_path;
   const auto memo_path = std::get<storage::MemoMetadata>(
-      *owned_catalog.find_entry(memo.id)).relative_path;
+      *owned_catalog.find_record(memo.id)).relative_path;
   const auto todo_path = std::get<storage::TodoMetadata>(
-      *owned_catalog.find_entry(todo.id)).relative_path;
+      *owned_catalog.find_record(todo.id)).relative_path;
   EXPECT_EQ(log_path.parent_path(), fs::path{"logs"});
   EXPECT_EQ(memo_path.parent_path(), fs::path{"memos"});
   EXPECT_EQ(todo_path.parent_path(), fs::path{"todos"});
@@ -172,11 +172,11 @@ TEST_F(NormalRepositoryCallbacksTest, CreatesAndUpdatesAllTypesWithoutIndexIo) {
       repository.update_memo(edited_memo, memo_path, coordinator.memo_update_callback())));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.update_todo(edited_todo, todo_path, coordinator.todo_update_callback())));
-  EXPECT_EQ(std::get<storage::LogMetadata>(*owned_catalog.find_entry(log.id)).title,
+  EXPECT_EQ(std::get<storage::LogMetadata>(*owned_catalog.find_record(log.id)).title,
             "Edited Log");
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.find_entry(memo.id)).title,
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).title,
             "Edited Memo");
-  EXPECT_EQ(std::get<storage::TodoMetadata>(*owned_catalog.find_entry(todo.id)).title,
+  EXPECT_EQ(std::get<storage::TodoMetadata>(*owned_catalog.find_record(todo.id)).title,
             "Edited Todo");
   EXPECT_EQ(std::get<core::Log::Snapshot>(repository.load_log(log.id, log_path)).content,
             "second body");
@@ -258,17 +258,17 @@ TEST_F(NormalRepositoryCallbacksTest, MovesAndDirectoryRenameKeepMembershipCurre
       repository.move_memo(memo.id, memo_dir.id, modified(), coordinator.memo_update_callback())));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.move_todo(todo.id, todo_dir.id, modified(), coordinator.todo_update_callback())));
-  EXPECT_EQ(owned_catalog.list_root(storage::EntryType::Memo).entries.size(), 0U);
-  EXPECT_EQ(owned_catalog.list_root(storage::EntryType::Todo).entries.size(), 0U);
-  EXPECT_EQ(std::get<std::vector<storage::EntryMetadata>>(
+  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Memo).records.size(), 0U);
+  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Todo).records.size(), 0U);
+  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
       owned_catalog.list_directory(core::DirectoryKind::Memo, memo_dir.id)).size(), 1U);
-  EXPECT_EQ(std::get<std::vector<storage::EntryMetadata>>(
+  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
       owned_catalog.list_directory(core::DirectoryKind::Todo, todo_dir.id)).size(), 1U);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.move_memo(memo.id, memo_second.id, modified(), coordinator.memo_update_callback())));
-  EXPECT_EQ(std::get<std::vector<storage::EntryMetadata>>(
+  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
       owned_catalog.list_directory(core::DirectoryKind::Memo, memo_dir.id)).size(), 0U);
-  EXPECT_EQ(std::get<std::vector<storage::EntryMetadata>>(
+  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
       owned_catalog.list_directory(core::DirectoryKind::Memo, memo_second.id)).size(), 1U);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.rename_directory(
       core::DirectoryKind::Memo, memo_second.id, "Renamed / 研究", coordinator.directory_update_callback())));
@@ -277,11 +277,11 @@ TEST_F(NormalRepositoryCallbacksTest, MovesAndDirectoryRenameKeepMembershipCurre
       repository.move_memo(memo.id, std::nullopt, modified(), coordinator.memo_update_callback())));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.move_todo(todo.id, std::nullopt, modified(), coordinator.todo_update_callback())));
-  EXPECT_EQ(owned_catalog.list_root(storage::EntryType::Memo).entries.size(), 1U);
-  EXPECT_EQ(owned_catalog.list_root(storage::EntryType::Todo).entries.size(), 1U);
-  EXPECT_EQ(std::get<std::vector<storage::EntryMetadata>>(
+  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Memo).records.size(), 1U);
+  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Todo).records.size(), 1U);
+  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
       owned_catalog.list_directory(core::DirectoryKind::Memo, memo_second.id)).size(), 0U);
-  EXPECT_EQ(std::get<std::vector<storage::EntryMetadata>>(
+  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
       owned_catalog.list_directory(core::DirectoryKind::Todo, todo_dir.id)).size(), 0U);
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_EQ(bytes(index), persisted_index);
@@ -302,7 +302,7 @@ TEST_F(NormalRepositoryCallbacksTest, RepositoryFailureDoesNotInvokeCallback) {
   edited.title = "Blocked edit";
   edited.modified = modified();
   const auto path = std::get<storage::LogMetadata>(
-      *owned_catalog.find_entry(log.id)).relative_path;
+      *owned_catalog.find_record(log.id)).relative_path;
   const auto pending = normal / path.parent_path() /
       ("." + path.filename().string() + ".tmp-" + core::Id::generate().to_string());
   ASSERT_NO_FATAL_FAILURE(write_bytes(pending, "unfinished"));
@@ -322,7 +322,7 @@ TEST_F(NormalRepositoryCallbacksTest, StaleLocatorCanBeCorrectedByCallerDiscover
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.shutdown_save()));
   const auto prior_index = bytes(index);
   const auto old_path = std::get<storage::MemoMetadata>(
-      *owned_catalog.find_entry(memo.id)).relative_path;
+      *owned_catalog.find_record(memo.id)).relative_path;
   const fs::path renamed = fs::path{"memos"} / "externally-renamed.md";
   fs::rename(normal / old_path, normal / renamed);
   auto edited = memo;
@@ -330,12 +330,12 @@ TEST_F(NormalRepositoryCallbacksTest, StaleLocatorCanBeCorrectedByCallerDiscover
   edited.modified = modified();
   const auto stale = repository.update_memo(edited, old_path, coordinator.memo_update_callback());
   expect_code(stale, storage::StorageErrorCode::StaleLocator);
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.find_entry(memo.id))
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id))
                 .relative_path, old_path);
   EXPECT_FALSE(owned_catalog.unpersisted());
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.update_memo(edited, std::nullopt, coordinator.memo_update_callback())));
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.find_entry(memo.id))
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id))
                 .relative_path, renamed);
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
@@ -345,20 +345,20 @@ TEST_F(NormalRepositoryCallbacksTest, StaleLocatorCanBeCorrectedByCallerDiscover
 TEST_F(NormalRepositoryCallbacksTest, FailedCallbackReportsPublishedFileAndBlocksSave) {
   const auto log = log_snapshot();
   const auto old_index = bytes(index);
-  const auto filename = storage::normal_entry_filename(storage::EntryType::Log,
+  const auto filename = storage::normal_record_filename(storage::RecordType::Log,
                                                        log.id, log.created.timestamp);
   ASSERT_TRUE(std::holds_alternative<std::string>(filename));
   const fs::path path = fs::path{"logs"} / std::get<std::string>(filename);
   auto stale = log;
   stale.id = id("97183823-2574-4bfd-b411-99ed177d3e43");
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.insert_entry(
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.insert_record(
       storage::metadata_from(stale, path))));
   const auto failed = repository.create_log(log, coordinator.log_creation_callback());
   expect_code(failed, storage::StorageErrorCode::PostPersistFailure);
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(failed));
   EXPECT_TRUE(std::get<storage::StorageError>(failed).replacement_completed);
   EXPECT_TRUE(fs::is_regular_file(std::get<storage::StorageError>(failed).path));
-  EXPECT_FALSE(owned_catalog.find_entry(log.id).has_value());
+  EXPECT_FALSE(owned_catalog.find_record(log.id).has_value());
   // The stored callback detects the stale locator conflict after publication.
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
   const auto blocked = coordinator.shutdown_save();
@@ -369,7 +369,7 @@ TEST_F(NormalRepositoryCallbacksTest, FailedCallbackReportsPublishedFileAndBlock
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(
       coordinator.refresh_all()));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
-  EXPECT_TRUE(owned_catalog.find_entry(log.id).has_value());
+  EXPECT_TRUE(owned_catalog.find_record(log.id).has_value());
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_EQ(bytes(index), old_index);
 }
@@ -402,13 +402,13 @@ TEST_F(NormalRepositoryCallbacksTest, CallbackOmissionLeavesCatalogUntouched) {
   const auto log = log_snapshot();
   const auto prior_index = bytes(index);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(log)));
-  EXPECT_FALSE(owned_catalog.find_entry(log.id).has_value());
+  EXPECT_FALSE(owned_catalog.find_record(log.id).has_value());
   EXPECT_FALSE(owned_catalog.unpersisted());
   EXPECT_TRUE(fs::exists(normal / "logs"));
   EXPECT_EQ(bytes(index), prior_index);
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(
       coordinator.refresh_all()));
-  EXPECT_TRUE(owned_catalog.find_entry(log.id).has_value());
+  EXPECT_TRUE(owned_catalog.find_record(log.id).has_value());
   EXPECT_TRUE(owned_catalog.unpersisted());
 }
 
@@ -424,7 +424,7 @@ TEST_F(NormalRepositoryCallbacksTest, BodyOnlyUpdateAndSameNameRenameKeepCatalog
   auto edited = log;
   edited.content = "body only edit";
   const auto path = std::get<storage::LogMetadata>(
-      *owned_catalog.find_entry(log.id)).relative_path;
+      *owned_catalog.find_record(log.id)).relative_path;
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.update_log(edited, path, coordinator.log_update_callback())));
   EXPECT_FALSE(owned_catalog.unpersisted());
@@ -444,7 +444,7 @@ TEST_F(NormalRepositoryCallbacksTest, TodoNotesAndSubtasksPreservePersistedMetad
   ASSERT_FALSE(owned_catalog.unpersisted());
   const auto prior_index = bytes(index);
   const auto path = std::get<storage::TodoMetadata>(
-      *owned_catalog.find_entry(todo.id)).relative_path;
+      *owned_catalog.find_record(todo.id)).relative_path;
   auto edited = todo;
   edited.notes = "Unicode notes: 研究 / café";
   edited.subtasks = {{"Revised subtask", true}};
@@ -457,7 +457,7 @@ TEST_F(NormalRepositoryCallbacksTest, TodoNotesAndSubtasksPreservePersistedMetad
   ASSERT_EQ(std::get<core::Todo::Snapshot>(loaded).subtasks.size(), 1U);
   EXPECT_EQ(std::get<core::Todo::Snapshot>(loaded).subtasks.front().content,
             "Revised subtask");
-  storage::CatalogQuery query;
+  storage::RecordQuery query;
   query.text = "Revised subtask";
   EXPECT_TRUE(owned_catalog.query(query).empty());
   query.text = "Unicode notes";
@@ -475,12 +475,12 @@ TEST_F(NormalRepositoryCallbacksTest, CallbackObservesCommittedFileAndActualLoca
       [&](const storage::LogMetadata& metadata) {
     observed_path = metadata.relative_path;
     observed_file = fs::is_regular_file(normal / observed_path);
-    return owned_catalog.insert_entry(metadata);
+    return owned_catalog.insert_record(metadata);
   };
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(log, observer)));
   EXPECT_TRUE(observed_file);
   EXPECT_EQ(observed_path,
-            std::get<storage::LogMetadata>(*owned_catalog.find_entry(log.id))
+            std::get<storage::LogMetadata>(*owned_catalog.find_record(log.id))
                 .relative_path);
   EXPECT_EQ(std::get<core::Log::Snapshot>(repository.load_log(log.id, observed_path)).content,
             log.content);
@@ -521,8 +521,8 @@ TEST_F(NormalRepositoryCallbacksTest, ThrowingCallbacksReportSavedDataWithoutRol
   EXPECT_EQ(bytes(index), prior_index);
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(
       coordinator.refresh_all()));
-  EXPECT_TRUE(owned_catalog.find_entry(first.id).has_value());
-  EXPECT_TRUE(owned_catalog.find_entry(second.id).has_value());
+  EXPECT_TRUE(owned_catalog.find_record(first.id).has_value());
+  EXPECT_TRUE(owned_catalog.find_record(second.id).has_value());
 }
 
 TEST_F(NormalRepositoryCallbacksTest, NoOpMoveCorrectsStaleCatalogLocator) {
@@ -533,12 +533,12 @@ TEST_F(NormalRepositoryCallbacksTest, NoOpMoveCorrectsStaleCatalogLocator) {
   ASSERT_FALSE(owned_catalog.unpersisted());
   const auto prior_index = bytes(index);
   const auto old_path = std::get<storage::MemoMetadata>(
-      *owned_catalog.find_entry(memo.id)).relative_path;
+      *owned_catalog.find_record(memo.id)).relative_path;
   const fs::path renamed = fs::path{"memos"} / "renamed-without-move.md";
   fs::rename(normal / old_path, normal / renamed);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.move_memo(memo.id, std::nullopt, modified(), coordinator.memo_update_callback())));
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.find_entry(memo.id))
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id))
                 .relative_path, renamed);
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_EQ(bytes(index), prior_index);
@@ -547,12 +547,12 @@ TEST_F(NormalRepositoryCallbacksTest, NoOpMoveCorrectsStaleCatalogLocator) {
 TEST_F(NormalRepositoryCallbacksTest, SavedUpdateWithMissingCatalogIdRequiresRefresh) {
   const auto log = log_snapshot();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(log)));
-  const auto located = repository.locate_entry(storage::EntryType::Log, log.id);
+  const auto located = repository.locate_record(storage::RecordType::Log, log.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(located));
   const auto path = std::get<fs::path>(located);
   auto stale = log;
   stale.id = id("97183823-2574-4bfd-b411-99ed177d3e43");
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.insert_entry(
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.insert_record(
       storage::metadata_from(stale, path))));
   const auto prior_index = bytes(index);
   auto edited = log;
@@ -563,8 +563,8 @@ TEST_F(NormalRepositoryCallbacksTest, SavedUpdateWithMissingCatalogIdRequiresRef
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(failed));
   EXPECT_TRUE(std::get<storage::StorageError>(failed).replacement_completed);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
-  EXPECT_FALSE(owned_catalog.find_entry(log.id).has_value());
-  EXPECT_TRUE(owned_catalog.find_entry(stale.id).has_value());
+  EXPECT_FALSE(owned_catalog.find_record(log.id).has_value());
+  EXPECT_TRUE(owned_catalog.find_record(stale.id).has_value());
   EXPECT_EQ(std::get<core::Log::Snapshot>(repository.load_log(log.id, path)).title,
             edited.title);
   EXPECT_EQ(bytes(index), prior_index);
@@ -575,8 +575,8 @@ TEST_F(NormalRepositoryCallbacksTest, SavedUpdateWithMissingCatalogIdRequiresRef
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(
       coordinator.refresh_all()));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
-  EXPECT_TRUE(owned_catalog.find_entry(log.id).has_value());
-  EXPECT_FALSE(owned_catalog.find_entry(stale.id).has_value());
+  EXPECT_TRUE(owned_catalog.find_record(log.id).has_value());
+  EXPECT_FALSE(owned_catalog.find_record(stale.id).has_value());
 }
 
 TEST_F(NormalRepositoryCallbacksTest, FailedRefreshPreservesPersistedInconsistentCatalog) {
@@ -584,7 +584,7 @@ TEST_F(NormalRepositoryCallbacksTest, FailedRefreshPreservesPersistedInconsisten
   ASSERT_FALSE(owned_catalog.unpersisted());
   const auto log = log_snapshot();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(log)));
-  const auto located = repository.locate_entry(storage::EntryType::Log, log.id);
+  const auto located = repository.locate_record(storage::RecordType::Log, log.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(located));
   auto edited = log;
   edited.title = "Saved without indexed ID";
