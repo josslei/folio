@@ -71,7 +71,8 @@ class IndexResourceLimitsTest : public testing::Test {
     EXPECT_FALSE(input.bad());
   }
   void expect_oversized_fallback(std::size_t expected_entries) const {
-    storage::CatalogCoordinator coordinator{paths()};
+    storage::MetadataCatalog owned_catalog;
+    storage::CatalogCoordinator coordinator{paths(), owned_catalog};
     const auto result = coordinator.startup_load();
     ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(result));
     const auto& outcome = std::get<storage::InitializationOutcome>(result);
@@ -83,8 +84,8 @@ class IndexResourceLimitsTest : public testing::Test {
     EXPECT_EQ(outcome.index_error->binary_error->path, file());
     EXPECT_TRUE(outcome.diagnostics.empty());
     EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
-    EXPECT_TRUE(coordinator.catalog().unpersisted());
-    EXPECT_EQ(coordinator.catalog().query().size(), expected_entries);
+    EXPECT_TRUE(owned_catalog.unpersisted());
+    EXPECT_EQ(owned_catalog.query().size(), expected_entries);
     expect_cache_unchanged();
     const auto repeated = coordinator.startup_load();
     ASSERT_TRUE(std::holds_alternative<storage::CoordinatorError>(repeated));

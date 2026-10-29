@@ -12,6 +12,46 @@ namespace {
   return StorageError{code, path, std::move(message), {}, false};
 }
 
+bool equal(const core::TimestampContext& a, const core::TimestampContext& b) {
+  return a.timestamp == b.timestamp && a.timezone == b.timezone && a.location == b.location;
+}
+bool equal(const core::DateContext& a, const core::DateContext& b) {
+  return a.date == b.date && a.timezone == b.timezone && a.location == b.location;
+}
+bool equal(const std::optional<core::DueDate>& a, const std::optional<core::DueDate>& b) {
+  if (!a || !b) return !a && !b;
+  if (a->index() != b->index()) return false;
+  if (const auto* date = std::get_if<core::DateContext>(&*a))
+    return equal(*date, std::get<core::DateContext>(*b));
+  return equal(std::get<core::TimestampContext>(*a),
+               std::get<core::TimestampContext>(*b));
+}
+template <class T>
+bool common_equal(const T& a, const T& b) {
+  return a.id == b.id && a.relative_path == b.relative_path &&
+         a.privacy == b.privacy && equal(a.created, b.created) &&
+         equal(a.modified, b.modified) && a.title == b.title;
+}
+bool equal(const EntryMetadata& a, const EntryMetadata& b) {
+  if (a.index() != b.index()) return false;
+  if (const auto* x = std::get_if<LogMetadata>(&a)) {
+    const auto& y = std::get<LogMetadata>(b);
+    return common_equal(*x, y) && x->tags == y.tags && equal(x->log_date, y.log_date);
+  }
+  if (const auto* x = std::get_if<MemoMetadata>(&a)) {
+    const auto& y = std::get<MemoMetadata>(b);
+    return common_equal(*x, y) && x->tags == y.tags && x->directory_id == y.directory_id;
+  }
+  const auto& x = std::get<TodoMetadata>(a);
+  const auto& y = std::get<TodoMetadata>(b);
+  return common_equal(x, y) && x.status == y.status && x.priority == y.priority &&
+         equal(x.due_date, y.due_date) && x.directory_id == y.directory_id;
+}
+bool equal(const DirectoryMetadata& a, const DirectoryMetadata& b) {
+  return a.id == b.id && a.kind == b.kind &&
+         a.relative_path == b.relative_path && a.name == b.name;
+}
+
 bool valid_utf8(std::string_view text) {
   for (std::size_t i = 0; i < text.size();) {
     const auto first = static_cast<unsigned char>(text[i]);
@@ -345,6 +385,7 @@ std::set<std::string>& MetadataCatalog::members_for(EntryType type,
     if (!found || found->kind != kind)
       return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Missing or wrong-kind Directory");
   }
+  if (equal(*existing, m)) return std::monostate{};
   std::set<std::string>* old_members = nullptr;
   if (new_directory != old_directory) {
     old_members = &members_for(type, old_directory);
@@ -420,6 +461,7 @@ std::set<std::string>& MetadataCatalog::members_for(EntryType type,
       return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Locator already occupied");
   if (entry_path_occupied(m.relative_path))
     return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Locator already occupied");
+  if (equal(it->second, m)) return std::monostate{};
   static_assert(std::is_nothrow_swappable_v<DirectoryMetadata>);
   std::swap(it->second, m);
   unpersisted_ = true;

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <exception>
 #include <iterator>
 #include <set>
 #include <string_view>
@@ -508,9 +509,45 @@ template <class Snapshot>
   return loaded;
 }
 
-template <class Snapshot>
+// Repository stays independent of Catalog ownership. Projection and callback
+// errors are reported separately from failed persistence; saved data is retained.
+template <class Snapshot, class Callback>
+::folio::core::internal::Result<std::monostate, StorageError> notify_persisted(
+    const Snapshot& snapshot, const fs::path& root, const fs::path& path,
+    const Callback& callback) {
+  if (!callback) return std::monostate{};
+  try {
+    const auto metadata = metadata_from(snapshot, path.lexically_relative(root));
+    auto notify = [&]() -> ::folio::core::internal::Result<std::monostate, StorageError> {
+      if constexpr (std::is_same_v<Snapshot, core::Directory::Snapshot>) {
+        return callback(metadata);
+      } else {
+        using Metadata = std::conditional_t<std::is_same_v<Snapshot, core::Log::Snapshot>,
+            LogMetadata, std::conditional_t<std::is_same_v<Snapshot, core::Memo::Snapshot>,
+                                           MemoMetadata, TodoMetadata>>;
+        return callback(std::get<Metadata>(metadata));
+      }
+    };
+    auto notified = notify();
+    if (const auto* problem = std::get_if<StorageError>(&notified))
+      return fail(StorageErrorCode::PostPersistFailure, path,
+          "Authoritative data was saved, but metadata callback failed; reconciliation required: " +
+              problem->message, problem->system_error, true);
+  } catch (const std::exception& exception) {
+    return fail(StorageErrorCode::PostPersistFailure, path,
+        std::string{"Authoritative data was saved, but metadata projection/callback failed; reconciliation required: "} +
+            exception.what(), {}, true);
+  } catch (...) {
+    return fail(StorageErrorCode::PostPersistFailure, path,
+        "Authoritative data was saved, but metadata callback threw; reconciliation required", {}, true);
+  }
+  return std::monostate{};
+}
+
+template <class Snapshot, class Callback>
 ::folio::core::internal::Result<std::monostate, StorageError> create_entry(const fs::path& root, EntryType type,
-                                    const Snapshot& snapshot) {
+                                    const Snapshot& snapshot,
+    const Callback& after_persist) {
   auto name = filename(type, snapshot.id, snapshot.created);
   if (failure(name)) return *failure(name);
   fs::path parent = root / module_name(type);
@@ -530,13 +567,16 @@ template <class Snapshot>
   // TODO(Phase 5): journal and sync root/module bootstrap. If the atomic
   // create fails, newly made empty parent directories may remain.
   if (auto checked = ensure_directory(root, parent); failure(checked)) return *failure(checked);
-  return create_file_atomic(path, std::get<std::string>(encoded));
+  auto written = create_file_atomic(path, std::get<std::string>(encoded));
+  if (failure(written)) return *failure(written);
+  return notify_persisted(snapshot, root, path, after_persist);
 }
 
-template <class Snapshot>
+template <class Snapshot, class Callback>
 ::folio::core::internal::Result<std::monostate, StorageError> update_entry(const fs::path& root, EntryType type,
                                     const Snapshot& snapshot,
-                                    const std::optional<fs::path>& relative_path) {
+                                    const std::optional<fs::path>& relative_path,
+    const Callback& after_persist) {
   auto path = resolve_entry_path(root, type, snapshot.id, relative_path);
   if (failure(path)) return *failure(path);
   const auto& destination = std::get<fs::path>(path);
@@ -572,7 +612,9 @@ template <class Snapshot>
   }
   auto encoded = checked_encoding(snapshot, destination);
   if (failure(encoded)) return *failure(encoded);
-  return replace_file_atomic(destination, std::get<std::string>(encoded));
+  auto written = replace_file_atomic(destination, std::get<std::string>(encoded));
+  if (failure(written)) return *failure(written);
+  return notify_persisted(snapshot, root, destination, after_persist);
 }
 
 #ifndef _WIN32
@@ -594,17 +636,19 @@ template <class Snapshot>
 }
 #endif
 
-template <class Snapshot>
+template <class Snapshot, class Callback>
 ::folio::core::internal::Result<std::monostate, StorageError> move_entry(const fs::path& root, EntryType type,
                                   const core::Id& id, std::optional<core::Id> directory_id,
-                                  core::TimestampContext modified) {
+                                  core::TimestampContext modified,
+    const Callback& after_persist) {
   auto source = locate(root, type, id);
   if (failure(source)) return *failure(source);
   const auto old_path = std::get<fs::path>(source);
   auto loaded = load_at<Snapshot>(root, type, old_path);
   if (failure(loaded)) return *failure(loaded);
   auto snapshot = std::get<Snapshot>(std::move(loaded));
-  if (snapshot.directory_id == directory_id) return std::monostate{};
+  if (snapshot.directory_id == directory_id)
+    return notify_persisted(snapshot, root, old_path, after_persist);
   fs::path parent = root / module_name(type);
   if (directory_id) {
     auto directory = load_directory_at(root,
@@ -628,24 +672,27 @@ template <class Snapshot>
                 "Destination created but source removal failed; reconciliation required", ec, true);
   }
 #ifndef _WIN32
-  return sync_parent(old_path);
-#else
-  return std::monostate{};
+  auto synced = sync_parent(old_path);
+  if (failure(synced)) return *failure(synced);
 #endif
+  return notify_persisted(snapshot, root, destination, after_persist);
 }
 
 }  // namespace
 
 NormalRepository::NormalRepository(fs::path normal_root) : root_(std::move(normal_root)) {}
 
-::folio::core::internal::Result<std::monostate, StorageError> NormalRepository::create_log(const core::Log::Snapshot& snapshot) {
-  return create_entry(root_, EntryType::Log, snapshot);
+::folio::core::internal::Result<std::monostate, StorageError> NormalRepository::create_log(const core::Log::Snapshot& snapshot,
+    const PersistedCallback<LogMetadata>& after_persist) {
+  return create_entry(root_, EntryType::Log, snapshot, after_persist);
 }
-::folio::core::internal::Result<std::monostate, StorageError> NormalRepository::create_memo(const core::Memo::Snapshot& snapshot) {
-  return create_entry(root_, EntryType::Memo, snapshot);
+::folio::core::internal::Result<std::monostate, StorageError> NormalRepository::create_memo(const core::Memo::Snapshot& snapshot,
+    const PersistedCallback<MemoMetadata>& after_persist) {
+  return create_entry(root_, EntryType::Memo, snapshot, after_persist);
 }
-::folio::core::internal::Result<std::monostate, StorageError> NormalRepository::create_todo(const core::Todo::Snapshot& snapshot) {
-  return create_entry(root_, EntryType::Todo, snapshot);
+::folio::core::internal::Result<std::monostate, StorageError> NormalRepository::create_todo(const core::Todo::Snapshot& snapshot,
+    const PersistedCallback<TodoMetadata>& after_persist) {
+  return create_entry(root_, EntryType::Todo, snapshot, after_persist);
 }
 ::folio::core::internal::Result<core::Log::Snapshot, StorageError> NormalRepository::load_log(
     const core::Id& id, std::optional<fs::path> relative_path) const {
@@ -660,20 +707,24 @@ NormalRepository::NormalRepository(fs::path normal_root) : root_(std::move(norma
   return load_by_id<core::Todo::Snapshot>(root_, EntryType::Todo, id, relative_path);
 }
 ::folio::core::internal::Result<std::monostate, StorageError> NormalRepository::update_log(
-    const core::Log::Snapshot& snapshot, std::optional<fs::path> relative_path) {
-  return update_entry(root_, EntryType::Log, snapshot, relative_path);
+    const core::Log::Snapshot& snapshot, std::optional<fs::path> relative_path,
+    const PersistedCallback<LogMetadata>& after_persist) {
+  return update_entry(root_, EntryType::Log, snapshot, relative_path, after_persist);
 }
 ::folio::core::internal::Result<std::monostate, StorageError> NormalRepository::update_memo(
-    const core::Memo::Snapshot& snapshot, std::optional<fs::path> relative_path) {
-  return update_entry(root_, EntryType::Memo, snapshot, relative_path);
+    const core::Memo::Snapshot& snapshot, std::optional<fs::path> relative_path,
+    const PersistedCallback<MemoMetadata>& after_persist) {
+  return update_entry(root_, EntryType::Memo, snapshot, relative_path, after_persist);
 }
 ::folio::core::internal::Result<std::monostate, StorageError> NormalRepository::update_todo(
-    const core::Todo::Snapshot& snapshot, std::optional<fs::path> relative_path) {
-  return update_entry(root_, EntryType::Todo, snapshot, relative_path);
+    const core::Todo::Snapshot& snapshot, std::optional<fs::path> relative_path,
+    const PersistedCallback<TodoMetadata>& after_persist) {
+  return update_entry(root_, EntryType::Todo, snapshot, relative_path, after_persist);
 }
 
 ::folio::core::internal::Result<std::monostate, StorageError> NormalRepository::create_directory(
-    DirectoryKind kind, const core::Directory::Snapshot& snapshot) {
+    DirectoryKind kind, const core::Directory::Snapshot& snapshot,
+    const PersistedCallback<DirectoryMetadata>& after_persist) {
   if (!valid_kind(kind)) {
     return fail(StorageErrorCode::InvalidEntryType, root_, "Invalid Directory kind");
   }
@@ -697,7 +748,9 @@ NormalRepository::NormalRepository(fs::path normal_root) : root_(std::move(norma
   }
   // TODO(Phase 5): journal folder creation and metadata publication. A
   // failed metadata write leaves an identifiable incomplete UUID folder.
-  return create_file_atomic(metadata, std::get<std::string>(encoded));
+  auto written = create_file_atomic(metadata, std::get<std::string>(encoded));
+  if (failure(written)) return *failure(written);
+  return notify_persisted(snapshot, root_, folder, after_persist);
 }
 
 ::folio::core::internal::Result<core::Directory::Snapshot, StorageError> NormalRepository::load_directory(
@@ -711,7 +764,8 @@ NormalRepository::NormalRepository(fs::path normal_root) : root_(std::move(norma
 }
 
 ::folio::core::internal::Result<std::monostate, StorageError> NormalRepository::rename_directory(
-    DirectoryKind kind, const core::Id& id, std::string name) {
+    DirectoryKind kind, const core::Id& id, std::string name,
+    const PersistedCallback<DirectoryMetadata>& after_persist) {
   if (!valid_kind(kind)) {
     return fail(StorageErrorCode::InvalidEntryType, root_, "Invalid Directory kind");
   }
@@ -719,24 +773,29 @@ NormalRepository::NormalRepository(fs::path normal_root) : root_(std::move(norma
   if (failure(checked)) return *failure(checked);
   auto prior = load_directory_at(root_, kind, id);
   if (failure(prior)) return *failure(prior);
-  const auto metadata = root_ / module_name(entry_type(kind)) / id.to_string() /
-      ".folio-dir.toml";
-  auto encoded = checked_encoding(core::Directory::Snapshot{id, kind, std::move(name)}, metadata);
+  const auto folder = root_ / module_name(entry_type(kind)) / id.to_string();
+  const auto metadata = folder / ".folio-dir.toml";
+  core::Directory::Snapshot snapshot{id, kind, std::move(name)};
+  auto encoded = checked_encoding(snapshot, metadata);
   if (failure(encoded)) return *failure(encoded);
-  return replace_file_atomic(metadata, std::get<std::string>(encoded));
+  auto written = replace_file_atomic(metadata, std::get<std::string>(encoded));
+  if (failure(written)) return *failure(written);
+  return notify_persisted(snapshot, root_, folder, after_persist);
 }
 
 ::folio::core::internal::Result<std::monostate, StorageError> NormalRepository::move_memo(
     const core::Id& id, std::optional<core::Id> directory_id,
-    core::TimestampContext modified) {
+    core::TimestampContext modified,
+    const PersistedCallback<MemoMetadata>& after_persist) {
   return move_entry<core::Memo::Snapshot>(root_, EntryType::Memo, id,
-                                           std::move(directory_id), std::move(modified));
+                                           std::move(directory_id), std::move(modified), after_persist);
 }
 ::folio::core::internal::Result<std::monostate, StorageError> NormalRepository::move_todo(
     const core::Id& id, std::optional<core::Id> directory_id,
-    core::TimestampContext modified) {
+    core::TimestampContext modified,
+    const PersistedCallback<TodoMetadata>& after_persist) {
   return move_entry<core::Todo::Snapshot>(root_, EntryType::Todo, id,
-                                           std::move(directory_id), std::move(modified));
+                                           std::move(directory_id), std::move(modified), after_persist);
 }
 
 ::folio::core::internal::Result<fs::path, StorageError> NormalRepository::locate_entry(EntryType type, const core::Id& id) const {

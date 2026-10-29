@@ -119,6 +119,7 @@ struct RootListing {
 class MetadataCatalog {
  public:
   [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> insert_entry(EntryMetadata metadata);
+  // Identical updates are successful no-ops and preserve unpersisted state.
   [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> update_entry(EntryMetadata metadata);
   [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> remove_entry(const Id& id);
   [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> insert_directory(DirectoryMetadata metadata);

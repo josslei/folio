@@ -84,7 +84,41 @@ struct Locations { fs::path state_root; fs::path parent; fs::path file; };
 }
 }  // namespace
 
-CatalogCoordinator::CatalogCoordinator(StoragePaths paths) : paths_(std::move(paths)) {}
+CatalogCoordinator::CatalogCoordinator(StoragePaths paths, MetadataCatalog& catalog)
+    : paths_(std::move(paths)),
+      catalog_(catalog),
+      log_creation_callback_(wrap_catalog_update(
+          [this](const LogMetadata& metadata) {
+            return catalog_.insert_entry(metadata);
+          })),
+      log_update_callback_(wrap_catalog_update(
+          [this](const LogMetadata& metadata) {
+            return catalog_.update_entry(metadata);
+          })),
+      memo_creation_callback_(wrap_catalog_update(
+          [this](const MemoMetadata& metadata) {
+            return catalog_.insert_entry(metadata);
+          })),
+      memo_update_callback_(wrap_catalog_update(
+          [this](const MemoMetadata& metadata) {
+            return catalog_.update_entry(metadata);
+          })),
+      todo_creation_callback_(wrap_catalog_update(
+          [this](const TodoMetadata& metadata) {
+            return catalog_.insert_entry(metadata);
+          })),
+      todo_update_callback_(wrap_catalog_update(
+          [this](const TodoMetadata& metadata) {
+            return catalog_.update_entry(metadata);
+          })),
+      directory_creation_callback_(wrap_catalog_update(
+          [this](const DirectoryMetadata& metadata) {
+            return catalog_.insert_directory(metadata);
+          })),
+      directory_update_callback_(wrap_catalog_update(
+          [this](const DirectoryMetadata& metadata) {
+            return catalog_.update_directory(metadata);
+          })) {}
 
 ::folio::core::internal::Result<InitializationOutcome, CoordinatorError>
 CatalogCoordinator::startup_load() {
@@ -165,6 +199,9 @@ CatalogCoordinator::refresh_all() {
 }
 
 ::folio::core::internal::Result<SaveOutcome, CoordinatorError> CatalogCoordinator::shutdown_save() {
+  if (status_ == CatalogStatus::Inconsistent)
+    return error(CoordinatorErrorCode::Unavailable, {},
+                 "Catalog requires successful Refresh before Index persistence");
   if (status_ != CatalogStatus::Ready)
     return error(CoordinatorErrorCode::Unavailable, {},
                  "No valid restored catalog is available to save");
@@ -201,8 +238,9 @@ CatalogCoordinator::refresh_all() {
   return SaveOutcome::Saved;
 }
 
-const MetadataCatalog& CatalogCoordinator::catalog() const noexcept { return catalog_; }
-MetadataCatalog& CatalogCoordinator::catalog() noexcept { return catalog_; }
 CatalogStatus CatalogCoordinator::status() const noexcept { return status_; }
+void CatalogCoordinator::mark_needs_refresh() noexcept {
+  if (status_ == CatalogStatus::Ready) status_ = CatalogStatus::Inconsistent;
+}
 
 }  // namespace folio::core::storage

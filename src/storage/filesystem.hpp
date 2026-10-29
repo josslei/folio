@@ -51,7 +51,9 @@ enum class StorageErrorCode {
   StaleLocator,
   InvalidMetadata,
   NotFound,
-  ReferencedDirectory
+  ReferencedDirectory,
+  // Authoritative persistence succeeded, but metadata projection/callback failed.
+  PostPersistFailure
 };
 
 struct StorageError {
