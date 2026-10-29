@@ -1,6 +1,6 @@
 #include "storage/catalog_coordinator.hpp"
 #include "storage/normal_repository.hpp"
-#include "storage/normal_repository_testing.hpp"
+#include "storage/normal_repository_test_hooks.hpp"
 #include "storage/atomic_write.hpp"
 
 #ifndef _WIN32

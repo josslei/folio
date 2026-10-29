@@ -1,7 +1,7 @@
 #include "storage/normal_repository.hpp"
 
 #include "storage/codec.hpp"
-#include "storage/normal_repository_testing.hpp"
+#include "storage/normal_repository_test_hooks.hpp"
 
 #include <algorithm>
 #include <array>

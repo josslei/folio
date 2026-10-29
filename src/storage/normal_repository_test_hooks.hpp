@@ -4,7 +4,8 @@
 
 namespace folio::core::storage::internal {
 
-// Thread-local failure-injection seams for Repository boundary tests only.
+// Test-only failure-injection hooks, not an API for normal Repository callers.
+// Declared beside the implementation because Repository code invokes these seams.
 // Null hooks use the production implementations. Tests must restore hooks.
 struct RepositoryTestHooks {
   ::folio::core::internal::Result<std::monostate, StorageError> (*write)(
