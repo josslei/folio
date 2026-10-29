@@ -13,6 +13,12 @@ Folio is a personal TUI application written in C++20, built with CMake and FTXUI
 
 ## Architecture Rules
 
+Read [architecture](docs/architecture.md), [design decisions](docs/design-decisions.md), and the [roadmap](docs/roadmap.md) before architectural work. Detailed planned boundaries live in [Application](docs/application-design.md), [Recovery](docs/recovery-design.md), [Vault](docs/vault-design.md), and [Git Sync](docs/git-sync-design.md). Distinguish Implemented, Decided/Planned, and Open/Deferred; a roadmap does not authorize implementing the next stage. Existing Storage contracts remain in [storage-design.md](docs/storage-design.md).
+
+Preserve Catalog-centric ownership: the future Backend owns Catalog, Coordinator, and Repositories; Coordinator borrows Catalog. `unpersisted` means metadata is not saved to the Index, never that Entries are unsaved. Inconsistent is separate and blocks Index publication. Managed mutations use creation checks, known locators, and matching result callbacks; do not add implicit global scans. Shutdown saving is explicitly called by the lifecycle owner with error handling/retry, not a destructor or once-only guard.
+
+Future direction is one configuration per OS user and one on-demand Backend with multiple Frontends using public Application APIs. Platform paths, Normal Index relocation from State to Cache, and durable Session Marker precede Application implementation; they are not implemented yet. Recovery state/drafts must not live in Cache. Vault drafts require encrypt-only Frontend capability without decryption keys. Resolve deferred protocols and cryptography through design review.
+
 An Entry is an independently identifiable persistent Folio object: Log, Memo, Todo, or Directory. Use Entry to describe all four conceptually; terminology alignment must preserve existing program behavior and does not require every API to support all four types. Distinguish a type only when its fields, membership rules, or persistence layout require it; never use “Entry” to implicitly exclude Directory. Record is shorthand for Log, Memo, and Todo only. Use it for genuinely narrower APIs; do not introduce separate behavior for Records and Directories when their behavior is shared. Directory membership is a relationship between Entries, not a domain hierarchy. Keep independent classes without a common Entry base class. Directory has no parent ID: only Memo/Todo single-level organization is supported. Persisted Folio Entries are authoritative; the Catalog and binary Index are rebuildable projections.
 
 Keep dependency direction `folio (TUI) -> folio_core`. Core must remain independent of FTXUI and all presentation frameworks, with APIs reusable by a future CLI or alternative frontend. Keep business logic, storage, encryption, and synchronization out of UI components. Prefer clear module boundaries and straightforward solutions; do not create speculative modules, interfaces, placeholder classes, or unnecessary abstractions.
@@ -47,7 +53,7 @@ Never commit passwords, private keys, tokens, or real personal records. Use synt
 
 ## Dependencies
 
-FTXUI, GoogleTest, stduuid, and libsodium are Git submodules under `thirdparty/`. The project-owned libsodium CMake recipe is in `thirdparty/libsodium-cmake/`. Libsodium supplies UUIDv4 randomness now and is reserved for later cryptographic work; encryption is not implemented. Do not modify vendored sources during normal development or update submodules unless the task calls for it. Keep the recipe aligned with the pinned libsodium version. Justify new dependencies and keep test-only dependencies out of production targets.
+FTXUI, GoogleTest, stduuid, libsodium, toml++, and msgpack-cxx are Git submodules under `thirdparty/`. The project-owned libsodium CMake recipe is in `thirdparty/libsodium-cmake/`. Libsodium supplies UUIDv4 randomness now and is reserved for later cryptographic work; encryption is not implemented. Do not modify vendored sources during normal development or update submodules unless the task calls for it. Keep the recipe aligned with the pinned libsodium version. Justify new dependencies and keep test-only dependencies out of production targets.
 
 ## Build, Run & Test
 
