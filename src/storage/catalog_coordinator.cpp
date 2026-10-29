@@ -87,6 +87,16 @@ struct Locations { fs::path state_root; fs::path parent; fs::path file; };
 CatalogCoordinator::CatalogCoordinator(StoragePaths paths, MetadataCatalog& catalog)
     : paths_(std::move(paths)),
       catalog_(catalog),
+      creation_check_([this](const core::Id& id)
+          -> ::folio::core::internal::Result<std::monostate, StorageError> {
+        if (status_ != CatalogStatus::Ready)
+          return StorageError{StorageErrorCode::RecoveryRequired, paths_.normal_root,
+                              "Creation requires an initialized, consistent Catalog", {}, false};
+        if (catalog_.contains_entry(id))
+          return StorageError{StorageErrorCode::DuplicateId, paths_.normal_root,
+                              "Entry UUID already exists in Catalog", {}, false};
+        return std::monostate{};
+      }),
       log_creation_callback_(wrap_catalog_update<LogMetadata>(
           [this](const LogMetadata& metadata) {
             return catalog_.insert_record(metadata);

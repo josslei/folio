@@ -136,6 +136,8 @@ class MetadataCatalog {
       std::vector<TodoMetadata> todos,
       std::vector<DirectoryMetadata> directories);
 
+  // UUID membership across all four Entry types, without copying metadata.
+  [[nodiscard]] bool contains_entry(const Id& id) const;
   [[nodiscard]] std::optional<RecordMetadata> find_record(const Id& id) const;
   [[nodiscard]] std::optional<DirectoryMetadata> find_directory(const Id& id) const;
   [[nodiscard]] RootListing list_root(RecordType module) const;

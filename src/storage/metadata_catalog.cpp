@@ -510,6 +510,12 @@ std::set<std::string>& MetadataCatalog::members_for(RecordType type,
   return std::monostate{};
 }
 
+bool MetadataCatalog::contains_entry(const Id& id) const {
+  const auto key = id.to_string();
+  return logs_.contains(key) || memos_.contains(key) || todos_.contains(key) ||
+         directories_.contains(key);
+}
+
 std::optional<RecordMetadata> MetadataCatalog::find_record(const Id& id) const {
   const auto key = id.to_string();
   if (const auto it = logs_.find(key); it != logs_.end()) return RecordMetadata{it->second};

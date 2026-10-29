@@ -301,7 +301,7 @@ TEST_F(NormalRepositoryCallbacksTest, RepositoryFailureNotifiesWithoutProvidingS
   const auto prior_index = bytes(index);
   int callbacks = 0;
   int failures = 0;
-  storage::MutationCallback<storage::LogMetadata> observer = [&](const storage::MutationNotification<storage::LogMetadata>& notification) {
+  storage::MutationResultCallback<storage::LogMetadata> observer = [&](const storage::MutationNotification<storage::LogMetadata>& notification) {
     if (std::holds_alternative<std::reference_wrapper<const storage::LogMetadata>>(notification))
       ++callbacks;
     else
@@ -483,7 +483,7 @@ TEST_F(NormalRepositoryCallbacksTest, CallbackObservesCommittedFileAndActualLoca
   const auto log = log_snapshot();
   fs::path observed_path;
   bool observed_file = false;
-  const storage::MutationCallback<storage::LogMetadata> observer =
+  const storage::MutationResultCallback<storage::LogMetadata> observer =
       [&](const storage::MutationNotification<storage::LogMetadata>& notification) {
     const auto& metadata = std::get<std::reference_wrapper<const storage::LogMetadata>>(notification).get();
     observed_path = metadata.relative_path;
@@ -501,7 +501,7 @@ TEST_F(NormalRepositoryCallbacksTest, CallbackObservesCommittedFileAndActualLoca
 
 TEST_F(NormalRepositoryCallbacksTest, ThrowingCallbacksReportSavedDataWithoutRollback) {
   const auto prior_index = bytes(index);
-  const storage::MutationCallback<storage::LogMetadata> standard =
+  const storage::MutationResultCallback<storage::LogMetadata> standard =
       [](const storage::MutationNotification<storage::LogMetadata>&)
       -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
     throw std::runtime_error("synthetic callback exception");
@@ -516,7 +516,7 @@ TEST_F(NormalRepositoryCallbacksTest, ThrowingCallbacksReportSavedDataWithoutRol
             first.content);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
 
-  const storage::MutationCallback<storage::LogMetadata> nonstandard =
+  const storage::MutationResultCallback<storage::LogMetadata> nonstandard =
       [](const storage::MutationNotification<storage::LogMetadata>&)
       -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
     throw 7;
@@ -695,7 +695,7 @@ TEST_F(NormalRepositoryCallbacksTest, FailureNotificationPreservesOriginalErrorE
   };
   int calls = 0;
   bool failure_seen = false;
-  const storage::MutationCallback<storage::LogMetadata> callback =
+  const storage::MutationResultCallback<storage::LogMetadata> callback =
       [&](const storage::MutationNotification<storage::LogMetadata>& notification)
           -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
     ++calls;
@@ -724,7 +724,7 @@ TEST_F(NormalRepositoryCallbacksTest, FailureNotificationReturnErrorCannotReplac
         "original metadata write error", std::make_error_code(std::errc::permission_denied)};
   };
   int calls = 0;
-  const storage::MutationCallback<storage::DirectoryMetadata> callback =
+  const storage::MutationResultCallback<storage::DirectoryMetadata> callback =
       [&](const storage::MutationNotification<storage::DirectoryMetadata>& notification)
           -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
     ++calls;
@@ -753,7 +753,7 @@ TEST_F(NormalRepositoryCallbacksTest, CatalogCallbackFailureAutomaticallyMarksIn
   owned_catalog.mark_persisted();
   int metadata_calls = 0;
   int failure_calls = 0;
-  const storage::MutationCallback<storage::LogMetadata> callback =
+  const storage::MutationResultCallback<storage::LogMetadata> callback =
       [&](const storage::MutationNotification<storage::LogMetadata>& notification) {
     if (std::holds_alternative<std::reference_wrapper<const storage::LogMetadata>>(notification))
       ++metadata_calls;
@@ -952,5 +952,173 @@ TEST_F(NormalRepositoryCallbacksTest, RemovedSourceSyncFailureCanBeReconciledExp
   EXPECT_TRUE(owned_catalog.unpersisted());
 }
 #endif
+
+
+TEST_F(NormalRepositoryCallbacksTest, ManagedCreationUsesCatalogDespiteUnrelatedMalformedFiles) {
+  const auto prior_index = bytes(index);
+  fs::create_directories(normal / "logs");
+  write_bytes(normal / "logs" / "unrelated.md", "invalid authoritative file");
+  const auto& check_creation = coordinator.creation_check();
+  const auto memo_dir = memo_directory();
+  const auto todo_dir = todo_directory();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_directory(
+      memo_dir.kind, memo_dir, coordinator.directory_creation_callback(), check_creation)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_directory(
+      todo_dir.kind, todo_dir, coordinator.directory_creation_callback(), check_creation)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(
+      log_snapshot(), coordinator.log_creation_callback(), check_creation)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(
+      memo_snapshot(), coordinator.memo_creation_callback(), check_creation)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_todo(
+      todo_snapshot(), coordinator.todo_creation_callback(), check_creation)));
+  EXPECT_EQ(owned_catalog.query().size(), 3u);
+  EXPECT_TRUE(owned_catalog.unpersisted());
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+  EXPECT_EQ(bytes(index), prior_index);
+  // Standalone uniqueness/discovery and full Refresh still inspect authoritative files.
+  auto other = log_snapshot();
+  other.id = core::Id::generate();
+  expect_code(repository.create_log(other), storage::StorageErrorCode::CodecError);
+  EXPECT_TRUE(std::holds_alternative<storage::StorageError>(repository.locate_record(
+      storage::RecordType::Memo, memo_snapshot().id)));
+  EXPECT_TRUE(std::holds_alternative<storage::CoordinatorError>(coordinator.refresh_all()));
+  EXPECT_EQ(owned_catalog.query().size(), 3u);
+  EXPECT_EQ(bytes(index), prior_index);
+}
+
+TEST_F(NormalRepositoryCallbacksTest, ManagedCreationRejectsAllEntryIdentityCollisionsBeforePublication) {
+  const auto& check_creation = coordinator.creation_check();
+  // A Directory identity blocks each Record type before any module is created.
+  const auto dir = memo_directory();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.insert_directory(
+      storage::metadata_from(dir, fs::path{"memos"} / dir.id.to_string()))));
+  owned_catalog.mark_persisted();
+  auto log = log_snapshot(); log.id = dir.id;
+  auto memo = memo_snapshot(); memo.id = dir.id;
+  auto todo = todo_snapshot(); todo.id = dir.id;
+  auto check = [&](const auto& result) {
+    expect_code(result, storage::StorageErrorCode::DuplicateId);
+    EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
+              storage::MutationFailureStage::BeforeAuthoritativeChange);
+    EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+    EXPECT_FALSE(owned_catalog.unpersisted());
+    EXPECT_FALSE(fs::exists(normal));
+  };
+  check(repository.create_log(log, coordinator.log_creation_callback(), check_creation));
+  check(repository.create_memo(memo, coordinator.memo_creation_callback(), check_creation));
+  check(repository.create_todo(todo, coordinator.todo_creation_callback(), check_creation));
+  check(repository.create_directory(dir.kind, dir, coordinator.directory_creation_callback(), check_creation));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.remove_directory(dir.id)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.insert_record(
+      storage::metadata_from(log, "logs/renamed.md"))));
+  owned_catalog.mark_persisted();
+  check(repository.create_directory(dir.kind, dir, coordinator.directory_creation_callback(), check_creation));
+  check(repository.create_memo(memo, coordinator.memo_creation_callback(), check_creation));
+  check(repository.create_log(log, coordinator.log_creation_callback(), check_creation));
+}
+
+TEST_F(NormalRepositoryCallbacksTest, ManagedPreflightRejectsUninitializedAndInconsistentCatalogs) {
+  storage::MetadataCatalog empty;
+  storage::CatalogCoordinator unloaded{{normal, vault, state, cache}, empty};
+  expect_code(repository.create_log(log_snapshot(), unloaded.log_creation_callback(),
+      unloaded.creation_check()), storage::StorageErrorCode::RecoveryRequired);
+  EXPECT_FALSE(fs::exists(normal));
+  // Existing callback integration supplies the inconsistency notification.
+  const storage::RepositoryMutationError failure{
+      storage::MutationFailureStage::AuthoritativeStateMayHaveChanged,
+      {storage::StorageErrorCode::IoError, normal, "synthetic publication failure", {}, true}};
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      coordinator.log_creation_callback()(std::cref(failure))));
+  expect_code(repository.create_log(log_snapshot(), coordinator.log_creation_callback(),
+      coordinator.creation_check()), storage::StorageErrorCode::RecoveryRequired);
+  EXPECT_FALSE(fs::exists(normal));
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+}
+
+TEST_F(NormalRepositoryCallbacksTest, TargetedOperationsIgnoreUnrelatedMalformedRecords) {
+  const auto& check_creation = coordinator.creation_check();
+  auto log = log_snapshot();
+  auto memo = memo_snapshot();
+  auto todo = todo_snapshot();
+  const auto md = memo_directory(); const auto td = todo_directory();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(log, coordinator.log_creation_callback(), check_creation)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(memo, coordinator.memo_creation_callback(), check_creation)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_todo(todo, coordinator.todo_creation_callback(), check_creation)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_directory(md.kind, md, coordinator.directory_creation_callback(), check_creation)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_directory(td.kind, td, coordinator.directory_creation_callback(), check_creation)));
+  const auto lp = std::get<storage::LogMetadata>(*owned_catalog.find_record(log.id)).relative_path;
+  const auto mp = std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).relative_path;
+  const auto tp = std::get<storage::TodoMetadata>(*owned_catalog.find_record(todo.id)).relative_path;
+  // Explicit UUID discovery remains available before the unrelated corruption.
+  EXPECT_EQ(std::get<fs::path>(repository.locate_record(storage::RecordType::Memo, memo.id)), mp);
+  write_bytes(normal / "logs" / "unrelated.md", "invalid authoritative file");
+  const auto prior_index = bytes(index);
+  EXPECT_TRUE(std::holds_alternative<core::Log::Snapshot>(repository.load_log(log.id, lp)));
+  EXPECT_TRUE(std::holds_alternative<core::Memo::Snapshot>(repository.load_memo(memo.id, mp)));
+  EXPECT_TRUE(std::holds_alternative<core::Todo::Snapshot>(repository.load_todo(todo.id, tp)));
+  log.title = "updated"; memo.title = "updated"; todo.title = "updated";
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.update_log(log, lp, coordinator.log_update_callback())));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.update_memo(memo, mp, coordinator.memo_update_callback())));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.update_todo(todo, tp, coordinator.todo_update_callback())));
+  ASSERT_TRUE(std::holds_alternative<core::Directory::Snapshot>(repository.load_directory(md.kind, md.id)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.rename_directory(md.kind, md.id, "new name", coordinator.directory_update_callback())));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.move_memo(memo.id, md.id, modified(), coordinator.memo_update_callback(), mp)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.move_todo(todo.id, td.id, modified(), coordinator.todo_update_callback(), tp)));
+  const auto moved_memo = std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id));
+  const auto moved_todo = std::get<storage::TodoMetadata>(*owned_catalog.find_record(todo.id));
+  EXPECT_EQ(moved_memo.relative_path.filename(), mp.filename());
+  EXPECT_EQ(moved_todo.relative_path.filename(), tp.filename());
+  EXPECT_EQ(moved_memo.directory_id, md.id);
+  EXPECT_EQ(moved_todo.directory_id, td.id);
+  // Old supplied locators fail directly; no rediscovery of the moved files.
+  expect_code(repository.move_memo(memo.id, std::nullopt, modified(), coordinator.memo_update_callback(), mp), storage::StorageErrorCode::StaleLocator);
+  expect_code(repository.move_todo(todo.id, std::nullopt, modified(), coordinator.todo_update_callback(), tp), storage::StorageErrorCode::StaleLocator);
+  expect_code(repository.move_memo(core::Id::generate(), std::nullopt, modified(), coordinator.memo_update_callback(), moved_memo.relative_path), storage::StorageErrorCode::StaleLocator);
+  expect_code(repository.move_todo(core::Id::generate(), std::nullopt, modified(), coordinator.todo_update_callback(), moved_todo.relative_path), storage::StorageErrorCode::StaleLocator);
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+  EXPECT_EQ(owned_catalog.query().size(), 3u);
+  EXPECT_EQ(bytes(index), prior_index);
+}
+
+
+TEST_F(NormalRepositoryCallbacksTest, ManagedCreationStillRejectsOccupiedDestinationAtomically) {
+  const auto log = log_snapshot();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(log)));
+  const auto path = std::get<fs::path>(repository.locate_record(storage::RecordType::Log, log.id));
+  const auto original = bytes(normal / path);
+  auto replacement = log; replacement.title = "must not replace";
+  const auto result = repository.create_log(replacement, coordinator.log_creation_callback(),
+                                             coordinator.creation_check());
+  ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(result));
+  EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
+            storage::MutationFailureStage::BeforeAuthoritativeChange);
+  EXPECT_EQ(bytes(normal / path), original);
+  EXPECT_TRUE(owned_catalog.query().empty());
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+}
+
+TEST_F(NormalRepositoryCallbacksTest, KnownLocatorPartialMoveStillInvalidatesCatalog) {
+  const auto dir = todo_directory(); const auto todo = todo_snapshot();
+  const auto& check_creation = coordinator.creation_check();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_directory(
+      dir.kind, dir, coordinator.directory_creation_callback(), check_creation)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_todo(
+      todo, coordinator.todo_creation_callback(), check_creation)));
+  const auto source = std::get<storage::TodoMetadata>(*owned_catalog.find_record(todo.id)).relative_path;
+  const auto prior_index = bytes(index);
+  ScopedRepositoryHooks hooks;
+  storage::internal::repository_test_hooks.remove_source = [](const fs::path&, std::error_code& ec) {
+    ec = std::make_error_code(std::errc::permission_denied); return false;
+  };
+  const auto result = repository.move_todo(todo.id, dir.id, modified(), coordinator.todo_update_callback(), source);
+  expect_code(result, storage::StorageErrorCode::IoError);
+  EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
+            storage::MutationFailureStage::AuthoritativeStateMayHaveChanged);
+  EXPECT_TRUE(fs::exists(normal / source));
+  EXPECT_TRUE(fs::exists(normal / "todos" / dir.id.to_string() / source.filename()));
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+  EXPECT_TRUE(std::holds_alternative<storage::CoordinatorError>(coordinator.shutdown_save()));
+  EXPECT_EQ(bytes(index), prior_index);
+}
 
 }  // namespace
