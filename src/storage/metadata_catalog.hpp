@@ -115,7 +115,7 @@ struct RootListing {
 [[nodiscard]] DirectoryMetadata metadata_from(const Directory::Snapshot& snapshot,
                                               std::filesystem::path relative_path);
 
-// In-memory metadata only. Record and Directory UUID registries are separate.
+// In-memory metadata only. All four Entry types share one UUID identity namespace.
 // Locators are lexically safe relative paths; physical layout belongs to the
 // repository. Lookups return copies, so callers cannot mutate catalog state
 // indirectly. UUID lookup and Directory membership listing use ordered IDs.

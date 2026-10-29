@@ -907,4 +907,36 @@ TEST(MetadataCatalogTest, CrossTypeQueriesAndMutationsKeepOtherEntriesIntact) {
   EXPECT_FALSE(catalog.unpersisted());
 }
 
+
+TEST(MetadataCatalogTest, AllEntryTypesShareOneIdentityNamespace) {
+  const std::vector<storage::RecordMetadata> records{
+      storage::metadata_from(log_snapshot(), "logs/log.md"),
+      storage::metadata_from(memo_snapshot(), "memos/memo.md"),
+      storage::metadata_from(todo_snapshot(), "todos/todo.toml")};
+  for (const auto& record : records) {
+    const auto uuid = std::visit([](const auto& value) { return value.id; }, record);
+    const storage::DirectoryMetadata directory{
+        uuid, core::DirectoryKind::Memo, "memos/group", "Group"};
+    for (bool directory_first : {false, true}) {
+      storage::MetadataCatalog catalog;
+      if (directory_first) {
+        ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_directory(directory)));
+        catalog.mark_persisted();
+        expect_error(catalog.insert_record(record), storage::StorageErrorCode::DuplicateId);
+        EXPECT_FALSE(catalog.find_record(uuid));
+        EXPECT_TRUE(catalog.find_directory(uuid));
+        EXPECT_TRUE(catalog.list_root(storage::RecordType::Memo).records.empty());
+      } else {
+        ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_record(record)));
+        catalog.mark_persisted();
+        expect_error(catalog.insert_directory(directory), storage::StorageErrorCode::DuplicateId);
+        EXPECT_TRUE(catalog.find_record(uuid));
+        EXPECT_FALSE(catalog.find_directory(uuid));
+        EXPECT_EQ(catalog.query().size(), 1u);
+      }
+      EXPECT_FALSE(catalog.unpersisted());
+    }
+  }
+}
+
 }  // namespace

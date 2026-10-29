@@ -1,4 +1,5 @@
 #include "storage/index_codec.hpp"
+#include "storage/codec.hpp"
 #include "storage/metadata_catalog.hpp"
 #include "storage/normal_repository.hpp"
 
@@ -469,6 +470,56 @@ TEST_F(CatalogRebuildTest, SuccessfulEmptyReplacementClearsMembershipAndMarksUnp
   EXPECT_TRUE(catalog.list_root(storage::RecordType::Memo).directories.empty());
   EXPECT_FALSE(catalog.find_record(memo().id).has_value());
   EXPECT_FALSE(catalog.find_directory(md.id).has_value());
+}
+
+
+TEST_F(CatalogRebuildTest, CrossCategoryRebuildFailurePreservesActiveCatalog) {
+  storage::MetadataCatalog catalog;
+  const auto old = std::get<storage::LogMetadata>(storage::metadata_from(log(), "logs/old.md"));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_record(old)));
+  auto m = std::get<storage::MemoMetadata>(storage::metadata_from(memo(), "memos/new.md"));
+  auto directory = storage::metadata_from(memo_directory(), "memos/group");
+  directory.id = m.id;
+  for (bool persisted : {false, true}) {
+    if (persisted) catalog.mark_persisted();
+    const auto before = storage::index_codec::encode_index(catalog);
+    ASSERT_TRUE(std::holds_alternative<std::string>(before));
+    const auto result = catalog.rebuild({}, {m}, {}, {directory});
+    ASSERT_TRUE(std::holds_alternative<storage::StorageError>(result));
+    EXPECT_EQ(std::get<storage::StorageError>(result).code, storage::StorageErrorCode::DuplicateId);
+    EXPECT_EQ(catalog.unpersisted(), !persisted);
+    const auto after = storage::index_codec::encode_index(catalog);
+    ASSERT_TRUE(std::holds_alternative<std::string>(after));
+    EXPECT_EQ(std::get<std::string>(after), std::get<std::string>(before));
+    EXPECT_TRUE(catalog.find_record(old.id));
+    EXPECT_FALSE(catalog.find_directory(directory.id));
+  }
+}
+
+TEST_F(CatalogRebuildTest, ScanRejectsCrossCategoryIdentityInEitherDiscoveryOrder) {
+  for (bool record_first : {false, true}) {
+    storage::NormalRepository repository{root};
+    const auto directory = memo_directory();
+    ASSERT_TRUE(std::holds_alternative<std::monostate>(
+        repository.create_directory(core::DirectoryKind::Memo, directory)));
+    const auto path = record_first ? root / "logs" / "renamed.md"
+                                   : root / "todos" / "renamed.toml";
+    fs::create_directories(path.parent_path());
+    std::string content;
+    if (record_first) {
+      auto snapshot = log();
+      snapshot.id = directory.id;
+      content = std::get<std::string>(storage::codec::serialize_markdown(snapshot));
+    } else {
+      auto snapshot = todo();
+      snapshot.id = directory.id;
+      content = std::get<std::string>(storage::codec::serialize_toml(storage::codec::to_toml(snapshot)));
+    }
+    ASSERT_NO_FATAL_FAILURE(write(path, content));
+    error_code(repository.scan(), storage::StorageErrorCode::DuplicateId);
+    EXPECT_EQ(bytes(path), content);
+    fs::remove_all(root);
+  }
 }
 
 }  // namespace

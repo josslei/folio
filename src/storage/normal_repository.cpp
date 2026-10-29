@@ -860,7 +860,6 @@ NormalRepository::NormalRepository(fs::path normal_root) : root_(std::move(norma
     return fail(StorageErrorCode::InvalidPath, root_, "Normal root is not a directory");
 
   std::set<std::string> entry_ids;
-  std::set<std::string> directory_ids;
   auto note = [&](const fs::path& path, std::string message) {
     inventory.diagnostics.push_back({path.lexically_relative(root_), std::move(message)});
   };
@@ -1012,8 +1011,8 @@ NormalRepository::NormalRepository(fs::path normal_root) : root_(std::move(norma
           auto loaded = load_directory_at(root_, kind, *folder_id);
           if (failure(loaded)) return *failure(loaded);
           auto value = std::get<core::Directory::Snapshot>(std::move(loaded));
-          if (!directory_ids.insert(value.id.to_string()).second)
-            return fail(StorageErrorCode::DuplicateId, folder, "Duplicate Directory UUID");
+          if (!entry_ids.insert(value.id.to_string()).second)
+            return fail(StorageErrorCode::DuplicateId, folder, "Duplicate stored Entry UUID");
           inventory.directories.push_back(metadata_from(value, folder.lexically_relative(root_)));
           if (auto visited = visit_files(type, folder, true); failure(visited)) return *failure(visited);
         }

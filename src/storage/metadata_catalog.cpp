@@ -332,7 +332,7 @@ std::set<std::string>& MetadataCatalog::members_for(RecordType type,
   if (!valid_entry(m)) return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Invalid entry metadata");
   const Id id = entry_id(m);
   const auto key = id.to_string();
-  if (find_record(id)) return failure(StorageErrorCode::DuplicateId, entry_path(m), "Entry UUID already exists");
+  if (directories_.contains(key) || find_record(id)) return failure(StorageErrorCode::DuplicateId, entry_path(m), "Entry UUID already exists");
   if (record_path_occupied(entry_path(m)))
     return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Locator already occupied");
   for (const auto& [directory_key, d] : directories_)
@@ -428,8 +428,8 @@ std::set<std::string>& MetadataCatalog::members_for(RecordType type,
   if (!valid_kind(m.kind) || !valid_path(m.relative_path) || !valid_utf8(m.name))
     return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Invalid Directory metadata");
   const auto key = m.id.to_string();
-  if (directories_.contains(key))
-    return failure(StorageErrorCode::DuplicateId, m.relative_path, "Directory UUID already exists");
+  if (directories_.contains(key) || find_record(m.id))
+    return failure(StorageErrorCode::DuplicateId, m.relative_path, "Entry UUID already exists");
   for (const auto& [directory_key, d] : directories_)
     if (d.relative_path == m.relative_path)
       return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Locator already occupied");

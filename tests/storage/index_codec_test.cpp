@@ -655,5 +655,18 @@ TEST(IndexCodecTest, EnforcesDepthAndDeclaredContainerBounds) {
                codec::IndexCodecErrorCode::LimitExceeded);
 }
 
+
+TEST(IndexCodecTest, RejectsRecordDirectoryUuidCollisionsForEveryRecordType) {
+  const auto encoded = codec::encode_index(make_catalog());
+  ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
+  // Change only the UUID: distinct locators must not mask an identity conflict.
+  for (std::size_t index : {0u, 1u, 2u}) {
+    auto wire = unpack_wire(value_of(encoded));
+    field(entry(wire, index), "id") = field(directory(wire), "id");
+    expect_error(codec::decode_index(pack_wire(wire)),
+                 codec::IndexCodecErrorCode::InvalidMetadata);
+  }
+}
+
 }  // namespace
 
