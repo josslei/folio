@@ -1,19 +1,19 @@
 # Recovery architecture
 
-**Status: Decided/Planned.** Existing single-file atomic writing and mutation failure classification are implemented; Session Marker, durable Journals, Trash, Recovery Service, and Frontend draft recovery are not. See [Storage](storage-design.md) for current durability and partial-failure behavior.
+**Status: Decided/Planned.** Single-file atomic writing, mutation failure classification, and internal Session Marker lifecycle are Implemented; durable Journals, Trash, Recovery Service, and Frontend draft recovery remain planned. See [Storage](storage-design.md) for current durability and partial-failure behavior.
 
 ## Separate mechanisms
 
 | Mechanism | Purpose | Planned delivery |
 | --- | --- | --- |
-| OS lock | One active authoritative owner; OS releases ownership after process death | Storage lifecycle foundation, Backend wiring later |
-| Durable Session Marker | Previous session may have left stale Index | Storage lifecycle foundation |
+| OS lock | One active authoritative owner; OS releases ownership after process death | Phase 4; not implemented |
+| Durable Session Marker | Previous session may have left stale Index | Implemented internally in Phase 3.4.3 |
 | Recovery Journal | Durable intent/progress for compound operations | Normal Recovery foundation; extended for Vault |
 | Frontend draft / pending request | Preserve user edits and uncertain acknowledged outcomes | Public API contracts, then Recovery and TUI integration |
 
 None replaces Catalog synchronization or another mechanism. Marker/Journal/drafts belong in durable state, never independently clearable Cache. A lock file's existence alone proves neither a live owner nor a previous clean exit.
 
-## Session Marker protocol — Decided/Planned
+## Session Marker protocol — Internal support Implemented; Backend wiring planned
 
 ```text
 Acquire exclusive process/data lock
@@ -28,11 +28,11 @@ Acquire exclusive process/data lock
   → release lock and exit
 ```
 
-Ready requires durable Marker establishment. This is a session-wide Marker, not a lazy first-mutation marker. A read-only crash can cause unnecessary reconstruction; accepted. Previous Marker forces reconstruction even if Index decodes. Failed rebuild must not publish an incomplete Catalog. Startup failures and uncertain durability must conservatively preserve evidence; exact cleanup/error states need design.
+Ready requires durable Marker establishment. This is a session-wide Marker, not a lazy first-mutation marker. A read-only crash can cause unnecessary reconstruction; accepted. Previous Marker forces reconstruction even if Index decodes. Failed rebuild must not publish an incomplete Catalog. Startup failures preserve the active Catalog and existing Marker. Marker establishment must succeed before a decoded or rebuilt candidate becomes Ready.
 
-Failed Index persistence leaves Marker. Inconsistent Catalog cannot authorize Marker removal. Marker does not cause periodic saves. Cache disappearance and a clean unpersisted flag cannot alone certify a safe shutdown: define the complete safe-Index predicate and Cache-loss races during lifecycle implementation.
+Failed Index persistence leaves Marker. Inconsistent Catalog cannot authorize Marker removal. Marker does not cause periodic saves. Cache disappearance and a clean unpersisted flag cannot alone certify a safe shutdown: finish_session() requires a regular persisted Index and completes its synchronization before Marker cleanup. Missing Cache prevents finalization without deleting the Marker.
 
-Current Coordinator has no Marker or OS lock; its internal Ready currently means initialized/reconciled metadata, not future process readiness. Foundation tasks establish lifecycle capabilities; actual daemon ownership arrives later.
+Current Coordinator manages `<application.state>/session.marker` and requires durable establishment for Ready. It has no OS lock or daemon. The future Backend supplies exclusive ownership and calls startup_load(), then finish_session() after draining work. shutdown_save() alone saves without removing the Marker. Cleanup failures remain explicit and retryable; see [durability scope](architecture.md#durability-scope), including Windows and macOS limits. The Marker is independent of unpersisted and Inconsistent, and does not replace runtime synchronization.
 
 ## Normal Trash and compound recovery — Decided/Planned
 

@@ -103,12 +103,12 @@ Status distinguishes implemented contracts from agreed future direction. This re
 
 ## D12 — Durable Session Marker
 
-- **Status:** Decided/Planned.
+- **Status:** Internal Storage support Implemented (Phase 3.4.3); Backend/OS lock wiring deferred to Phase 4.
 - **Decision:** Mark every Backend session durably before Ready; previous Marker forces rebuild.
 - **Motivation:** Crash safety independent of enumerating every Catalog mutation path.
 - **Alternatives considered:** Lazy first-mutation invalidation marker or trusting decoded Index after unclean exit.
-- **Consequences:** Read-only crash may cause rebuild; failed save/inconsistency keeps Marker; lock distinct.
-- **Open/Deferred:** Durability APIs, safe-Index predicate and startup cleanup.
+- **Consequences:** Read-only crash may cause rebuild; failed save/inconsistency keeps Marker; lock distinct. Marker is application.state/session.marker; finish_session orders Index saving/sync before durable cleanup. shutdown_save alone retains the Marker. Failed cleanup can be retried; successful finalization stops the session.
+- **Open/Deferred:** Backend/OS lock integration and platform power-loss validation; see [durability limits](architecture.md#durability-scope).
 
 ## D13 — Frontend recovery persistence
 

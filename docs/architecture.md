@@ -82,7 +82,7 @@ Publication followed by failure is not rollback. Typed failure notifications dis
 
 `unpersisted` means projected metadata differs from its last acknowledged Index snapshot, not that Entries are unsaved. Inserts, changed updates/relocations, removals, and successful full rebuilds set it. Identical updates and queries do not. `CatalogStatus::Inconsistent` independently blocks Index saving. Full Refresh succeeds atomically and restores Ready; failed Refresh preserves contents/status/persistence state.
 
-Current startup_load attempts the Index once; missing/corrupt/unsupported/over-limit caches trigger reconstruction, while other I/O/path failures are reported. Valid Index startup performs no authoritative verification. Rebuild never immediately saves. shutdown_save acknowledges persistence only after successful atomic writing; repeated calls/retries are permitted. Once at orderly shutdown is caller policy, with explicit error handling, not destructor work or a once-only guard.
+Current startup_load checks the durable State Session Marker first. A previous Marker bypasses Index loading and forces authoritative rebuilding. Without a Marker it attempts the Index once; missing/corrupt/unsupported/over-limit caches trigger reconstruction, while other I/O/path failures are reported. Valid Index startup performs no authoritative verification. Rebuild never immediately saves. shutdown_save acknowledges persistence only after successful atomic writing; repeated calls/retries are permitted. Once at orderly shutdown is caller policy, with explicit error handling, not destructor work or a once-only guard.
 
 Current MessagePack schema is version 1. Its historical `entries` array contains Records, and `directories` contains Directory metadata; terminology alignment does not rename wire keys or require a schema bump. It stores primary typed metadata only, never reverse membership, Markdown bodies, Todo notes, or subtasks. Decoding validates a temporary Catalog and returns it marked persisted. Encoding is read-only and does not acknowledge a successful disk save. Detailed field representations and resource limits remain in [Storage's binary metadata codec section](storage-design.md#binary-metadata-codec).
 
@@ -94,11 +94,65 @@ Snapshot-to-metadata coverage guards in [metadata tests](../tests/storage/metada
 
 **Decided/Planned:** full scans are reserved for startup fallback, previous Session Marker recovery, and explicit Full Refresh. Explicit targeted discovery and standalone creation discovery remain deliberate API choices. Navigation may enumerate/count immediate formal objects without parsing them; equal counts are a practical indicator, never proof. No watchers, hashes, or periodic verification are required for uncommon external edits.
 
-**Decided/Planned:** Application owns Catalog, Coordinator, and Repositories, presents public CLI/TUI APIs, and runs in one per-user Backend. Storage stays private. Normal Index Cache relocation is implemented. Session Marker and locking are not implemented. Follow the [roadmap](roadmap.md), not speculative APIs.
+**Decided/Planned:** Application owns Catalog, Coordinator, and Repositories, presents public CLI/TUI APIs, and runs in one per-user Backend. Storage stays private. Normal Index Cache relocation is implemented. Durable Session Marker is implemented; OS locking is not. Follow the [roadmap](roadmap.md), not speculative APIs.
 ## Effective storage paths — Implemented
 
 Internal `StoragePaths` separates configurable `normal_root` and `vault_root` from an `ApplicationPaths application` value containing `config`, `data`, `state`, `cache`, and optional `runtime`. Internal callers supply these effective absolute paths; tests inject temporary locations. Platform defaults and configuration-file setup are deferred until application configuration is developed. No environment or home-directory lookup is performed.
 
 `validate_storage_paths()` creates nothing, checks required absolute paths and existing directory types, and resolves existing filesystem aliases for overlap checks. Normal and Vault must be disjoint from each other and every application directory. Application categories may share a location or nest beneath a common parent; this permits native platform layouts without prescribing one. Path validation does not establish ownership, permissions, or a secure IPC location; future resolution/runtime setup must establish those properties. Cache and runtime must not be used to store durable recovery data.
 
-The Normal Index uses `<application.cache>/index/normal.msgpack`. Former State indexes are ignored, without reading, migrating, or deleting them. Missing Cache triggers authoritative rebuilding; saving occurs only on an explicit shutdown save when required, never immediately after rebuilding. Cache parents are created only during save. Durable Session Marker remains planned for Phase 3.4.3 and Backend lifecycle for Phase 4; platform default resolution and configuration persistence are deferred.
+The Normal Index uses `<application.cache>/index/normal.msgpack`. Former State indexes are ignored, without reading, migrating, or deleting them. Missing Cache triggers authoritative rebuilding; saving occurs only on an explicit shutdown save when required, never immediately after rebuilding. Cache parents are created only during save. Durable Session Marker is implemented in Phase 3.4.3; Backend lifecycle remains planned for Phase 4; platform default resolution and configuration persistence are deferred.
+
+## Session lifecycle — Implemented internal support
+
+The centralized Marker location is `<application.state>/session.marker`, a regular
+file whose presence alone is significant; no payload schema or PID check exists.
+It must be outside Cache and Runtime (shared durable application parents remain
+valid). State and Marker symlinks/unsafe file types are rejected. Startup does
+not delete or replace a previous Marker. A validated candidate Catalog is adopted
+only after Marker establishment succeeds. `InitializationOutcome` distinguishes
+previous-session recovery from a rejected Cache through
+`previous_session_incomplete` and `index_error` respectively.
+
+The future Backend must acquire an exclusive OS lock **before** `startup_load()`,
+accept work only after success, stop admissions and finish active work, then call
+`finish_session()` with explicit error handling/retry before releasing the lock.
+No lock, Backend, or Application wiring is implemented here.
+
+`finish_session()` calls retryable `shutdown_save()` when necessary, checks that
+a regular persisted Index exists, synchronizes the Index and its parent links,
+and only then removes the Marker and synchronizes State. An unchanged Index is
+not rewritten. Missing Cache during an otherwise clean session prevents successful
+finalization: retain the Marker and use explicit Refresh/retry or report failure.
+`shutdown_save()` alone leaves the Marker in place; it is a lower-level save
+checkpoint, not a clean-session certificate. No destructor saves or removes it.
+
+Successful finalization sets `CatalogStatus::Stopped`; no more authoritative
+operations are allowed. Failed saving or Inconsistent/Unavailable Catalog state
+cannot authorize cleanup. If unlink succeeds but its directory sync fails, the
+Index is already safe; return the original error, disable managed work, and allow
+a cleanup retry (which syncs State even if the Marker is now absent). Alternatively,
+a successful explicit Refresh reestablishes the Marker before restoring Ready.
+A failed Refresh preserves the previous Catalog and state. Runtime Refresh and
+CRUD do not rewrite the Marker or access the Index.
+
+### Durability scope
+
+POSIX helpers use no-follow path checks, file fsync and parent-directory fsync.
+New directory links, including Cache/State ancestors, are synced before lifecycle
+success; existing links are synced again on retry. Index publication reuses
+the existing atomic primitives. Presence-only Marker creation uses exclusive
+empty-file creation and file/parent sync, avoiding staged payloads or orphan
+temporary files; sync failure retains the published Marker conservatively. These are filesystem-contract guarantees, not universal
+power-loss guarantees: macOS uses fsync, not F_FULLFSYNC, and device caches and
+filesystem support still matter ([Apple fsync documentation](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fsync.2.html)).
+
+Windows uses Unicode paths, file flushing and the existing atomic publication
+primitive. File contents use [FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers);
+publication uses [MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)
+with WRITE_THROUGH. Directory creation and DeleteFileW cleanup have no explicit
+parent-directory flush in this implementation, so Windows power-loss ordering is
+weaker than the POSIX contract. Process-abandonment recovery remains supported.
+Windows/Linux execution and actual power-loss tests require platform validation.
+The Marker does not repair partially completed authoritative multi-file operations;
+scan conflicts remain errors for later Recovery design.

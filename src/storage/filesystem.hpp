@@ -74,7 +74,7 @@ struct StorageError {
   std::filesystem::path path;
   std::string message;
   std::error_code system_error;
-  // True if creation or replacement was published, even when a later sync or
+  // True if a filesystem change was published (including removal), even when a later sync or
   // cleanup failed. This does not by itself confirm crash durability.
   bool replacement_completed = false;
 };
@@ -108,5 +108,26 @@ struct StorageError {
     const std::filesystem::path& path, std::string_view contents);
 [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> replace_file_atomic(
     const std::filesystem::path& path, std::string_view contents);
+
+// Lifecycle-only durability helpers. Absolute paths without symlink components
+// are required; callers exclude concurrent external changes. Directory creation
+// syncs every ancestor link on POSIX, including existing links (safe retry after
+// a prior failed sync). File sync/removal reject non-regular files and symlinks.
+// Removal syncs the parent even if the file is already absent, permitting retry
+// after unlink succeeded but its directory sync failed. replacement_completed
+// means the unlink happened, not that its durability was confirmed.
+// Windows flushes file contents; directory creation/deletion metadata has no
+// portable flush guarantee through these APIs. See architecture durability notes.
+[[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError>
+create_directories_durable(const std::filesystem::path& path);
+// Presence-only files need no staged payload: exclusive creation avoids orphan
+// staging files blocking the next lifecycle attempt. Existing files are never
+// overwritten. A failed sync leaves the published empty file conservatively.
+[[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError>
+create_empty_file_durable(const std::filesystem::path& path);
+[[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError>
+sync_regular_file(const std::filesystem::path& path);
+[[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError>
+remove_file_durable(const std::filesystem::path& path);
 
 }  // namespace folio::core::storage

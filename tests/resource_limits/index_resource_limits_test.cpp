@@ -122,7 +122,7 @@ TEST_F(IndexResourceLimitsTest, OversizedCacheFallsBackToEmptyNormalStorage) {
   ASSERT_NO_FATAL_FAILURE(expect_oversized_fallback(0));
   EXPECT_FALSE(fs::exists(normal()));
   EXPECT_FALSE(fs::exists(root / "vault"));
-  EXPECT_FALSE(fs::exists(state()));
+  EXPECT_TRUE(fs::is_regular_file(state() / "session.marker"));
 }
 
 TEST_F(IndexResourceLimitsTest, OversizedCacheFallsBackToNonemptyNormalStorage) {
@@ -137,7 +137,7 @@ TEST_F(IndexResourceLimitsTest, OversizedCacheFallsBackToNonemptyNormalStorage) 
   ASSERT_NO_FATAL_FAILURE(write_oversized_cache());
   ASSERT_NO_FATAL_FAILURE(expect_oversized_fallback(1));
   EXPECT_FALSE(fs::exists(root / "vault"));
-  EXPECT_FALSE(fs::exists(state()));
+  EXPECT_TRUE(fs::is_regular_file(state() / "session.marker"));
 }
 
 }  // namespace

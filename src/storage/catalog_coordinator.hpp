@@ -29,14 +29,16 @@ struct CoordinatorError {
   std::optional<BinaryReadError> binary_error;
 };
 
-// Successful initialization: no index_error means the persisted Index loaded.
-// Otherwise it records why a full authoritative rebuild was needed and succeeded.
+// Successful initialization: without a previous Marker, no index_error means
+// the persisted Index loaded. A previous Marker bypasses the Index entirely.
+// index_error records a rejected Cache only, not Marker-triggered recovery.
 struct InitializationOutcome {
   std::optional<CoordinatorError> index_error;
   std::vector<ExcludedObject> diagnostics;
+  bool previous_session_incomplete = false;
 };
 
-enum class CatalogStatus { Unloaded, Ready, Unavailable, Inconsistent };
+enum class CatalogStatus { Unloaded, Ready, Unavailable, Inconsistent, Stopped };
 enum class SaveOutcome { Saved, SkippedPersisted };
 
 // Coordinates an owner-supplied Catalog without owning it. The Catalog must
@@ -52,7 +54,8 @@ class CatalogCoordinator {
   CatalogCoordinator& operator=(CatalogCoordinator&&) = delete;
 
   // One-time startup policy: load the Index, rebuilding from Normal files only
-  // when the cache is missing, corrupt, unsupported, or over a resource limit.
+  // when the cache is missing, corrupt, unsupported, or over a resource limit,
+  // or a previous durable Session Marker exists. Ready requires a durable Marker.
   // Uses application.cache/index/normal.msgpack; former State indexes are ignored
   // and are neither migrated nor removed. Construction performs no Index I/O.
   [[nodiscard]] ::folio::core::internal::Result<InitializationOutcome, CoordinatorError>
@@ -62,6 +65,11 @@ class CatalogCoordinator {
   [[nodiscard]] ::folio::core::internal::Result<std::vector<ExcludedObject>, CoordinatorError>
   refresh_all();
   [[nodiscard]] ::folio::core::internal::Result<SaveOutcome, CoordinatorError> shutdown_save();
+  // Backend shutdown entry point: stop work first, then call finish_session().
+  // Saves if needed, then durably removes the Marker; failures are retryable.
+  // shutdown_save() alone leaves the Marker in place and does not end a session.
+  // No authoritative mutations may follow successful finalization.
+  [[nodiscard]] ::folio::core::internal::Result<SaveOutcome, CoordinatorError> finish_session();
   [[nodiscard]] CatalogStatus status() const noexcept;
   // Created once by the constructor. Accessors borrow the stored callbacks;
   // use them by const reference and keep this coordinator alive during use.
@@ -112,6 +120,9 @@ class CatalogCoordinator {
           mark_needs_refresh();
         return std::monostate{};
       }
+      if (!session_active_)
+        return StorageError{StorageErrorCode::RecoveryRequired, paths_.normal_root,
+                            "Catalog session is not Ready", {}, false};
       try {
         auto result = update(std::get<std::reference_wrapper<const Metadata>>(notification).get());
         if (std::holds_alternative<StorageError>(result)) mark_needs_refresh();
@@ -129,10 +140,14 @@ class CatalogCoordinator {
   // preserves catalog and readiness; success is Ready and unpersisted, with no
   // Index I/O, and prevents a later stale startup load from replacing it.
   [[nodiscard]] ::folio::core::internal::Result<std::vector<ExcludedObject>, CoordinatorError> rebuild();
+  [[nodiscard]] ::folio::core::internal::Result<bool, CoordinatorError> previous_marker() const;
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, CoordinatorError> establish_marker();
   StoragePaths paths_;
   MetadataCatalog& catalog_;
   CatalogStatus status_ = CatalogStatus::Unloaded;
   bool load_attempted_ = false;
+  bool session_active_ = false;
+  bool marker_cleanup_pending_ = false;
   const CreationCheck creation_check_;
   const MutationResultCallback<LogMetadata> log_creation_callback_;
   const MutationResultCallback<LogMetadata> log_update_callback_;

@@ -6,7 +6,7 @@ Status labels follow [architecture](architecture.md). Stage numbers are planning
 | --- | --- | --- |
 | Phase 1–3.3.7 | Core and Normal Storage foundation | Implemented; not a complete application |
 | Phase D | Architecture documentation consolidation | This documentation delivery |
-| Phase 3.4 | Platform paths and Session Marker | Planned; after consolidation review |
+| Phase 3.4 | Platform paths and Session Marker | Internal effective paths, Cache relocation, and Marker implemented; OS defaults deferred |
 | Phase 4 | Public Application, Backend daemon, IPC | Planned; after Storage lifecycle foundation |
 | Phase 5 | Normal Trash and Recovery foundation | Planned; after Public API contracts |
 | Phase 6 | Minimal Normal TUI/editor | Planned; after Recovery foundation |
@@ -20,17 +20,17 @@ Status labels follow [architecture](architecture.md). Stage numbers are planning
 
 Implemented: independent domain models and Snapshots, plaintext codecs, atomic filesystem utilities, NormalRepository, typed Catalog/reverse membership, MessagePack Index, Coordinator startup fallback/full Refresh/shutdown save, and optional Repository synchronization hooks. Post-audit corrections enforce unified UUID identity, classified post-publication failure notification, and efficient managed known-locator/creation operations. Evidence: [Storage sources](../src/storage/) and [tests](../tests/storage/).
 
-Not completed by those milestones: Application integration, navigation count checks, crash-exit detection, configuration/platform defaults, daemon, Vault, Trash, Journal, and Git. The welcome TUI does not wire Storage lifecycle.
+Not completed by those milestones: Application integration, navigation count checks, configuration/platform defaults, daemon/OS lock, Vault, Trash, Journal, and Git. Marker-based unclean-session detection is implemented internally. The welcome TUI does not wire Storage lifecycle.
 
 ## Consolidation completion
 
 Review linked architecture/decision documents and the separately proposed Storage amendments. Completion: current/planned distinctions, ownership boundaries, roadmap gates, and unresolved decisions are searchable; no code or schema changes.
 
-## Storage foundation — planned next
+## Storage foundation — internal lifecycle implemented; platform defaults deferred
 
 After consolidation review, establish platform-standard configuration, data, state, cache, and runtime paths; refactor internal paths; relocate the Normal Index from State to Cache; and integrate the durable Session Marker with exclusive process/data ownership.
 
-The effective StoragePaths/ApplicationPaths separation is implemented with explicitly injected paths. Platform default resolution is deferred until configuration setup near application completion. Normal Index relocation to `<application.cache>/index/normal.msgpack` is implemented; former State indexes are ignored without migration or deletion. Durable Session Marker remains planned for Phase 3.4.3. Resolve durable Marker cleanup before implementing the remaining Storage lifecycle work. Completion requires isolated platform/path tests and crash-consistency coverage, including failed rebuild/save, Cache loss, and lock release. A Backend must not become Ready before its Marker is durable; failed persistence or Catalog inconsistency must preserve the Marker.
+The effective StoragePaths/ApplicationPaths separation is implemented with explicitly injected paths. Platform default resolution is deferred until configuration setup near application completion. Normal Index relocation to `<application.cache>/index/normal.msgpack` is implemented; former State indexes are ignored without migration or deletion. Durable Session Marker and retryable ordered cleanup are implemented in Phase 3.4.3, with isolated tests for abandoned sessions, failed rebuild/save/sync, and Cache loss. OS process/data locking and Backend invocation belong to Phase 4; actual power-loss and cross-platform verification remain required. A Backend must not become Ready before its Marker is durable; failed persistence or Catalog inconsistency must preserve the Marker.
 
 Authoritative roots stay configurable. One configuration per OS user; no Workspace Manager.
 

@@ -1,5 +1,6 @@
 #include "storage/filesystem.hpp"
 #include "storage/atomic_write.hpp"
+#include "storage/filesystem_durability_test_hooks.hpp"
 
 #include <algorithm>
 #include <array>
@@ -504,6 +505,181 @@ namespace internal {
     return BinaryReadError{BinaryReadErrorCode::IoError, path,
                            "Could not read binary file", {}};
   return bytes;
+}
+
+namespace {
+// Test-only sync override is thread-local and never installed by production.
+thread_local internal::SyncFile lifecycle_test_sync = nullptr;
+#ifndef _WIN32
+bool lifecycle_sync(int descriptor) {
+  return lifecycle_test_sync ? lifecycle_test_sync(descriptor) : sync_file(descriptor);
+}
+#endif
+
+::folio::core::internal::Result<std::monostate, StorageError>
+validate_lifecycle_file_path(const fs::path& path) {
+  if (!path.is_absolute() || has_nul(path) || path != path.lexically_normal() ||
+      path.filename().empty() || path.filename() == "." || path.filename() == "..")
+    return error(StorageErrorCode::InvalidPath, path, "Expected canonical absolute file path");
+  auto current = path.root_path();
+  for (const auto& component : path.parent_path().relative_path()) {
+    current /= component;
+    std::error_code ec;
+    const auto status = fs::symlink_status(current, ec);
+    if (ec) return error(StorageErrorCode::IoError, current, "Could not inspect file parent", ec);
+    if (!fs::is_directory(status) || fs::is_symlink(status))
+      return error(StorageErrorCode::InvalidPath, current, "Unsafe file parent");
+#ifdef _WIN32
+    const auto attributes = GetFileAttributesW(current.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES)
+      return error(StorageErrorCode::IoError, current, "Could not inspect file parent", system_error());
+    if (attributes & FILE_ATTRIBUTE_REPARSE_POINT)
+      return error(StorageErrorCode::InvalidPath, current, "Unsafe file parent");
+#endif
+  }
+  return std::monostate{};
+}
+}
+
+namespace internal {
+SyncFile set_lifecycle_sync_for_testing(SyncFile sync) noexcept {
+  return std::exchange(lifecycle_test_sync, sync);
+}
+}
+
+::folio::core::internal::Result<std::monostate, StorageError>
+create_directories_durable(const fs::path& path) {
+  if (!path.is_absolute() || has_nul(path) || path != path.lexically_normal())
+    return error(StorageErrorCode::InvalidPath, path, "Expected canonical absolute directory path");
+#ifdef _WIN32
+  auto current = path.root_path();
+  for (const auto& component : path.relative_path()) {
+    current /= component;
+    std::error_code ec;
+    fs::create_directory(current, ec);
+    if (ec) return error(StorageErrorCode::IoError, current, "Could not create directory", ec);
+    const auto attributes = GetFileAttributesW(current.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES)
+      return error(StorageErrorCode::IoError, current, "Could not inspect directory", system_error());
+    if (!(attributes & FILE_ATTRIBUTE_DIRECTORY) || (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
+      return error(StorageErrorCode::InvalidPath, current, "Unsafe directory component");
+  }
+#else
+  FileDescriptor directory{open(path.root_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC)};
+  if (directory.value == -1)
+    return error(StorageErrorCode::IoError, path, "Could not open filesystem root", system_error());
+  for (const auto& component : path.relative_path()) {
+    if (component == "." || component == "..")
+      return error(StorageErrorCode::InvalidPath, path, "Unsafe directory component");
+    if (mkdirat(directory.value, component.c_str(), 0700) != 0 && errno != EEXIST)
+      return error(StorageErrorCode::IoError, path, "Could not create directory", system_error());
+    FileDescriptor child{openat(directory.value, component.c_str(),
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)};
+    if (child.value == -1) {
+      const auto ec = system_error();
+      const auto code = ec == std::errc::too_many_symbolic_link_levels ||
+                        ec == std::errc::not_a_directory
+          ? StorageErrorCode::InvalidPath : StorageErrorCode::IoError;
+      return error(code, path, "Could not open safe directory component", ec);
+    }
+    if (!lifecycle_sync(directory.value))
+      return error(StorageErrorCode::DurabilityFailure, path, "Could not sync directory link", system_error());
+    std::swap(directory.value, child.value);
+  }
+  if (!lifecycle_sync(directory.value))
+    return error(StorageErrorCode::DurabilityFailure, path, "Could not sync directory", system_error());
+#endif
+  return std::monostate{};
+}
+
+::folio::core::internal::Result<std::monostate, StorageError>
+create_empty_file_durable(const fs::path& path) {
+  auto valid = validate_lifecycle_file_path(path);
+  if (auto* problem = std::get_if<StorageError>(&valid)) return *problem;
+#ifdef _WIN32
+  TemporaryFile file;
+  file.handle = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+      nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (file.handle == INVALID_HANDLE_VALUE)
+    return error(StorageErrorCode::IoError, path, "Could not exclusively create empty file", system_error());
+  if (!FlushFileBuffers(file.handle))
+    return error(StorageErrorCode::DurabilityFailure, path, "Empty file published but flush failed", system_error(), true);
+#else
+  FileDescriptor directory{open(path.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)};
+  if (directory.value == -1)
+    return error(StorageErrorCode::IoError, path, "Could not open empty-file parent", system_error());
+  FileDescriptor file{openat(directory.value, path.filename().c_str(),
+      O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600)};
+  if (file.value == -1)
+    return error(StorageErrorCode::IoError, path, "Could not exclusively create empty file", system_error());
+  // No payload can tear: presence alone is significant. Never unlink on a failed
+  // sync, since the next lifecycle must conservatively observe publication.
+  if (!lifecycle_sync(file.value))
+    return error(StorageErrorCode::DurabilityFailure, path, "Empty file published but sync failed", system_error(), true);
+  if (!lifecycle_sync(directory.value))
+    return error(StorageErrorCode::DurabilityFailure, path, "Empty file published but parent sync failed", system_error(), true);
+#endif
+  return std::monostate{};
+}
+
+::folio::core::internal::Result<std::monostate, StorageError>
+sync_regular_file(const fs::path& path) {
+  auto valid = validate_lifecycle_file_path(path);
+  if (auto* problem = std::get_if<StorageError>(&valid)) return *problem;
+#ifdef _WIN32
+  TemporaryFile file;
+  file.handle = CreateFileW(path.c_str(), GENERIC_WRITE,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+      FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+  if (file.handle == INVALID_HANDLE_VALUE)
+    return error(StorageErrorCode::IoError, path, "Could not open file for sync", system_error());
+  BY_HANDLE_FILE_INFORMATION info{};
+  if (!GetFileInformationByHandle(file.handle, &info))
+    return error(StorageErrorCode::IoError, path, "Could not inspect file", system_error());
+  if (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))
+    return error(StorageErrorCode::InvalidPath, path, "Expected regular file");
+  if (!FlushFileBuffers(file.handle))
+    return error(StorageErrorCode::DurabilityFailure, path, "Could not flush file", system_error());
+#else
+  FileDescriptor file{open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)};
+  if (file.value == -1)
+    return error(StorageErrorCode::IoError, path, "Could not open file for sync", system_error());
+  struct stat info{};
+  if (fstat(file.value, &info) != 0)
+    return error(StorageErrorCode::IoError, path, "Could not inspect file", system_error());
+  if (!S_ISREG(info.st_mode))
+    return error(StorageErrorCode::InvalidPath, path, "Expected regular file");
+  if (!lifecycle_sync(file.value))
+    return error(StorageErrorCode::DurabilityFailure, path, "Could not sync file", system_error());
+#endif
+  return std::monostate{};
+}
+
+::folio::core::internal::Result<std::monostate, StorageError>
+remove_file_durable(const fs::path& path) {
+  auto valid = validate_lifecycle_file_path(path);
+  if (auto* problem = std::get_if<StorageError>(&valid)) return *problem;
+  std::error_code ec;
+  const auto status = fs::symlink_status(path, ec);
+  if (ec && ec != std::errc::no_such_file_or_directory)
+    return error(StorageErrorCode::IoError, path, "Could not inspect removal target", ec);
+  const bool exists = fs::exists(status);
+  if (exists && (!fs::is_regular_file(status) || fs::is_symlink(status)))
+    return error(StorageErrorCode::InvalidPath, path, "Removal target must be a regular file");
+#ifdef _WIN32
+  if (exists && !DeleteFileW(path.c_str()))
+    return error(StorageErrorCode::IoError, path, "Could not remove file", system_error());
+#else
+  FileDescriptor directory{open(path.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)};
+  if (directory.value == -1)
+    return error(StorageErrorCode::IoError, path, "Could not open removal parent", system_error());
+  if (exists && unlinkat(directory.value, path.filename().c_str(), 0) != 0)
+    return error(StorageErrorCode::IoError, path, "Could not remove file", system_error());
+  if (!lifecycle_sync(directory.value))
+    return error(StorageErrorCode::DurabilityFailure, path,
+                 "File removed but parent sync failed", system_error(), exists);
+#endif
+  return std::monostate{};
 }
 
 }  // namespace folio::core::storage
