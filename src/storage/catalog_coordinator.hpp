@@ -64,40 +64,48 @@ class CatalogCoordinator {
   // Created once by the constructor. Accessors borrow the stored callbacks;
   // use them by const reference and keep this coordinator alive during use.
   // Creation inserts explicitly; update also covers moves and Directory rename.
-  [[nodiscard]] const PersistedCallback<LogMetadata>& log_creation_callback() const noexcept {
+  [[nodiscard]] const MutationCallback<LogMetadata>& log_creation_callback() const noexcept {
     return log_creation_callback_;
   }
-  [[nodiscard]] const PersistedCallback<LogMetadata>& log_update_callback() const noexcept {
+  [[nodiscard]] const MutationCallback<LogMetadata>& log_update_callback() const noexcept {
     return log_update_callback_;
   }
-  [[nodiscard]] const PersistedCallback<MemoMetadata>& memo_creation_callback() const noexcept {
+  [[nodiscard]] const MutationCallback<MemoMetadata>& memo_creation_callback() const noexcept {
     return memo_creation_callback_;
   }
-  [[nodiscard]] const PersistedCallback<MemoMetadata>& memo_update_callback() const noexcept {
+  [[nodiscard]] const MutationCallback<MemoMetadata>& memo_update_callback() const noexcept {
     return memo_update_callback_;
   }
-  [[nodiscard]] const PersistedCallback<TodoMetadata>& todo_creation_callback() const noexcept {
+  [[nodiscard]] const MutationCallback<TodoMetadata>& todo_creation_callback() const noexcept {
     return todo_creation_callback_;
   }
-  [[nodiscard]] const PersistedCallback<TodoMetadata>& todo_update_callback() const noexcept {
+  [[nodiscard]] const MutationCallback<TodoMetadata>& todo_update_callback() const noexcept {
     return todo_update_callback_;
   }
-  [[nodiscard]] const PersistedCallback<DirectoryMetadata>& directory_creation_callback() const noexcept {
+  [[nodiscard]] const MutationCallback<DirectoryMetadata>& directory_creation_callback() const noexcept {
     return directory_creation_callback_;
   }
-  [[nodiscard]] const PersistedCallback<DirectoryMetadata>& directory_update_callback() const noexcept {
+  [[nodiscard]] const MutationCallback<DirectoryMetadata>& directory_update_callback() const noexcept {
     return directory_update_callback_;
   }
 
  private:
-  // Used only during construction to compose Catalog updates and consistency
-  // handling. Errors before invocation still require caller reconciliation.
-  template <class Update>
-  auto wrap_catalog_update(Update update) {
-    return [this, update = std::move(update)](const auto& metadata) mutable
+  // Compose metadata updates and failure handling once. Catalog-update failure
+  // marks inconsistency here because Repository never recursively calls a failed
+  // callback. Failure notifications do not modify metadata or unpersisted state.
+  template <class Metadata, class Update>
+  MutationCallback<Metadata> wrap_catalog_update(Update update) {
+    return [this, update = std::move(update)](
+        const MutationNotification<Metadata>& notification)
         -> ::folio::core::internal::Result<std::monostate, StorageError> {
+      if (const auto* failure = std::get_if<
+              std::reference_wrapper<const RepositoryMutationError>>(&notification)) {
+        if (failure->get().stage != MutationFailureStage::BeforeAuthoritativeChange)
+          mark_needs_refresh();
+        return std::monostate{};
+      }
       try {
-        auto result = update(metadata);
+        auto result = update(std::get<std::reference_wrapper<const Metadata>>(notification).get());
         if (std::holds_alternative<StorageError>(result)) mark_needs_refresh();
         return result;
       } catch (...) {
@@ -117,14 +125,14 @@ class CatalogCoordinator {
   MetadataCatalog& catalog_;
   CatalogStatus status_ = CatalogStatus::Unloaded;
   bool load_attempted_ = false;
-  const PersistedCallback<LogMetadata> log_creation_callback_;
-  const PersistedCallback<LogMetadata> log_update_callback_;
-  const PersistedCallback<MemoMetadata> memo_creation_callback_;
-  const PersistedCallback<MemoMetadata> memo_update_callback_;
-  const PersistedCallback<TodoMetadata> todo_creation_callback_;
-  const PersistedCallback<TodoMetadata> todo_update_callback_;
-  const PersistedCallback<DirectoryMetadata> directory_creation_callback_;
-  const PersistedCallback<DirectoryMetadata> directory_update_callback_;
+  const MutationCallback<LogMetadata> log_creation_callback_;
+  const MutationCallback<LogMetadata> log_update_callback_;
+  const MutationCallback<MemoMetadata> memo_creation_callback_;
+  const MutationCallback<MemoMetadata> memo_update_callback_;
+  const MutationCallback<TodoMetadata> todo_creation_callback_;
+  const MutationCallback<TodoMetadata> todo_update_callback_;
+  const MutationCallback<DirectoryMetadata> directory_creation_callback_;
+  const MutationCallback<DirectoryMetadata> directory_update_callback_;
 };
 
 }  // namespace folio::core::storage

@@ -1,5 +1,12 @@
 #include "storage/catalog_coordinator.hpp"
 #include "storage/normal_repository.hpp"
+#include "storage/normal_repository_testing.hpp"
+#include "storage/atomic_write.hpp"
+
+#ifndef _WIN32
+#include <cerrno>
+#include <unistd.h>
+#endif
 
 #include <gtest/gtest.h>
 
@@ -119,10 +126,10 @@ class NormalRepositoryCallbacksTest : public testing::Test {
   }
 
   static void expect_code(const ::folio::core::internal::Result<std::monostate,
-                          storage::StorageError>& result,
+                          storage::RepositoryMutationError>& result,
                           storage::StorageErrorCode code) {
-    ASSERT_TRUE(std::holds_alternative<storage::StorageError>(result));
-    EXPECT_EQ(std::get<storage::StorageError>(result).code, code);
+    ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(result));
+    EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).cause.code, code);
   }
 };
 
@@ -287,14 +294,18 @@ TEST_F(NormalRepositoryCallbacksTest, MovesAndDirectoryRenameKeepMembershipCurre
   EXPECT_EQ(bytes(index), persisted_index);
 }
 
-TEST_F(NormalRepositoryCallbacksTest, RepositoryFailureDoesNotInvokeCallback) {
+TEST_F(NormalRepositoryCallbacksTest, RepositoryFailureNotifiesWithoutProvidingSuccessMetadata) {
   const auto log = log_snapshot();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(log, coordinator.log_creation_callback())));
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.shutdown_save()));
   const auto prior_index = bytes(index);
   int callbacks = 0;
-  storage::PersistedCallback<storage::LogMetadata> observer = [&](const storage::LogMetadata&) {
-    ++callbacks;
+  int failures = 0;
+  storage::MutationCallback<storage::LogMetadata> observer = [&](const storage::MutationNotification<storage::LogMetadata>& notification) {
+    if (std::holds_alternative<std::reference_wrapper<const storage::LogMetadata>>(notification))
+      ++callbacks;
+    else
+      ++failures;
     return ::folio::core::internal::Result<std::monostate, storage::StorageError>{std::monostate{}};
   };
   expect_code(repository.create_log(log, observer), storage::StorageErrorCode::DuplicateId);
@@ -308,9 +319,10 @@ TEST_F(NormalRepositoryCallbacksTest, RepositoryFailureDoesNotInvokeCallback) {
   ASSERT_NO_FATAL_FAILURE(write_bytes(pending, "unfinished"));
   const auto failed = repository.update_log(edited, path, observer);
   expect_code(failed, storage::StorageErrorCode::RecoveryRequired);
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(failed));
-  EXPECT_FALSE(std::get<storage::StorageError>(failed).replacement_completed);
+  ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(failed));
+  EXPECT_FALSE(std::get<storage::RepositoryMutationError>(failed).cause.replacement_completed);
   EXPECT_EQ(callbacks, 0);
+  EXPECT_EQ(failures, 2);
   EXPECT_FALSE(owned_catalog.unpersisted());
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_EQ(bytes(index), prior_index);
@@ -355,11 +367,11 @@ TEST_F(NormalRepositoryCallbacksTest, FailedCallbackReportsPublishedFileAndBlock
       storage::metadata_from(stale, path))));
   const auto failed = repository.create_log(log, coordinator.log_creation_callback());
   expect_code(failed, storage::StorageErrorCode::PostPersistFailure);
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(failed));
-  EXPECT_TRUE(std::get<storage::StorageError>(failed).replacement_completed);
-  EXPECT_TRUE(fs::is_regular_file(std::get<storage::StorageError>(failed).path));
+  ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(failed));
+  EXPECT_TRUE(std::get<storage::RepositoryMutationError>(failed).cause.replacement_completed);
+  EXPECT_TRUE(fs::is_regular_file(std::get<storage::RepositoryMutationError>(failed).cause.path));
   EXPECT_FALSE(owned_catalog.find_record(log.id).has_value());
-  // The stored callback detects the stale locator conflict after publication.
+  // The callback reports the stale locator conflict; observing the result flags it.
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
   const auto blocked = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::CoordinatorError>(blocked));
@@ -385,8 +397,8 @@ TEST_F(NormalRepositoryCallbacksTest, DirectoryCallbackFailureLeavesSavedMetadat
   const auto failed = repository.create_directory(core::DirectoryKind::Memo,
                                                   directory, coordinator.directory_creation_callback());
   expect_code(failed, storage::StorageErrorCode::PostPersistFailure);
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(failed));
-  EXPECT_TRUE(std::get<storage::StorageError>(failed).replacement_completed);
+  ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(failed));
+  EXPECT_TRUE(std::get<storage::RepositoryMutationError>(failed).cause.replacement_completed);
   EXPECT_TRUE(fs::is_regular_file(normal / "memos" / directory.id.to_string() /
                                   ".folio-dir.toml"));
   EXPECT_FALSE(owned_catalog.find_directory(directory.id).has_value());
@@ -471,8 +483,9 @@ TEST_F(NormalRepositoryCallbacksTest, CallbackObservesCommittedFileAndActualLoca
   const auto log = log_snapshot();
   fs::path observed_path;
   bool observed_file = false;
-  const storage::PersistedCallback<storage::LogMetadata> observer =
-      [&](const storage::LogMetadata& metadata) {
+  const storage::MutationCallback<storage::LogMetadata> observer =
+      [&](const storage::MutationNotification<storage::LogMetadata>& notification) {
+    const auto& metadata = std::get<std::reference_wrapper<const storage::LogMetadata>>(notification).get();
     observed_path = metadata.relative_path;
     observed_file = fs::is_regular_file(normal / observed_path);
     return owned_catalog.insert_record(metadata);
@@ -488,23 +501,23 @@ TEST_F(NormalRepositoryCallbacksTest, CallbackObservesCommittedFileAndActualLoca
 
 TEST_F(NormalRepositoryCallbacksTest, ThrowingCallbacksReportSavedDataWithoutRollback) {
   const auto prior_index = bytes(index);
-  const storage::PersistedCallback<storage::LogMetadata> standard =
-      [](const storage::LogMetadata&)
+  const storage::MutationCallback<storage::LogMetadata> standard =
+      [](const storage::MutationNotification<storage::LogMetadata>&)
       -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
     throw std::runtime_error("synthetic callback exception");
   };
   const auto first = log_snapshot();
   const auto failed_standard = repository.create_log(first, standard);
   expect_code(failed_standard, storage::StorageErrorCode::PostPersistFailure);
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(failed_standard));
-  EXPECT_TRUE(std::get<storage::StorageError>(failed_standard).replacement_completed);
-  EXPECT_TRUE(fs::is_regular_file(std::get<storage::StorageError>(failed_standard).path));
+  ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(failed_standard));
+  EXPECT_TRUE(std::get<storage::RepositoryMutationError>(failed_standard).cause.replacement_completed);
+  EXPECT_TRUE(fs::is_regular_file(std::get<storage::RepositoryMutationError>(failed_standard).cause.path));
   EXPECT_EQ(std::get<core::Log::Snapshot>(repository.load_log(first.id)).content,
             first.content);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
 
-  const storage::PersistedCallback<storage::LogMetadata> nonstandard =
-      [](const storage::LogMetadata&)
+  const storage::MutationCallback<storage::LogMetadata> nonstandard =
+      [](const storage::MutationNotification<storage::LogMetadata>&)
       -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
     throw 7;
   };
@@ -512,9 +525,9 @@ TEST_F(NormalRepositoryCallbacksTest, ThrowingCallbacksReportSavedDataWithoutRol
   second.id = id("87183823-2574-4bfd-b411-99ed177d3e43");
   const auto failed_nonstandard = repository.create_log(second, nonstandard);
   expect_code(failed_nonstandard, storage::StorageErrorCode::PostPersistFailure);
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(failed_nonstandard));
-  EXPECT_TRUE(std::get<storage::StorageError>(failed_nonstandard).replacement_completed);
-  EXPECT_TRUE(fs::is_regular_file(std::get<storage::StorageError>(failed_nonstandard).path));
+  ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(failed_nonstandard));
+  EXPECT_TRUE(std::get<storage::RepositoryMutationError>(failed_nonstandard).cause.replacement_completed);
+  EXPECT_TRUE(fs::is_regular_file(std::get<storage::RepositoryMutationError>(failed_nonstandard).cause.path));
   EXPECT_EQ(std::get<core::Log::Snapshot>(repository.load_log(second.id)).content,
             second.content);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
@@ -560,8 +573,8 @@ TEST_F(NormalRepositoryCallbacksTest, SavedUpdateWithMissingCatalogIdRequiresRef
   edited.modified = modified();
   const auto failed = repository.update_log(edited, path, coordinator.log_update_callback());
   expect_code(failed, storage::StorageErrorCode::PostPersistFailure);
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(failed));
-  EXPECT_TRUE(std::get<storage::StorageError>(failed).replacement_completed);
+  ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(failed));
+  EXPECT_TRUE(std::get<storage::RepositoryMutationError>(failed).cause.replacement_completed);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
   EXPECT_FALSE(owned_catalog.find_record(log.id).has_value());
   EXPECT_TRUE(owned_catalog.find_record(stale.id).has_value());
@@ -606,5 +619,338 @@ TEST_F(NormalRepositoryCallbacksTest, FailedRefreshPreservesPersistedInconsisten
   EXPECT_EQ(std::get<storage::CoordinatorError>(blocked).code,
             storage::CoordinatorErrorCode::Unavailable);
 }
+// Failure hooks are scoped to one test/thread; production uses the real writer.
+struct ScopedRepositoryHooks {
+  storage::internal::RepositoryTestHooks previous = storage::internal::repository_test_hooks;
+  ~ScopedRepositoryHooks() { storage::internal::repository_test_hooks = previous; }
+};
+
+TEST_F(NormalRepositoryCallbacksTest, ManagedPrePublicationFailurePreservesReadyState) {
+  auto invalid = log_snapshot();
+  invalid.privacy = core::Privacy::Protected;
+  const auto result = repository.create_log(invalid, coordinator.log_creation_callback());
+  ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(result));
+  EXPECT_FALSE(std::get<storage::RepositoryMutationError>(result).cause.replacement_completed);
+  EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
+            storage::MutationFailureStage::BeforeAuthoritativeChange);
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+  EXPECT_TRUE(owned_catalog.query().empty());
+  EXPECT_FALSE(owned_catalog.unpersisted());
+}
+
+TEST_F(NormalRepositoryCallbacksTest, ProjectionFailureIsClassifiedBeforeSuccessCallbackRuns) {
+  ScopedRepositoryHooks hooks;
+  storage::internal::repository_test_hooks.before_projection = [] {
+    throw std::runtime_error("synthetic projection failure");
+  };
+  const auto prior = bytes(index);
+  const auto log = log_snapshot();
+  const auto result = repository.create_log(log, coordinator.log_creation_callback());
+  expect_code(result, storage::StorageErrorCode::PostPersistFailure);
+  const auto& error = std::get<storage::RepositoryMutationError>(result).cause;
+  EXPECT_TRUE(error.replacement_completed);
+  EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
+            storage::MutationFailureStage::CatalogSynchronizationFailed);
+  EXPECT_NE(error.message.find("synthetic projection failure"), std::string::npos);
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+  EXPECT_TRUE(owned_catalog.query().empty());
+  EXPECT_FALSE(owned_catalog.unpersisted());
+  EXPECT_TRUE(std::holds_alternative<storage::CoordinatorError>(coordinator.shutdown_save()));
+  EXPECT_EQ(bytes(index), prior);
+  // A failed Refresh cannot remove known inconsistency.
+  write_bytes(normal / "logs" / "broken.md", "invalid");
+  EXPECT_TRUE(std::holds_alternative<storage::CoordinatorError>(coordinator.refresh_all()));
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+  EXPECT_FALSE(owned_catalog.unpersisted());
+  fs::remove(normal / "logs" / "broken.md");
+  ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+  EXPECT_TRUE(owned_catalog.find_record(log.id));
+  EXPECT_TRUE(owned_catalog.unpersisted());
+  EXPECT_EQ(bytes(index), prior);
+}
+
+TEST_F(NormalRepositoryCallbacksTest, ExceptionAfterWriterPublicationReportsUncertainty) {
+  ScopedRepositoryHooks hooks;
+  storage::internal::repository_test_hooks.write = [](const fs::path& path, std::string_view value, bool)
+      -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
+    auto result = storage::create_file_atomic(path, value);
+    if (std::holds_alternative<storage::StorageError>(result)) return result;
+    throw std::runtime_error("writer exception after publication");
+  };
+  const auto log = log_snapshot();
+  const auto result = repository.create_log(log, coordinator.log_creation_callback());
+  expect_code(result, storage::StorageErrorCode::IoError);
+  EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
+            storage::MutationFailureStage::AuthoritativeStateMayHaveChanged);
+  EXPECT_NE(std::get<storage::RepositoryMutationError>(result).cause.message.find("writer exception after publication"), std::string::npos);
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+  EXPECT_TRUE(std::holds_alternative<core::Log::Snapshot>(repository.load_log(log.id)));
+}
+
+TEST_F(NormalRepositoryCallbacksTest, FailureNotificationPreservesOriginalErrorEvenIfItThrows) {
+  ScopedRepositoryHooks hooks;
+  storage::internal::repository_test_hooks.before_projection = [] {
+    throw std::runtime_error("projection exception");
+  };
+  int calls = 0;
+  bool failure_seen = false;
+  const storage::MutationCallback<storage::LogMetadata> callback =
+      [&](const storage::MutationNotification<storage::LogMetadata>& notification)
+          -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
+    ++calls;
+    const auto& error = std::get<std::reference_wrapper<const storage::RepositoryMutationError>>(notification).get();
+    failure_seen = true;
+    EXPECT_EQ(error.stage, storage::MutationFailureStage::CatalogSynchronizationFailed);
+    auto handled = coordinator.log_creation_callback()(notification);
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(handled));
+    throw std::runtime_error("notification exception");
+  };
+  const auto result = repository.create_log(log_snapshot(), callback);
+  expect_code(result, storage::StorageErrorCode::PostPersistFailure);
+  EXPECT_EQ(calls, 1);
+  EXPECT_TRUE(failure_seen);
+  const auto& error = std::get<storage::RepositoryMutationError>(result);
+  EXPECT_NE(error.cause.message.find("projection exception"), std::string::npos);
+  EXPECT_EQ(error.cause.message.find("notification exception"), std::string::npos);
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+}
+
+TEST_F(NormalRepositoryCallbacksTest, FailureNotificationReturnErrorCannotReplacePersistenceError) {
+  ScopedRepositoryHooks hooks;
+  storage::internal::repository_test_hooks.write = [](const fs::path& path, std::string_view, bool)
+      -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
+    return storage::StorageError{storage::StorageErrorCode::IoError, path,
+        "original metadata write error", std::make_error_code(std::errc::permission_denied)};
+  };
+  int calls = 0;
+  const storage::MutationCallback<storage::DirectoryMetadata> callback =
+      [&](const storage::MutationNotification<storage::DirectoryMetadata>& notification)
+          -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
+    ++calls;
+    const auto& error = std::get<std::reference_wrapper<const storage::RepositoryMutationError>>(notification).get();
+    EXPECT_EQ(error.stage, storage::MutationFailureStage::AuthoritativeStateMayHaveChanged);
+    (void)coordinator.directory_creation_callback()(notification);
+    return storage::StorageError{storage::StorageErrorCode::InvalidMetadata, {},
+                                 "notification failure", {}};
+  };
+  const auto dir = memo_directory();
+  const auto result = repository.create_directory(dir.kind, dir, callback);
+  expect_code(result, storage::StorageErrorCode::IoError);
+  const auto& error = std::get<storage::RepositoryMutationError>(result).cause;
+  EXPECT_EQ(calls, 1);
+  EXPECT_EQ(error.message, "original metadata write error");
+  EXPECT_EQ(error.system_error, std::errc::permission_denied);
+  EXPECT_EQ(error.path, normal / "memos" / dir.id.to_string() / ".folio-dir.toml");
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+  EXPECT_FALSE(owned_catalog.unpersisted());
+}
+
+TEST_F(NormalRepositoryCallbacksTest, CatalogCallbackFailureAutomaticallyMarksInconsistentWithoutRecursion) {
+  const auto log = log_snapshot();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.insert_record(
+      storage::metadata_from(log, fs::path{"logs"} / "stale.md"))));
+  owned_catalog.mark_persisted();
+  int metadata_calls = 0;
+  int failure_calls = 0;
+  const storage::MutationCallback<storage::LogMetadata> callback =
+      [&](const storage::MutationNotification<storage::LogMetadata>& notification) {
+    if (std::holds_alternative<std::reference_wrapper<const storage::LogMetadata>>(notification))
+      ++metadata_calls;
+    else
+      ++failure_calls;
+    return coordinator.log_creation_callback()(notification);
+  };
+  const auto result = repository.create_log(log, callback);
+  expect_code(result, storage::StorageErrorCode::PostPersistFailure);
+  EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
+            storage::MutationFailureStage::CatalogSynchronizationFailed);
+  EXPECT_EQ(metadata_calls, 1);
+  EXPECT_EQ(failure_calls, 0);
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+  EXPECT_FALSE(owned_catalog.unpersisted());
+  // A later successful operation must not certify the rest of the Catalog.
+  const auto todo = todo_snapshot();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_todo(
+      todo, coordinator.todo_creation_callback())));
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+  EXPECT_TRUE(owned_catalog.unpersisted());
+  EXPECT_TRUE(std::holds_alternative<storage::CoordinatorError>(coordinator.shutdown_save()));
+}
+
+TEST_F(NormalRepositoryCallbacksTest, IncompleteDirectoryFolderIsReportedWithoutClaimingPublication) {
+  ScopedRepositoryHooks hooks;
+  storage::internal::repository_test_hooks.write = [](const fs::path& path, std::string_view, bool)
+      -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
+    return storage::StorageError{storage::StorageErrorCode::IoError, path,
+                                "metadata write denied", std::make_error_code(std::errc::permission_denied)};
+  };
+  const auto dir = memo_directory();
+  const auto result = repository.create_directory(dir.kind, dir, coordinator.directory_creation_callback());
+  expect_code(result, storage::StorageErrorCode::IoError);
+  const auto& error = std::get<storage::RepositoryMutationError>(result).cause;
+  EXPECT_FALSE(error.replacement_completed);
+  EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
+            storage::MutationFailureStage::AuthoritativeStateMayHaveChanged);
+  EXPECT_EQ(error.message, "metadata write denied");
+  EXPECT_EQ(error.system_error, std::errc::permission_denied);
+  EXPECT_TRUE(fs::is_directory(normal / "memos" / dir.id.to_string()));
+  EXPECT_FALSE(owned_catalog.find_directory(dir.id));
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+  EXPECT_TRUE(std::holds_alternative<storage::CoordinatorError>(coordinator.refresh_all()));
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+}
+
+#ifndef _WIN32
+thread_local int sync_calls = 0;
+thread_local int failing_sync = 3;
+bool injected_sync(int descriptor) {
+  if (++sync_calls == failing_sync) { errno = EIO; return false; }
+  return ::fsync(descriptor) == 0;
+}
+auto injected_write(const fs::path& path, std::string_view value, bool create_only)
+    -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
+  sync_calls = 0;
+  return storage::internal::write_file_atomic(path, value, create_only, injected_sync);
+}
+
+TEST_F(NormalRepositoryCallbacksTest, AtomicPublicationFailureIsClassifiedForRecordCreationAndUpdate) {
+  for (const bool update : {false, true}) {
+    ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
+    auto log = log_snapshot();
+    if (update) {
+      // The failed create iteration already published this Entry.
+      ASSERT_TRUE(owned_catalog.find_record(log.id));
+      log.title = "Published update";
+    }
+    ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.shutdown_save()));
+    const auto old_index = bytes(index);
+    ScopedRepositoryHooks hooks;
+    failing_sync = 3;
+    storage::internal::repository_test_hooks.write = injected_write;
+    const auto result = update
+        ? repository.update_log(log, std::nullopt, coordinator.log_update_callback())
+        : repository.create_log(log, coordinator.log_creation_callback());
+    expect_code(result, storage::StorageErrorCode::DurabilityFailure);
+    const auto& error = std::get<storage::RepositoryMutationError>(result).cause;
+    EXPECT_TRUE(error.replacement_completed);
+    EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
+            storage::MutationFailureStage::AuthoritativeStateMayHaveChanged);
+    EXPECT_EQ(error.system_error, std::errc::io_error);
+    EXPECT_NE(error.message.find("Publication completed"), std::string::npos);
+    EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+    EXPECT_FALSE(owned_catalog.unpersisted());
+    EXPECT_TRUE(std::holds_alternative<storage::CoordinatorError>(coordinator.shutdown_save()));
+    EXPECT_EQ(bytes(index), old_index);
+    EXPECT_EQ(std::get<core::Log::Snapshot>(repository.load_log(log.id)).title, log.title);
+  }
+}
+
+TEST_F(NormalRepositoryCallbacksTest, TemporaryLinkCleanupSyncFailureIsClassified) {
+  ScopedRepositoryHooks hooks;
+  failing_sync = 4;
+  storage::internal::repository_test_hooks.write = injected_write;
+  const auto result = repository.create_todo(todo_snapshot(), coordinator.todo_creation_callback());
+  expect_code(result, storage::StorageErrorCode::DurabilityFailure);
+  EXPECT_TRUE(std::get<storage::RepositoryMutationError>(result).cause.replacement_completed);
+  EXPECT_NE(std::get<storage::RepositoryMutationError>(result).cause.message.find("temporary link removal"), std::string::npos);
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+}
+
+TEST_F(NormalRepositoryCallbacksTest, MoveDestinationPublicationFailureKeepsSourceAndIsClassified) {
+  const auto dir = memo_directory();
+  const auto memo = memo_snapshot();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_directory(dir.kind, dir, coordinator.directory_creation_callback())));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(memo, coordinator.memo_creation_callback())));
+  const auto old_path = std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).relative_path;
+  ScopedRepositoryHooks hooks;
+  failing_sync = 3;
+  storage::internal::repository_test_hooks.write = injected_write;
+  const auto result = repository.move_memo(memo.id, dir.id, modified(), coordinator.memo_update_callback());
+  expect_code(result, storage::StorageErrorCode::DurabilityFailure);
+  EXPECT_TRUE(std::get<storage::RepositoryMutationError>(result).cause.replacement_completed);
+  EXPECT_TRUE(fs::exists(normal / old_path));
+  EXPECT_TRUE(fs::exists(normal / "memos" / dir.id.to_string() / old_path.filename()));
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).relative_path, old_path);
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+}
+
+TEST_F(NormalRepositoryCallbacksTest, StagingSyncFailureDoesNotInvalidateCatalog) {
+  ScopedRepositoryHooks hooks;
+  failing_sync = 1;
+  storage::internal::repository_test_hooks.write = injected_write;
+  const auto result = repository.create_log(log_snapshot(), coordinator.log_creation_callback());
+  expect_code(result, storage::StorageErrorCode::IoError);
+  EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
+            storage::MutationFailureStage::BeforeAuthoritativeChange);
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+  EXPECT_FALSE(owned_catalog.unpersisted());
+}
+
+TEST_F(NormalRepositoryCallbacksTest, DirectoryPublicationFailureIsClassifiedForCreateAndRename) {
+  const auto dir = memo_directory();
+  for (bool rename : {false, true}) {
+    ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
+    ScopedRepositoryHooks hooks;
+    failing_sync = 3;
+    storage::internal::repository_test_hooks.write = injected_write;
+    const auto result = rename
+        ? repository.rename_directory(dir.kind, dir.id, "Published rename", coordinator.directory_update_callback())
+        : repository.create_directory(dir.kind, dir, coordinator.directory_creation_callback());
+    expect_code(result, storage::StorageErrorCode::DurabilityFailure);
+    EXPECT_TRUE(std::get<storage::RepositoryMutationError>(result).cause.replacement_completed);
+    EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+    const auto loaded = repository.load_directory(dir.kind, dir.id);
+    ASSERT_TRUE(std::holds_alternative<core::Directory::Snapshot>(loaded));
+    EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).name, rename ? "Published rename" : dir.name);
+  }
+}
+
+TEST_F(NormalRepositoryCallbacksTest, PartialMovesPreserveErrorAndInvalidateCatalog) {
+  const auto dir = memo_directory();
+  const auto memo = memo_snapshot();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_directory(dir.kind, dir, coordinator.directory_creation_callback())));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(memo, coordinator.memo_creation_callback())));
+  ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.shutdown_save()));
+  const auto old_path = std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).relative_path;
+  ScopedRepositoryHooks hooks;
+  storage::internal::repository_test_hooks.remove_source = [](const fs::path&, std::error_code& ec) {
+    ec = std::make_error_code(std::errc::permission_denied); return false;
+  };
+  const auto result = repository.move_memo(memo.id, dir.id, modified(), coordinator.memo_update_callback());
+  expect_code(result, storage::StorageErrorCode::IoError);
+  const auto& error = std::get<storage::RepositoryMutationError>(result).cause;
+  EXPECT_TRUE(error.replacement_completed);
+  EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
+            storage::MutationFailureStage::AuthoritativeStateMayHaveChanged);
+  EXPECT_EQ(error.system_error, std::errc::permission_denied);
+  EXPECT_EQ(error.path, normal / old_path);
+  EXPECT_TRUE(fs::exists(normal / old_path));
+  EXPECT_TRUE(fs::exists(normal / "memos" / dir.id.to_string() / old_path.filename()));
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+  EXPECT_FALSE(owned_catalog.unpersisted());
+  EXPECT_TRUE(std::holds_alternative<storage::CoordinatorError>(coordinator.refresh_all()));
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+}
+
+TEST_F(NormalRepositoryCallbacksTest, RemovedSourceSyncFailureCanBeReconciledExplicitly) {
+  const auto dir = todo_directory();
+  const auto todo = todo_snapshot();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_directory(dir.kind, dir, coordinator.directory_creation_callback())));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_todo(todo, coordinator.todo_creation_callback())));
+  const auto old_path = std::get<storage::TodoMetadata>(*owned_catalog.find_record(todo.id)).relative_path;
+  ScopedRepositoryHooks hooks;
+  storage::internal::repository_test_hooks.sync_source = [](int) { errno = EIO; return false; };
+  const auto result = repository.move_todo(todo.id, dir.id, modified(), coordinator.todo_update_callback());
+  expect_code(result, storage::StorageErrorCode::DurabilityFailure);
+  EXPECT_TRUE(std::get<storage::RepositoryMutationError>(result).cause.replacement_completed);
+  EXPECT_FALSE(fs::exists(normal / old_path));
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
+  ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+  EXPECT_EQ(std::get<storage::TodoMetadata>(*owned_catalog.find_record(todo.id)).directory_id, dir.id);
+  EXPECT_TRUE(owned_catalog.unpersisted());
+}
+#endif
 
 }  // namespace

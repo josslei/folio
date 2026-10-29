@@ -108,22 +108,29 @@ void write_bytes(const fs::path& path, const std::string& bytes) {
   ASSERT_FALSE(output.fail());
 }
 
-template <typename T>
-void expect_error(const ::folio::core::internal::Result<T, storage::StorageError>& result) {
-  EXPECT_TRUE(std::holds_alternative<storage::StorageError>(result));
+const storage::StorageError& diagnostic(const storage::StorageError& error) {
+  return error;
+}
+const storage::StorageError& diagnostic(const storage::RepositoryMutationError& error) {
+  return error.cause;
 }
 
-template <typename T>
-void expect_error_code(const ::folio::core::internal::Result<T, storage::StorageError>& result,
+template <typename T, typename Error>
+void expect_error(const ::folio::core::internal::Result<T, Error>& result) {
+  EXPECT_TRUE(std::holds_alternative<Error>(result));
+}
+
+template <typename T, typename Error>
+void expect_error_code(const ::folio::core::internal::Result<T, Error>& result,
                        storage::StorageErrorCode code) {
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(result));
-  EXPECT_EQ(std::get<storage::StorageError>(result).code, code);
+  ASSERT_TRUE(std::holds_alternative<Error>(result));
+  EXPECT_EQ(diagnostic(std::get<Error>(result)).code, code);
 }
 
-template <typename T>
-bool operation_succeeded(const ::folio::core::internal::Result<T, storage::StorageError>& result) {
+template <typename T, typename Error>
+bool operation_succeeded(const ::folio::core::internal::Result<T, Error>& result) {
   if (std::holds_alternative<T>(result)) return true;
-  const auto& error = std::get<storage::StorageError>(result);
+  const auto& error = diagnostic(std::get<Error>(result));
   ADD_FAILURE() << "StorageError code=" << static_cast<int>(error.code)
                 << " path=" << error.path << " message=" << error.message
                 << " system_error=" << error.system_error.message();
@@ -414,8 +421,8 @@ TEST_F(NormalRepositoryTest, SuppliedMemoPathValidatesDirectoryMetadata) {
             storage::StorageErrorCode::StaleLocator);
   memo.title = "Must not persist without Directory metadata";
   const auto failed_update = repository.update_memo(memo, relative);
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(failed_update));
-  EXPECT_NE(std::get<storage::StorageError>(failed_update).code,
+  ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(failed_update));
+  EXPECT_NE(std::get<storage::RepositoryMutationError>(failed_update).cause.code,
             storage::StorageErrorCode::StaleLocator);
   EXPECT_EQ(read_bytes(path), bytes_before_metadata_failure);
 }

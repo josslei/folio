@@ -31,18 +31,36 @@ struct NormalRepositoryScanResult {
   std::vector<ExcludedObject> diagnostics;
 };
 
-// Optional per-operation observers. Invoked synchronously after persistence (or
-// a successful no-op move), with metadata valid only during the call. An empty
-// callback skips metadata projection entirely. Callbacks must not re-enter the
-// same Repository or retain references. No callback is stored by Repository.
-// Projection/callback failure returns PostPersistFailure after saving. The
-// callback owner handles projection consistency; coordinator-wrapped updaters
-// automatically flag their own failures, while earlier errors need caller handling.
+// Mutation classification is independent of the underlying diagnostic. A failed
+// operation may have published data without establishing crash durability.
+enum class MutationFailureStage {
+  BeforeAuthoritativeChange,
+  AuthoritativeStateMayHaveChanged,
+  CatalogSynchronizationFailed
+};
+
+struct RepositoryMutationError {
+  MutationFailureStage stage;
+  StorageError cause;
+};
+
+// Borrowed payloads are valid only during synchronous invocation. Each operation
+// invokes a nonempty callback once: saved metadata or a classified failure.
+// Projection errors notify failure; callback errors are never notified recursively.
 template <class Metadata>
-using PersistedCallback = std::function<
-    ::folio::core::internal::Result<std::monostate, StorageError>(const Metadata&)>;
+using MutationNotification = std::variant<
+    std::reference_wrapper<const Metadata>,
+    std::reference_wrapper<const RepositoryMutationError>>;
+
+template <class Metadata>
+using MutationCallback = std::function<
+    ::folio::core::internal::Result<std::monostate, StorageError>(
+        const MutationNotification<Metadata>&)>;
 
 // Synchronous plaintext persistence. The root is supplied by the caller.
+// Managed operations must supply the matching Coordinator callback. Repository
+// stores no callback; an empty callback skips projection and consistency handling.
+// Callbacks must not retain borrowed payloads or re-enter this Repository.
 // Entry locators returned here are relative to normal_root. The caller must
 // exclude external filesystem mutation during an operation, as required by
 // the single-file atomic writer. Stored UUIDs are authoritative for entries;
@@ -53,12 +71,12 @@ class NormalRepository {
  public:
   explicit NormalRepository(std::filesystem::path normal_root);
 
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> create_log(const core::Log::Snapshot& snapshot,
-      const PersistedCallback<LogMetadata>& after_persist = {});
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> create_memo(const core::Memo::Snapshot& snapshot,
-      const PersistedCallback<MemoMetadata>& after_persist = {});
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> create_todo(const core::Todo::Snapshot& snapshot,
-      const PersistedCallback<TodoMetadata>& after_persist = {});
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, RepositoryMutationError> create_log(const core::Log::Snapshot& snapshot,
+      const MutationCallback<LogMetadata>& on_mutation = {});
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, RepositoryMutationError> create_memo(const core::Memo::Snapshot& snapshot,
+      const MutationCallback<MemoMetadata>& on_mutation = {});
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, RepositoryMutationError> create_todo(const core::Todo::Snapshot& snapshot,
+      const MutationCallback<TodoMetadata>& on_mutation = {});
 
   // A supplied locator is read directly, without discovery or fallback.
   // It must still contain the requested stored UUID.
@@ -72,36 +90,36 @@ class NormalRepository {
       const core::Id& id,
       std::optional<std::filesystem::path> relative_path = std::nullopt) const;
 
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> update_log(
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, RepositoryMutationError> update_log(
       const core::Log::Snapshot& snapshot,
       std::optional<std::filesystem::path> relative_path = std::nullopt,
-      const PersistedCallback<LogMetadata>& after_persist = {});
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> update_memo(
+      const MutationCallback<LogMetadata>& on_mutation = {});
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, RepositoryMutationError> update_memo(
       const core::Memo::Snapshot& snapshot,
       std::optional<std::filesystem::path> relative_path = std::nullopt,
-      const PersistedCallback<MemoMetadata>& after_persist = {});
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> update_todo(
+      const MutationCallback<MemoMetadata>& on_mutation = {});
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, RepositoryMutationError> update_todo(
       const core::Todo::Snapshot& snapshot,
       std::optional<std::filesystem::path> relative_path = std::nullopt,
-      const PersistedCallback<TodoMetadata>& after_persist = {});
+      const MutationCallback<TodoMetadata>& on_mutation = {});
 
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> create_directory(
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, RepositoryMutationError> create_directory(
       DirectoryKind kind, const core::Directory::Snapshot& snapshot,
-      const PersistedCallback<DirectoryMetadata>& after_persist = {});
+      const MutationCallback<DirectoryMetadata>& on_mutation = {});
   [[nodiscard]] ::folio::core::internal::Result<core::Directory::Snapshot, StorageError> load_directory(
       DirectoryKind kind, const core::Id& id) const;
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> rename_directory(
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, RepositoryMutationError> rename_directory(
       DirectoryKind kind, const core::Id& id, std::string name,
-      const PersistedCallback<DirectoryMetadata>& after_persist = {});
+      const MutationCallback<DirectoryMetadata>& on_mutation = {});
 
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> move_memo(
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, RepositoryMutationError> move_memo(
       const core::Id& id, std::optional<core::Id> directory_id,
       core::TimestampContext modified,
-      const PersistedCallback<MemoMetadata>& after_persist = {});
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> move_todo(
+      const MutationCallback<MemoMetadata>& on_mutation = {});
+  [[nodiscard]] ::folio::core::internal::Result<std::monostate, RepositoryMutationError> move_todo(
       const core::Id& id, std::optional<core::Id> directory_id,
       core::TimestampContext modified,
-      const PersistedCallback<TodoMetadata>& after_persist = {});
+      const MutationCallback<TodoMetadata>& on_mutation = {});
 
   [[nodiscard]] ::folio::core::internal::Result<std::filesystem::path, StorageError> locate_record(
       RecordType type, const core::Id& id) const;

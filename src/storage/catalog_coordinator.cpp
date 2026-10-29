@@ -87,35 +87,35 @@ struct Locations { fs::path state_root; fs::path parent; fs::path file; };
 CatalogCoordinator::CatalogCoordinator(StoragePaths paths, MetadataCatalog& catalog)
     : paths_(std::move(paths)),
       catalog_(catalog),
-      log_creation_callback_(wrap_catalog_update(
+      log_creation_callback_(wrap_catalog_update<LogMetadata>(
           [this](const LogMetadata& metadata) {
             return catalog_.insert_record(metadata);
           })),
-      log_update_callback_(wrap_catalog_update(
+      log_update_callback_(wrap_catalog_update<LogMetadata>(
           [this](const LogMetadata& metadata) {
             return catalog_.update_record(metadata);
           })),
-      memo_creation_callback_(wrap_catalog_update(
+      memo_creation_callback_(wrap_catalog_update<MemoMetadata>(
           [this](const MemoMetadata& metadata) {
             return catalog_.insert_record(metadata);
           })),
-      memo_update_callback_(wrap_catalog_update(
+      memo_update_callback_(wrap_catalog_update<MemoMetadata>(
           [this](const MemoMetadata& metadata) {
             return catalog_.update_record(metadata);
           })),
-      todo_creation_callback_(wrap_catalog_update(
+      todo_creation_callback_(wrap_catalog_update<TodoMetadata>(
           [this](const TodoMetadata& metadata) {
             return catalog_.insert_record(metadata);
           })),
-      todo_update_callback_(wrap_catalog_update(
+      todo_update_callback_(wrap_catalog_update<TodoMetadata>(
           [this](const TodoMetadata& metadata) {
             return catalog_.update_record(metadata);
           })),
-      directory_creation_callback_(wrap_catalog_update(
+      directory_creation_callback_(wrap_catalog_update<DirectoryMetadata>(
           [this](const DirectoryMetadata& metadata) {
             return catalog_.insert_directory(metadata);
           })),
-      directory_update_callback_(wrap_catalog_update(
+      directory_update_callback_(wrap_catalog_update<DirectoryMetadata>(
           [this](const DirectoryMetadata& metadata) {
             return catalog_.update_directory(metadata);
           })) {}
