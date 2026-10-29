@@ -47,7 +47,7 @@ class IndexResourceLimitsTest : public testing::Test {
   fs::path root;
   fs::path normal() const { return root / "normal"; }
   fs::path state() const { return root / "state"; }
-  fs::path file() const { return state() / "index" / "normal.msgpack"; }
+  fs::path file() const { return root / "cache" / "index" / "normal.msgpack"; }
   storage::StoragePaths paths() const {
     return {normal(), root / "vault", {root / "config", root / "data", state(), root / "cache", std::nullopt}};
   }
@@ -122,7 +122,7 @@ TEST_F(IndexResourceLimitsTest, OversizedCacheFallsBackToEmptyNormalStorage) {
   ASSERT_NO_FATAL_FAILURE(expect_oversized_fallback(0));
   EXPECT_FALSE(fs::exists(normal()));
   EXPECT_FALSE(fs::exists(root / "vault"));
-  EXPECT_FALSE(fs::exists(root / "cache"));
+  EXPECT_FALSE(fs::exists(state()));
 }
 
 TEST_F(IndexResourceLimitsTest, OversizedCacheFallsBackToNonemptyNormalStorage) {
@@ -137,7 +137,7 @@ TEST_F(IndexResourceLimitsTest, OversizedCacheFallsBackToNonemptyNormalStorage) 
   ASSERT_NO_FATAL_FAILURE(write_oversized_cache());
   ASSERT_NO_FATAL_FAILURE(expect_oversized_fallback(1));
   EXPECT_FALSE(fs::exists(root / "vault"));
-  EXPECT_FALSE(fs::exists(root / "cache"));
+  EXPECT_FALSE(fs::exists(state()));
 }
 
 }  // namespace

@@ -44,13 +44,13 @@ CoordinatorError binary_error(BinaryReadError source) {
   return {code, source.path, source.message, std::nullopt, std::nullopt, std::move(source)};
 }
 
-struct Locations { fs::path state_root; fs::path parent; fs::path file; };
+struct Locations { fs::path cache_root; fs::path parent; fs::path file; };
 ::folio::core::internal::Result<Locations, CoordinatorError> locations(const StoragePaths& paths) {
   auto checked = validate_storage_paths(paths);
   if (auto* problem = std::get_if<StorageError>(&checked)) return storage_error(*problem);
   std::error_code ec;
-  const auto root = fs::weakly_canonical(paths.application.state, ec);
-  if (ec) return io_error(paths.application.state, "Could not resolve state root", ec);
+  const auto root = fs::weakly_canonical(paths.application.cache, ec);
+  if (ec) return io_error(paths.application.cache, "Could not resolve cache root", ec);
   const auto relative = index_relative_path();
   return Locations{root, root / relative.parent_path(), root / relative};
 }
@@ -141,7 +141,7 @@ CatalogCoordinator::startup_load() {
     auto resolved = locations(paths_);
     if (auto* problem = std::get_if<CoordinatorError>(&resolved)) return *problem;
     const auto& path = std::get<Locations>(resolved);
-    for (const auto& directory : {path.state_root, path.parent}) {
+    for (const auto& directory : {path.cache_root, path.parent}) {
       auto ready = directory_ready(directory);
       if (auto* problem = std::get_if<CoordinatorError>(&ready)) return *problem;
       if (!std::get<bool>(ready))
@@ -218,11 +218,11 @@ CatalogCoordinator::refresh_all() {
   if (!catalog_.unpersisted()) return SaveOutcome::SkippedPersisted;
   auto encoded = index_codec::encode_index(catalog_);
   if (auto* problem = std::get_if<index_codec::IndexCodecError>(&encoded))
-    return codec_error(paths_.application.state / index_relative_path(), *problem, false);
+    return codec_error(paths_.application.cache / index_relative_path(), *problem, false);
   auto resolved = locations(paths_);
   if (auto* problem = std::get_if<CoordinatorError>(&resolved)) return *problem;
   const auto& path = std::get<Locations>(resolved);
-  for (const auto& directory : {path.state_root, path.parent}) {
+  for (const auto& directory : {path.cache_root, path.parent}) {
     auto found = directory_ready(directory);
     if (auto* problem = std::get_if<CoordinatorError>(&found)) return *problem;
   }
@@ -231,7 +231,7 @@ CatalogCoordinator::refresh_all() {
   std::error_code ec;
   fs::create_directories(path.parent, ec);
   if (ec) return io_error(path.parent, "Could not create Index parent", ec);
-  for (const auto& directory : {path.state_root, path.parent}) {
+  for (const auto& directory : {path.cache_root, path.parent}) {
     auto found = directory_ready(directory);
     if (auto* problem = std::get_if<CoordinatorError>(&found)) return *problem;
     if (!std::get<bool>(found))

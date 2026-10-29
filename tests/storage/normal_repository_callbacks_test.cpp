@@ -108,7 +108,7 @@ class NormalRepositoryCallbacksTest : public testing::Test {
   fs::path vault = root.path / "vault";
   fs::path state = root.path / "state";
   fs::path cache = root.path / "cache";
-  fs::path index = state / "index" / "normal.msgpack";
+  fs::path index = cache / "index" / "normal.msgpack";
   storage::NormalRepository repository{normal};
   storage::MetadataCatalog owned_catalog;
   storage::CatalogCoordinator coordinator{
@@ -240,7 +240,7 @@ TEST_F(NormalRepositoryCallbacksTest, StoredCallbackReferencesSurviveRefreshWith
   EXPECT_EQ(todo_update, &other.todo_update_callback());
   EXPECT_EQ(directory_create, &other.directory_creation_callback());
   EXPECT_EQ(directory_update, &other.directory_update_callback());
-  EXPECT_FALSE(fs::exists(other_state / "index" / "normal.msgpack"));
+  EXPECT_FALSE(fs::exists(other_cache / "index" / "normal.msgpack"));
 }
 
 TEST_F(NormalRepositoryCallbacksTest, MovesAndDirectoryRenameKeepMembershipCurrent) {

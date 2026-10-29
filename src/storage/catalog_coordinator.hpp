@@ -53,6 +53,8 @@ class CatalogCoordinator {
 
   // One-time startup policy: load the Index, rebuilding from Normal files only
   // when the cache is missing, corrupt, unsupported, or over a resource limit.
+  // Uses application.cache/index/normal.msgpack; former State indexes are ignored
+  // and are neither migrated nor removed. Construction performs no Index I/O.
   [[nodiscard]] ::folio::core::internal::Result<InitializationOutcome, CoordinatorError>
   startup_load();
   // Explicit full replacement from authoritative Normal files, not a targeted

@@ -94,12 +94,12 @@ Status distinguishes implemented contracts from agreed future direction. This re
 
 ## D11 — Normal Index in Cache
 
-- **Status:** Decided/Planned; current code uses State.
+- **Status:** Implemented (Phase 3.4.2); platform defaults remain deferred.
 - **Decision:** Relocate rebuildable Normal Index to Cache; keep local-only, outside Git roots.
 - **Motivation:** Index loss is recoverable; durable recovery data is not.
 - **Alternatives considered:** Retaining rebuildable cache in persistent State.
-- **Consequences:** Current state_root/index/normal.msgpack remains implementation baseline until relocation.
-- **Open/Deferred:** Exact Cache path and old-cache handling; test missing/relocated cache.
+- **Consequences:** Current location is `<application.cache>/index/normal.msgpack`. Former State indexes are not read, migrated, or deleted. Missing/unusable Cache triggers authoritative rebuilding, with persistence deferred until orderly shutdown.
+- **Open/Deferred:** OS-specific Cache defaults are deferred to configuration setup; callers currently supply effective paths.
 
 ## D12 — Durable Session Marker
 
