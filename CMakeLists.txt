@@ -65,10 +65,40 @@ set(FTXUI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(FTXUI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(thirdparty/ftxui EXCLUDE_FROM_ALL)
 
-add_executable(folio src/tui/main.cpp)
+set(CLI11_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(CLI11_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(CLI11_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(CLI11_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(thirdparty/cli11 EXCLUDE_FROM_ALL)
+
+# Phase 4.1a uses native desktop process and ownership APIs only.
+if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Windows|Darwin|Linux)$")
+  message(FATAL_ERROR "Folio Application process support requires macOS, Linux, or Windows")
+endif()
+
+# Process implementation remains private; public Application APIs follow later.
+add_library(folio_application STATIC
+  src/application/process.cpp
+  src/application/repository_ownership.cpp
+  src/application/backend.cpp
+)
+target_include_directories(folio_application PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_features(folio_application PRIVATE cxx_std_20)
+set_target_properties(folio_application PROPERTIES CXX_EXTENSIONS OFF)
+target_link_libraries(folio_application PRIVATE Folio::Core)
+if(UNIX)
+  find_package(Threads REQUIRED)
+  target_link_libraries(folio_application PRIVATE Threads::Threads)
+endif()
+
+add_executable(folio src/main.cpp src/tui/frontend.cpp)
+target_include_directories(folio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+if(MINGW)
+  target_link_options(folio PRIVATE -municode)
+endif()
 target_compile_features(folio PRIVATE cxx_std_20)
 set_target_properties(folio PROPERTIES CXX_EXTENSIONS OFF)
-target_link_libraries(folio PRIVATE Folio::Core ftxui::component)
+target_link_libraries(folio PRIVATE folio_application Folio::Core ftxui::component CLI11::CLI11)
 
 if(BUILD_TESTING)
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)

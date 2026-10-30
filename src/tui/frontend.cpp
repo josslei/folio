@@ -1,10 +1,11 @@
+#include "frontend.hpp"
 #include "folio/core/version.hpp"
 
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
 
-int main() {
+int folio::tui::run() {
   using namespace ftxui;
 
   auto screen = ScreenInteractive::Fullscreen();

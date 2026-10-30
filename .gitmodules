@@ -17,3 +17,6 @@
 	path = thirdparty/msgpack-cxx
 	url = https://github.com/msgpack/msgpack-c.git
 	branch = cpp_master
+[submodule "thirdparty/cli11"]
+	path = thirdparty/cli11
+	url = https://github.com/CLIUtils/CLI11.git

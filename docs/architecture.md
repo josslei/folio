@@ -48,9 +48,9 @@ Logs have no user Directory. Memos/Todos support one level, optional membership 
 
 ## Current component and build boundary — Implemented
 
-[Root CMake](../CMakeLists.txt) builds one static `folio_core` (`Folio::Core`) containing domain implementations and private Storage. `folio` links it and FTXUI. `include/` is PUBLIC; `src/` PRIVATE. Tests explicitly receive `src/`; consumers do not. Dependencies are pinned submodules: FTXUI, GoogleTest/GoogleMock, stduuid, libsodium, toml++, and msgpack-cxx. No database or JSON serialization is used.
+[Root CMake](../CMakeLists.txt) builds one static `folio_core` (`Folio::Core`) containing domain implementations and private Storage. `folio` links the private `folio_application` process foundation, `folio_core`, and FTXUI. `include/` is PUBLIC; `src/` PRIVATE. Tests explicitly receive `src/`; consumers do not. Dependencies are pinned submodules: FTXUI, GoogleTest/GoogleMock, stduuid, libsodium, toml++, msgpack-cxx, and CLI11. No database or JSON serialization is used.
 
-Namespaces are `folio::core`, `folio::core::storage`, `folio::core::storage::codec`, and Storage `internal` atomic helpers. The generic internal Result<T, E> is a variant, not a public Application contract.
+Private process code uses `folio::application::internal`. Domain/Storage namespaces are `folio::core`, `folio::core::storage`, `folio::core::storage::codec`, and Storage `internal` atomic helpers. The generic internal Result<T, E> is a variant, not a public Application contract.
 
 | Component | Responsibility / evidence |
 | --- | --- |
@@ -60,7 +60,7 @@ Namespaces are `folio::core`, `folio::core::storage`, `folio::core::storage::cod
 | [IndexCodec](../src/storage/index_codec.hpp) | Pure deterministic MessagePack encode/decode; temporary validated Catalog, no file I/O |
 | [Filesystem](../src/storage/filesystem.hpp) | Binary reads, safe paths, filenames, atomic create/replace |
 
-There is no BinaryIO, IndexStore, IndexBuilder, IndexRefresh, Application Service, daemon, or IPC implementation. The [executable](../src/tui/main.cpp) presents a welcome screen with q to exit; it does not initialize Storage or save an Index. The historical `binary_io_test.cpp` filename does not denote a production BinaryIO module.
+There is no BinaryIO, IndexStore, IndexBuilder, IndexRefresh, Application Service, daemon service loop, or IPC implementation. Private process launching and OS ownership are implemented under `src/application/`. The [executable](../src/main.cpp) dispatches default welcome TUI or internal Backend bootstrap; neither initializes Catalog lifecycle or saves an Index in Phase 4.1a. The historical `binary_io_test.cpp` filename does not denote a production BinaryIO module.
 
 ## Catalog-centric flows — Implemented internal capabilities
 
@@ -94,7 +94,7 @@ Snapshot-to-metadata coverage guards in [metadata tests](../tests/storage/metada
 
 **Decided/Planned:** full scans are reserved for startup fallback, previous Session Marker recovery, and explicit Full Refresh. Explicit targeted discovery and standalone creation discovery remain deliberate API choices. Navigation may enumerate/count immediate formal objects without parsing them; equal counts are a practical indicator, never proof. No watchers, hashes, or periodic verification are required for uncommon external edits.
 
-**Decided/Planned:** Application owns Catalog, Coordinator, and Repositories, presents public CLI/TUI APIs, and runs in one per-user Backend. Storage stays private. Normal Index Cache relocation is implemented. Durable Session Marker is implemented; OS locking is not. Follow the [roadmap](roadmap.md), not speculative APIs.
+**Decided/Planned:** Application owns Catalog, Coordinator, and Repositories, presents public CLI/TUI APIs, and runs in one per-user Backend. Storage stays private. Normal Index Cache relocation is implemented. Durable Session Marker and private process ownership are implemented; Backend connections/lifecycle integration are not. Follow the [roadmap](roadmap.md), not speculative APIs.
 ## Effective storage paths — Implemented
 
 Internal `StoragePaths` separates configurable `normal_root` and `vault_root` from an `ApplicationPaths application` value containing `config`, `data`, `state`, `cache`, and optional `runtime`. Internal callers supply these effective absolute paths; tests inject temporary locations. Platform defaults and configuration-file setup are deferred until application configuration is developed. No environment or home-directory lookup is performed.
@@ -117,7 +117,7 @@ previous-session recovery from a rejected Cache through
 The future Backend must acquire an exclusive OS lock **before** `startup_load()`,
 accept work only after success, stop admissions and finish active work, then call
 `finish_session()` with explicit error handling/retry before releasing the lock.
-No lock, Backend, or Application wiring is implemented here.
+The private OS ownership utility is implemented in Phase 4.1a; its integration with Catalog startup/finalization and Backend connections remains Phase 4.1b.
 
 `finish_session()` calls retryable `shutdown_save()` when necessary, checks that
 a regular persisted Index exists, synchronizes the Index and its parent links,

@@ -59,3 +59,33 @@ if(FOLIO_BUILD_RESOURCE_LIMIT_TESTS)
     PROPERTIES LABELS resource_limits
   )
 endif()
+
+# Private process fixtures: no production test switches or application IPC.
+add_executable(folio_process_child application/process_child.cpp)
+target_include_directories(folio_process_child PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_compile_features(folio_process_child PRIVATE cxx_std_20)
+set_target_properties(folio_process_child PROPERTIES CXX_EXTENSIONS OFF)
+target_link_libraries(folio_process_child PRIVATE folio_application Folio::Core)
+if(MINGW)
+  target_link_options(folio_process_child PRIVATE -municode)
+endif()
+
+add_executable(folio_application_tests application/process_test.cpp)
+target_include_directories(folio_application_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_compile_features(folio_application_tests PRIVATE cxx_std_20)
+set_target_properties(folio_application_tests PROPERTIES CXX_EXTENSIONS OFF)
+target_link_libraries(folio_application_tests PRIVATE folio_application Folio::Core GTest::gtest_main)
+target_compile_definitions(folio_application_tests PRIVATE
+  "FOLIO_PROCESS_CHILD=\"$<TARGET_FILE:folio_process_child>\"")
+add_dependencies(folio_application_tests folio_process_child folio)
+gtest_discover_tests(folio_application_tests DISCOVERY_TIMEOUT 30 PROPERTIES TIMEOUT 30)
+
+# Exercise the real executable's CLI11 parsing without opening an interactive TUI.
+add_test(NAME Cli.Help COMMAND folio --help)
+set_tests_properties(Cli.Help PROPERTIES PASS_REGULAR_EXPRESSION "Print this help message and exit")
+add_test(NAME Cli.RejectsUnknownCommand COMMAND folio unknown-command)
+set_tests_properties(Cli.RejectsUnknownCommand PROPERTIES WILL_FAIL TRUE)
+# The incomplete Backend bootstrap reports unavailable with a nonzero exit.
+add_test(NAME Cli.BackendMode COMMAND folio --backend-process)
+add_test(NAME Cli.BackendIgnoresOtherArguments COMMAND folio --help unknown --backend-process --invalid)
+set_tests_properties(Cli.BackendMode Cli.BackendIgnoresOtherArguments PROPERTIES WILL_FAIL TRUE)
