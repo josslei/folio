@@ -18,7 +18,7 @@ Status labels follow [architecture](architecture.md). Stage numbers are planning
 
 ## Completed foundation
 
-Implemented: independent domain models and Snapshots, plaintext codecs, atomic filesystem utilities, NormalRepository, typed Catalog/reverse membership, MessagePack Index, Coordinator startup fallback/full Refresh/shutdown save, and optional Repository synchronization hooks. Post-audit corrections enforce unified UUID identity, classified post-publication failure notification, and efficient managed known-locator/creation operations. Evidence: [Storage sources](../src/storage/) and [tests](../tests/storage/).
+Implemented: independent domain models and Snapshots, plaintext codecs, atomic filesystem utilities, NormalRepository, typed Catalog/reverse membership, MessagePack Index, Coordinator startup fallback/full Refresh/shutdown save, and optional Repository synchronization hooks. Post-audit corrections enforce unified UUID identity, classified post-publication failure notification, and efficient managed known-locator/creation operations. Evidence: [Storage sources](../lib/src/storage/) and [tests](../tests/storage/).
 
 Not completed by those milestones: Application integration, navigation count checks, configuration/platform defaults, daemon service/IPC, Vault, Trash, Journal, and Git. Marker-based unclean-session detection is implemented internally. The welcome TUI does not wire Storage lifecycle.
 
@@ -81,3 +81,8 @@ Resolve concurrent-operation/Recovery coordination, conflict rules, key availabi
 Expand macOS/Linux/Windows filesystem, process, and IPC verification; complete crash/fault, migration/compatibility, performance/resource-limit, and security coverage; and provide packaging/install and user/developer documentation.
 
 Resolve supported platforms/versions and release/migration policy first. Completion requires documented reproducible builds and validated failure behavior. Fundamental data safety remains a gate at every earlier stage, not deferred until release.
+
+Phase 4 status: 4.1a is complete; 4.1a.5 reorganizes physical files and targets
+without behavioral changes. The separately preserved 4.1b implementation awaits
+review/acceptance and restoration after the structural commit. Phase 4.2 is not
+started.

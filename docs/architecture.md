@@ -25,7 +25,7 @@ Entry
 
 These categories imply no C++ inheritance. All four independent classes are first-class Entries. Directory's distinct fields and layout justify specialized operations, but never a lower conceptual status. `RecordType` names only Log/Memo/Todo; `DirectoryKind` is Memo/Todo. Within a Normal Catalog all four share one UUID namespace. Normal/Vault are storage/privacy domains, not new identities; future transfers must preserve identity. Cross-domain enforcement is not implemented.
 
-[Public headers](../include/folio/core/) define:
+[Public headers](../lib/include/folio/core/) define:
 
 | Model/value | Existing contract |
 | --- | --- |
@@ -42,25 +42,25 @@ These categories imply no C++ inheritance. All four independent classes are firs
 
 Todo status is Pending/Completed and priority None/Low/Medium/High. Privacy is Normal/Protected/Hidden and has no ordinary post-creation setter. These values alone provide no encryption. NormalRepository accepts only Normal privacy; the default Protected Log therefore needs an explicit Normal choice for current plaintext persistence.
 
-Core validation is deliberately limited: restore validates enum values and applicable calendar dates; Directory validates kind, Todo validates due dates/status/priority and subtask indices, and Log validates Log dates. Core does not verify filesystem membership, timezone databases, or persistence consistency. Empty Todo title/notes are allowed; localized placeholders belong to Frontends. Do not infer uniform validation on all constructors/setters from restore validation. See [domain implementations](../src/core/).
+Core validation is deliberately limited: restore validates enum values and applicable calendar dates; Directory validates kind, Todo validates due dates/status/priority and subtask indices, and Log validates Log dates. Core does not verify filesystem membership, timezone databases, or persistence consistency. Empty Todo title/notes are allowed; localized placeholders belong to Frontends. Do not infer uniform validation on all constructors/setters from restore validation. See [domain implementations](../lib/src/core/).
 
 Logs have no user Directory. Memos/Todos support one level, optional membership on the Record, and no nested Directories. The Catalog derives reverse membership; Directory never duplicates it.
 
 ## Current component and build boundary — Implemented
 
-[Root CMake](../CMakeLists.txt) builds one static `folio_core` (`Folio::Core`) containing domain implementations and private Storage. `folio` links the private `folio_application` process foundation, `folio_core`, and FTXUI. `include/` is PUBLIC; `src/` PRIVATE. Tests explicitly receive `src/`; consumers do not. Dependencies are pinned submodules: FTXUI, GoogleTest/GoogleMock, stduuid, libsodium, toml++, msgpack-cxx, and CLI11. No database or JSON serialization is used.
+[Root CMake](../CMakeLists.txt) builds one static `folio_backend` (`folio_backend`) containing domain implementations and private Storage. `folio` links the private `folio_application` process foundation, `folio_backend`, and FTXUI. `include/` is PUBLIC; `src/` PRIVATE. Tests explicitly receive `src/`; consumers do not. Dependencies are pinned submodules: FTXUI, GoogleTest/GoogleMock, stduuid, libsodium, toml++, msgpack-cxx, and CLI11. No database or JSON serialization is used.
 
 Private process code uses `folio::application::internal`. Domain/Storage namespaces are `folio::core`, `folio::core::storage`, `folio::core::storage::codec`, and Storage `internal` atomic helpers. The generic internal Result<T, E> is a variant, not a public Application contract.
 
 | Component | Responsibility / evidence |
 | --- | --- |
-| [NormalRepository](../src/storage/normal_repository.hpp) | Authoritative Normal Entry operations; targeted identity verification, explicit UUID discovery, full scan |
-| [MetadataCatalog](../src/storage/metadata_catalog.hpp) | Four typed maps, derived UUID membership sets, non-recursive listing and Record metadata search; no filesystem I/O |
-| [CatalogCoordinator](../src/storage/catalog_coordinator.hpp) | Borrows owner-supplied Catalog; startup, full Refresh, Index shutdown persistence, stored synchronization callbacks and consistency status |
-| [IndexCodec](../src/storage/index_codec.hpp) | Pure deterministic MessagePack encode/decode; temporary validated Catalog, no file I/O |
-| [Filesystem](../src/storage/filesystem.hpp) | Binary reads, safe paths, filenames, atomic create/replace |
+| [NormalRepository](../lib/src/storage/normal_repository.hpp) | Authoritative Normal Entry operations; targeted identity verification, explicit UUID discovery, full scan |
+| [MetadataCatalog](../lib/src/storage/metadata_catalog.hpp) | Four typed maps, derived UUID membership sets, non-recursive listing and Record metadata search; no filesystem I/O |
+| [CatalogCoordinator](../lib/src/storage/catalog_coordinator.hpp) | Borrows owner-supplied Catalog; startup, full Refresh, Index shutdown persistence, stored synchronization callbacks and consistency status |
+| [IndexCodec](../lib/src/storage/index_codec.hpp) | Pure deterministic MessagePack encode/decode; temporary validated Catalog, no file I/O |
+| [Filesystem](../lib/src/storage/filesystem.hpp) | Binary reads, safe paths, filenames, atomic create/replace |
 
-There is no BinaryIO, IndexStore, IndexBuilder, IndexRefresh, Application Service, daemon service loop, or IPC implementation. Private process launching and OS ownership are implemented under `src/application/`. The [executable](../src/main.cpp) dispatches default welcome TUI or internal Backend bootstrap; neither initializes Catalog lifecycle or saves an Index in Phase 4.1a. The historical `binary_io_test.cpp` filename does not denote a production BinaryIO module.
+There is no BinaryIO, IndexStore, IndexBuilder, IndexRefresh, Application Service, daemon service loop, or IPC implementation. Private process launching and OS ownership are implemented under `lib/src/runtime/`. The [executable](../app/src/main.cpp) dispatches default welcome TUI or internal Backend bootstrap; neither initializes Catalog lifecycle or saves an Index in Phase 4.1a. The historical `binary_io_test.cpp` filename does not denote a production BinaryIO module.
 
 ## Catalog-centric flows — Implemented internal capabilities
 
@@ -156,3 +156,19 @@ weaker than the POSIX contract. Process-abandonment recovery remains supported.
 Windows/Linux execution and actual power-loss tests require platform validation.
 The Marker does not repair partially completed authoritative multi-file operations;
 scan conflicts remain errors for later Recovery design.
+
+## Phase 4.1a.5 target structure
+
+The single static `folio_backend` target owns public headers in `lib/include/`
+and private Core, Storage and runtime implementations in `lib/src/`. The `folio`
+executable owns `app/src/main.cpp` and TUI code and links that library. Its include
+paths contain `app/src/` and the library's public headers, never `lib/src/`.
+`folio/application/backend.hpp` exports only the existing internal-mode dispatch
+entry point and argument spelling; no Storage types are exposed. Tests explicitly
+receive `lib/src/` when testing internals. FTXUI and CLI11 belong to the executable.
+Build-target ownership does not alter the separate-process Backend architecture.
+
+Phase 4.1a is complete. Phase 4.1a.5 is the structure-only refactor. The unreviewed
+4.1b implementation is retained separately in a Git stash and is not included in
+this changeset. Its restoration and conflict resolution must preserve IPC behavior;
+Phase 4.2 has not started. No placeholder module directories are required.

@@ -1,6 +1,7 @@
 #pragma once
+#include <folio/application/backend.hpp>
 
-#include "application/process.hpp"
+#include "runtime/process.hpp"
 #include "storage/filesystem.hpp"
 
 namespace folio::application::internal {
@@ -8,7 +9,7 @@ namespace folio::application::internal {
 [[nodiscard]] core::internal::Result<LaunchedProcess, ProcessError>
 launch_backend();
 
-inline const std::filesystem::path backend_process_argument{"--backend-process"};
+
 // Configuration loading is deferred. Production dispatch reports unavailable
 // without resolving real user paths or initializing any Storage lifecycle.
 int run_backend();

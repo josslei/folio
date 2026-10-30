@@ -2,13 +2,13 @@
 
 ## Project Context & Structure
 
-Folio is a personal TUI application written in C++20, built with CMake and FTXUI, with GoogleTest, GoogleMock, and CTest for testing. Log, Memo, Todo, and Directory are its four first-class Entry types. Core provides in-memory domain models and shared types, while the same `folio_core` target contains a private Storage subsystem for codecs and Normal persistence. Subtasks belong to Todo. The TUI provides a welcome screen with `q` to exit.
+Folio is a personal TUI application written in C++20, built with CMake and FTXUI, with GoogleTest, GoogleMock, and CTest for testing. Log, Memo, Todo, and Directory are its four first-class Entry types. Core provides in-memory domain models and shared types, while the same `folio_backend` target contains a private Storage subsystem for codecs and Normal persistence. Subtasks belong to Todo. The TUI provides a welcome screen with `q` to exit.
 
-- `include/folio/core/`: public domain-model headers available to frontends.
-- `src/core/`: domain implementations and `src/core/internal/`: private domain helpers.
-- `src/storage/`: private persistence implementation, including codecs, filesystem operations, and the Normal Repository. Storage depends on Core models; Core models do not depend on Storage.
-- `src/main.cpp`: process-mode dispatch; `src/tui/`: terminal presentation.
-- `src/application/`: private process launch and Backend ownership foundation; public Application APIs are not implemented yet.
+- `lib/include/folio/core/`: public domain-model headers available to frontends.
+- `lib/src/core/`: domain implementations and `lib/src/core/internal/`: private domain helpers.
+- `lib/src/storage/`: private persistence implementation, including codecs, filesystem operations, and the Normal Repository. Storage depends on Core models; Core models do not depend on Storage.
+- `app/src/main.cpp`: process-mode dispatch; `app/src/tui/`: terminal presentation.
+- `lib/src/runtime/`: private process launch and Backend ownership foundation; public Application APIs are not implemented yet.
 - `tests/core/` and `tests/storage/`: domain-model and persistence tests, registered through `tests/CMakeLists.txt`.
 - `thirdparty/`: pinned dependency submodules.
 
@@ -22,11 +22,11 @@ Future direction is one configuration per OS user and one on-demand Backend with
 
 An Entry is an independently identifiable persistent Folio object: Log, Memo, Todo, or Directory. Use Entry to describe all four conceptually; terminology alignment must preserve existing program behavior and does not require every API to support all four types. Distinguish a type only when its fields, membership rules, or persistence layout require it; never use “Entry” to implicitly exclude Directory. Record is shorthand for Log, Memo, and Todo only. Use it for genuinely narrower APIs; do not introduce separate behavior for Records and Directories when their behavior is shared. Directory membership is a relationship between Entries, not a domain hierarchy. Keep independent classes without a common Entry base class. Directory has no parent ID: only Memo/Todo single-level organization is supported. Persisted Folio Entries are authoritative; the Catalog and binary Index are rebuildable projections.
 
-Keep dependency direction `folio -> folio_application -> folio_core`, with TUI also using public Core domain APIs. The Application process foundation is private; do not expose Storage headers as public APIs. Core must remain independent of FTXUI and all presentation frameworks, with APIs reusable by a future CLI or alternative frontend. Keep business logic, storage, encryption, and synchronization out of UI components. Prefer clear module boundaries and straightforward solutions; do not create speculative modules, interfaces, placeholder classes, or unnecessary abstractions.
+Keep dependency direction `folio -> folio_backend`, with TUI also using public Core domain APIs. The Application process foundation is private; do not expose Storage headers as public APIs. Core must remain independent of FTXUI and all presentation frameworks, with APIs reusable by a future CLI or alternative frontend. Keep business logic, storage, encryption, and synchronization out of UI components. Prefer clear module boundaries and straightforward solutions; do not create speculative modules, interfaces, placeholder classes, or unnecessary abstractions.
 
-Keep the Core library boundary explicit. Public domain declarations belong under `include/folio/core/`. Internal declarations belong alongside their implementations under `src/`, including Storage headers under `src/storage/`; do not expose implementation directories through `folio_core`'s public include paths or include internal headers from public headers. The TUI links `folio_core` for domain APIs and must not include or call Storage internals directly.
+Keep the Core library boundary explicit. Public domain declarations belong under `lib/include/folio/core/`. Internal declarations belong alongside their implementations under `lib/src/`, including Storage headers under `lib/src/storage/`; do not expose implementation directories through `folio_backend`'s public include paths or include internal headers from public headers. The TUI links `folio_backend` for domain APIs and must not include or call Storage internals directly.
 
-Use `folio::core` for domain models, `folio::core::storage` for persistence, `folio::core::storage::codec` for serialization, and `folio::core::storage::internal` for Atomic Write implementation/testing helpers. Keep one `folio_core` library target: Storage is an internal subsystem in that target, not a separate library. Keep `include/` PUBLIC and source implementation paths PRIVATE; expose implementation headers to tests only through explicit test-target include paths. Keep implementation-only dependencies PRIVATE where possible.
+Use `folio::core` for domain models, `folio::core::storage` for persistence, `folio::core::storage::codec` for serialization, and `folio::core::storage::internal` for Atomic Write implementation/testing helpers. Keep one `folio_backend` library target: Storage is an internal subsystem in that target, not a separate library. Keep `lib/include/` PUBLIC and source implementation paths PRIVATE; expose implementation headers to tests only through explicit test-target include paths. Keep implementation-only dependencies PRIVATE where possible.
 
 Call `folio::core::ensure_sodium_initialized()` before using libsodium in Core code. `Id::generate()` already calls this shared one-time helper.
 
@@ -78,3 +78,5 @@ Run `./build/folio` on Unix-like systems with a single-configuration build, `./b
 ## Git & Documentation
 
 Use concise imperative commit subjects; do not create commits unless requested. Preserve existing user changes and do not perform destructive Git operations without explicit authorization. Exclude generated build output from commits. Update README or relevant documentation when build instructions, architecture, or visible behavior materially change. Keep extensive implementation documentation out of this file. Pull requests should summarize changes and actual verification, with terminal output or screenshots where useful for TUI changes.
+
+Phase 4.1a.5 uses one static folio_backend target and the folio executable. The executable receives app/src and lib/include only; lib/src is private and explicitly available to internal tests. The public Backend dispatch header exposes no Storage types. Phase 4.1b is stashed separately pending review; preserve it when restoring after the structural commit.

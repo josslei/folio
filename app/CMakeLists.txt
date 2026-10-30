@@ -1,0 +1,10 @@
+add_executable(folio src/main.cpp src/tui/frontend.cpp)
+target_include_directories(folio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_features(folio PRIVATE cxx_std_20)
+set_target_properties(folio PROPERTIES CXX_EXTENSIONS OFF)
+target_link_libraries(folio PRIVATE folio_backend ftxui::component CLI11::CLI11)
+if(MINGW)
+  target_link_options(folio PRIVATE -municode)
+endif()
+# Preserve the existing executable location despite the new CMake subdirectory.
+set_target_properties(folio PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")

@@ -1,5 +1,5 @@
-#include "application/repository_ownership.hpp"
-#include "application/backend.hpp"
+#include "runtime/repository_ownership.hpp"
+#include "runtime/backend.hpp"
 #include "folio/core/types.hpp"
 
 #include <gtest/gtest.h>

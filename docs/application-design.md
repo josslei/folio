@@ -59,13 +59,13 @@ Before implementation resolve launcher/lock race handling, platform IPC transpor
 
 ## Process foundation — Implemented in Phase 4.1a
 
-Private implementation lives in [src/application](../src/application/), compiled
-as `folio_application` with a private dependency on the existing `folio_core`.
-The executable entry point is [src/main.cpp](../src/main.cpp); presentation stays
-in `src/tui/`. No Application headers are public yet. Public Application APIs
+Private implementation lives in [src/application](../lib/src/runtime/), compiled
+as `folio_application` with a private dependency on the existing `folio_backend`.
+The executable entry point is [app/src/main.cpp](../app/src/main.cpp); presentation stays
+in `app/src/tui/`. No Application headers are public yet. Public Application APIs
 belong to 4.2; TUI/CLI operations through them belong to 4.4.
 
-`src/main.cpp` uses a preliminary CLI11 parser to detect private `--backend-process`, allowing unrelated arguments and disabling help handling.
+`app/src/main.cpp` uses a preliminary CLI11 parser to detect private `--backend-process`, allowing unrelated arguments and disabling help handling.
 If present anywhere, all other arguments are ignored. The switch is absent from
 help. Otherwise CLI11 parses normal Frontend arguments.
 CLI11 handles help, invalid arguments and parser exit statuses; no separate
@@ -140,3 +140,13 @@ Ready, track clients/work, drain operations, explicitly finish the Session Marke
 lifecycle, and only then release ownership. It must handle launch success followed
 by a losing candidate, startup failure, and connect/shutdown races. Existing Marker
 and Index algorithms are unchanged in 4.1a.
+
+## Build organization — Phase 4.1a.5
+
+`folio_backend` is the static Backend library under `lib/`; `folio` is the sole
+executable under `app/`. Same-executable internal Backend dispatch uses the narrow
+public `folio/application/backend.hpp` header. Private Storage and runtime headers
+remain under `lib/src/`, available explicitly to internal tests only. Frontend
+operations must retain their IPC path when the separately stashed 4.1b work is
+restored; linking the Backend library does not authorize bypassing IPC.
+Phase 4.1b exists but awaits review/acceptance; this refactor adds no functionality.

@@ -7,7 +7,7 @@ add_executable(folio_core_tests
 )
 target_compile_features(folio_core_tests PRIVATE cxx_std_20)
 set_target_properties(folio_core_tests PROPERTIES CXX_EXTENSIONS OFF)
-target_link_libraries(folio_core_tests PRIVATE Folio::Core GTest::gtest_main)
+target_link_libraries(folio_core_tests PRIVATE folio_backend GTest::gtest_main)
 
 add_executable(folio_storage_tests
   storage/codec_test.cpp
@@ -22,14 +22,14 @@ add_executable(folio_storage_tests
   storage/serialization_samples_test.cpp
   storage/tomlplusplus_test.cpp
 )
-target_include_directories(folio_storage_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_include_directories(folio_storage_tests PRIVATE "${PROJECT_SOURCE_DIR}/lib/src")
 target_compile_features(folio_storage_tests PRIVATE cxx_std_20)
 target_compile_definitions(folio_storage_tests PRIVATE
   "FOLIO_SERIALIZATION_SAMPLES_DIR=\"${PROJECT_BINARY_DIR}/serialization-samples/$<CONFIG>\""
 )
 set_target_properties(folio_storage_tests PROPERTIES CXX_EXTENSIONS OFF)
 target_link_libraries(folio_storage_tests PRIVATE
-  Folio::Core
+  folio_backend
   GTest::gtest_main
   tomlplusplus::tomlplusplus
   msgpack-cxx
@@ -46,11 +46,11 @@ if(FOLIO_BUILD_RESOURCE_LIMIT_TESTS)
   add_executable(folio_resource_limit_tests
     resource_limits/index_resource_limits_test.cpp
   )
-  target_include_directories(folio_resource_limit_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_include_directories(folio_resource_limit_tests PRIVATE "${PROJECT_SOURCE_DIR}/lib/src")
   target_compile_features(folio_resource_limit_tests PRIVATE cxx_std_20)
   set_target_properties(folio_resource_limit_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_link_libraries(folio_resource_limit_tests PRIVATE
-    Folio::Core
+    folio_backend
     GTest::gtest_main
     msgpack-cxx
   )
@@ -62,19 +62,19 @@ endif()
 
 # Private process fixtures: no production test switches or application IPC.
 add_executable(folio_process_child application/process_child.cpp)
-target_include_directories(folio_process_child PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_include_directories(folio_process_child PRIVATE "${PROJECT_SOURCE_DIR}/lib/src")
 target_compile_features(folio_process_child PRIVATE cxx_std_20)
 set_target_properties(folio_process_child PROPERTIES CXX_EXTENSIONS OFF)
-target_link_libraries(folio_process_child PRIVATE folio_application Folio::Core)
+target_link_libraries(folio_process_child PRIVATE folio_backend)
 if(MINGW)
   target_link_options(folio_process_child PRIVATE -municode)
 endif()
 
 add_executable(folio_application_tests application/process_test.cpp)
-target_include_directories(folio_application_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_include_directories(folio_application_tests PRIVATE "${PROJECT_SOURCE_DIR}/lib/src")
 target_compile_features(folio_application_tests PRIVATE cxx_std_20)
 set_target_properties(folio_application_tests PROPERTIES CXX_EXTENSIONS OFF)
-target_link_libraries(folio_application_tests PRIVATE folio_application Folio::Core GTest::gtest_main)
+target_link_libraries(folio_application_tests PRIVATE folio_backend GTest::gtest_main)
 target_compile_definitions(folio_application_tests PRIVATE
   "FOLIO_PROCESS_CHILD=\"$<TARGET_FILE:folio_process_child>\"")
 add_dependencies(folio_application_tests folio_process_child folio)
