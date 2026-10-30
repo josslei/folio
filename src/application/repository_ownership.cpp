@@ -3,15 +3,15 @@
 #include <utility>
 #include <vector>
 
-#ifdef _WIN32
-#define NOMINMAX
-#include <windows.h>
-#else  // POSIX (supported platforms: macOS and Linux)
+#ifndef _WIN32  // POSIX (Linux and macOS)
 #include <cerrno>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#else  // Windows
+#define NOMINMAX
+#include <windows.h>
 #endif
 
 namespace folio::application::internal {
@@ -19,12 +19,12 @@ namespace fs = std::filesystem;
 namespace storage = core::storage;
 
 struct RepositoryOwnership::Handles {
-#ifdef _WIN32
-  std::vector<HANDLE> values;
-  ~Handles() { for (auto handle : values) CloseHandle(handle); }
-#else  // POSIX (supported platforms: macOS and Linux)
+#ifndef _WIN32  // POSIX (Linux and macOS)
   std::vector<int> values;
   ~Handles() { for (auto fd : values) close(fd); }
+#else  // Windows
+  std::vector<HANDLE> values;
+  ~Handles() { for (auto handle : values) CloseHandle(handle); }
 #endif
 };
 RepositoryOwnership::RepositoryOwnership(std::unique_ptr<Handles> handles)
@@ -42,11 +42,11 @@ bool contains(const fs::path& parent, const fs::path& child) {
   auto c = child.begin();
   for (; p != parent.end(); ++p, ++c) {
     if (c == child.end()) return false;
-#ifdef _WIN32
+#ifndef _WIN32  // POSIX (Linux and macOS)
+    if (*p != *c) return false;
+#else  // Windows
     if (CompareStringOrdinal(p->c_str(), -1, c->c_str(), -1, TRUE) != CSTR_EQUAL)
       return false;
-#else  // POSIX (supported platforms: macOS and Linux)
-    if (*p != *c) return false;
 #endif
   }
   return true;
@@ -89,7 +89,25 @@ RepositoryOwnership::acquire(const storage::StoragePaths& paths) {
   auto handles = std::make_unique<Handles>();
   handles->values.reserve(targets.size());
   for (const auto& target : targets) {
-#ifdef _WIN32
+#ifndef _WIN32  // POSIX (Linux and macOS)
+    const int fd = open(target.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0600);
+    if (fd == -1) return io_error("Could not open Backend lock", {errno, std::generic_category()});
+    handles->values.push_back(fd);
+    struct stat info{};
+    if (fstat(fd, &info) == -1)
+      return io_error("Could not inspect Backend lock", {errno, std::generic_category()});
+    // Refuse foreign-user or hard-linked targets instead of trusting arbitrary
+    // files. Cross-user shared storage is not a supported multi-user service.
+    if (!S_ISREG(info.st_mode) || info.st_nlink != 1 || info.st_uid != geteuid())
+      return ProcessError{ProcessErrorCode::InvalidArgument, "Unsafe Backend lock file", {}};
+    int status;
+    do { status = flock(fd, LOCK_EX | LOCK_NB); } while (status == -1 && errno == EINTR);
+    if (status == -1) {
+      const int code = errno;
+      return ProcessError{code == EWOULDBLOCK || code == EAGAIN ? ProcessErrorCode::AlreadyOwned : ProcessErrorCode::IoError,
+                          "Could not acquire Backend ownership", {code, std::generic_category()}};
+    }
+#else  // Windows
     // No sharing for deletion: a live lock target cannot be replaced. Handles
     // are non-inheritable; LockFileEx provides the ownership test.
     HANDLE handle = CreateFileW(target.c_str(), GENERIC_READ | GENERIC_WRITE,
@@ -108,24 +126,6 @@ RepositoryOwnership::acquire(const storage::StoragePaths& paths) {
       const auto code = GetLastError();
       return ProcessError{code == ERROR_LOCK_VIOLATION ? ProcessErrorCode::AlreadyOwned : ProcessErrorCode::IoError,
                           "Could not acquire Backend ownership", {static_cast<int>(code), std::system_category()}};
-    }
-#else  // POSIX (supported platforms: macOS and Linux)
-    const int fd = open(target.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0600);
-    if (fd == -1) return io_error("Could not open Backend lock", {errno, std::generic_category()});
-    handles->values.push_back(fd);
-    struct stat info{};
-    if (fstat(fd, &info) == -1)
-      return io_error("Could not inspect Backend lock", {errno, std::generic_category()});
-    // Refuse foreign-user or hard-linked targets instead of trusting arbitrary
-    // files. Cross-user shared storage is not a supported multi-user service.
-    if (!S_ISREG(info.st_mode) || info.st_nlink != 1 || info.st_uid != geteuid())
-      return ProcessError{ProcessErrorCode::InvalidArgument, "Unsafe Backend lock file", {}};
-    int status;
-    do { status = flock(fd, LOCK_EX | LOCK_NB); } while (status == -1 && errno == EINTR);
-    if (status == -1) {
-      const int code = errno;
-      return ProcessError{code == EWOULDBLOCK || code == EAGAIN ? ProcessErrorCode::AlreadyOwned : ProcessErrorCode::IoError,
-                          "Could not acquire Backend ownership", {code, std::generic_category()}};
     }
 #endif
   }

@@ -72,8 +72,8 @@ set(CLI11_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(thirdparty/cli11 EXCLUDE_FROM_ALL)
 
 # Phase 4.1a uses native desktop process and ownership APIs only.
-if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Windows|Darwin|Linux)$")
-  message(FATAL_ERROR "Folio Application process support requires macOS, Linux, or Windows")
+if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin|Windows)$")
+  message(FATAL_ERROR "Folio Application process support requires Linux, macOS, or Windows")
 endif()
 
 # Process implementation remains private; public Application APIs follow later.

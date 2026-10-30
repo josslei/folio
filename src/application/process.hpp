@@ -1,15 +1,15 @@
 #pragma once
 
 // Phase 4.1a process/ownership support is restricted to desktop platforms.
-#if defined(_WIN32)
+#if defined(__linux__)
 #elif defined(__APPLE__)
 #include <TargetConditionals.h>
 #if !TARGET_OS_OSX
-#error "Folio Application process support requires macOS, Linux, or Windows"
+#error "Folio Application process support requires Linux, macOS, or Windows"
 #endif
-#elif defined(__linux__)
+#elif defined(_WIN32)
 #else
-#error "Folio Application process support requires macOS, Linux, or Windows"
+#error "Folio Application process support requires Linux, macOS, or Windows"
 #endif
 
 #include "core/internal/result.hpp"

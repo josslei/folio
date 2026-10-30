@@ -6,11 +6,11 @@
 #include <chrono>
 #include <fstream>
 #include <thread>
-#ifdef _WIN32
+#ifndef _WIN32  // POSIX (Linux and macOS)
+#include <unistd.h>
+#else  // Windows
 #define NOMINMAX
 #include <windows.h>
-#else  // POSIX (supported platforms: macOS and Linux)
-#include <unistd.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -24,10 +24,10 @@ void report(const fs::path& target, const std::string& value) {
   fs::rename(temporary, target);
 }
 
-#ifdef _WIN32
-int wmain(int argc, wchar_t** argv) {
-#else  // POSIX (supported platforms: macOS and Linux)
+#ifndef _WIN32  // POSIX (Linux and macOS)
 int main(int argc, char** argv) {
+#else  // Windows
+int wmain(int argc, wchar_t** argv) {
 #endif
   std::vector<fs::path> arguments;
   for (int i = 1; i < argc; ++i) arguments.emplace_back(argv[i]);

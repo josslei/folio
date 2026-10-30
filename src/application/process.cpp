@@ -2,10 +2,7 @@
 
 #include <limits>
 
-#ifdef _WIN32
-#define NOMINMAX
-#include <windows.h>
-#else  // POSIX (supported platforms: macOS and Linux)
+#ifndef _WIN32  // POSIX (Linux and macOS)
 #include <cerrno>
 #include <climits>
 #include <csignal>
@@ -18,6 +15,9 @@
 #include <mach-o/dyld.h>
 #endif
 extern char** environ;
+#else  // Windows
+#define NOMINMAX
+#include <windows.h>
 #endif
 
 namespace folio::application::internal {
@@ -26,7 +26,16 @@ namespace {
 bool has_nul(const fs::path& path) {
   return path.native().find(fs::path::value_type{}) != fs::path::string_type::npos;
 }
-#ifdef _WIN32
+#ifndef _WIN32  // POSIX (Linux and macOS)
+struct LaunchReport { int error; pid_t pid; };
+// Only async-signal-safe operations in the forked children, through exec/_exit.
+[[noreturn]] void child_failure(int fd, int error) {
+  const LaunchReport report{error, 0};
+  ssize_t count;
+  do { count = write(fd, &report, sizeof report); } while (count == -1 && errno == EINTR);
+  _exit(127);
+}
+#else  // Windows
 // Windows argv quoting, including trailing backslashes before the closing quote.
 std::wstring quote(const std::wstring& value) {
   std::wstring result = L"\"";
@@ -41,27 +50,20 @@ std::wstring quote(const std::wstring& value) {
   result.append(slashes * 2, L'\\');
   return result + L'"';
 }
-#else  // POSIX (supported platforms: macOS and Linux)
-struct LaunchReport { int error; pid_t pid; };
-// Only async-signal-safe operations in the forked children, through exec/_exit.
-[[noreturn]] void child_failure(int fd, int error) {
-  const LaunchReport report{error, 0};
-  ssize_t count;
-  do { count = write(fd, &report, sizeof report); } while (count == -1 && errno == EINTR);
-  _exit(127);
-}
 #endif
 }
 
 core::internal::Result<fs::path, ProcessError> current_executable() {
-#ifdef _WIN32
-  std::vector<wchar_t> buffer(512);
+#if defined(__linux__)
+  std::vector<char> buffer(512);
   for (;;) {
-    const DWORD size = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-    if (size == 0) return ProcessError{ProcessErrorCode::IoError, "Could not find current executable",
-                                     {static_cast<int>(GetLastError()), std::system_category()}};
-    if (size < buffer.size()) return fs::path{std::wstring{buffer.data(), size}};
-    if (buffer.size() >= 32768) return ProcessError{ProcessErrorCode::IoError, "Executable path is too long", {}};
+    const auto size = readlink("/proc/self/exe", buffer.data(), buffer.size());
+    if (size == -1) return ProcessError{ProcessErrorCode::IoError, "Could not find current executable",
+                                      {errno, std::generic_category()}};
+    if (static_cast<std::size_t>(size) < buffer.size())
+      return fs::path{std::string{buffer.data(), static_cast<std::size_t>(size)}};
+    if (buffer.size() >= 1024 * 1024)
+      return ProcessError{ProcessErrorCode::IoError, "Executable path is too long", {}};
     buffer.resize(buffer.size() * 2);
   }
 #elif defined(__APPLE__)
@@ -74,16 +76,14 @@ core::internal::Result<fs::path, ProcessError> current_executable() {
   auto path = fs::canonical(buffer.data(), ec);
   if (ec) return ProcessError{ProcessErrorCode::IoError, "Could not resolve executable", ec};
   return path;
-#elif defined(__linux__)
-  std::vector<char> buffer(512);
+#elif defined(_WIN32)
+  std::vector<wchar_t> buffer(512);
   for (;;) {
-    const auto size = readlink("/proc/self/exe", buffer.data(), buffer.size());
-    if (size == -1) return ProcessError{ProcessErrorCode::IoError, "Could not find current executable",
-                                      {errno, std::generic_category()}};
-    if (static_cast<std::size_t>(size) < buffer.size())
-      return fs::path{std::string{buffer.data(), static_cast<std::size_t>(size)}};
-    if (buffer.size() >= 1024 * 1024)
-      return ProcessError{ProcessErrorCode::IoError, "Executable path is too long", {}};
+    const DWORD size = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (size == 0) return ProcessError{ProcessErrorCode::IoError, "Could not find current executable",
+                                     {static_cast<int>(GetLastError()), std::system_category()}};
+    if (size < buffer.size()) return fs::path{std::wstring{buffer.data(), size}};
+    if (buffer.size() >= 32768) return ProcessError{ProcessErrorCode::IoError, "Executable path is too long", {}};
     buffer.resize(buffer.size() * 2);
   }
 #endif
@@ -96,23 +96,7 @@ core::internal::Result<LaunchedProcess, ProcessError> launch_process(
   for (const auto& argument : arguments)
     if (has_nul(argument))
       return ProcessError{ProcessErrorCode::InvalidArgument, "Argument contains NUL", {}};
-#ifdef _WIN32
-  auto command = quote(executable.native());
-  for (const auto& argument : arguments) command += L" " + quote(argument.native());
-  STARTUPINFOW startup{};
-  startup.cb = sizeof startup;
-  PROCESS_INFORMATION process{};
-  // DETACHED_PROCESS prevents terminal input ownership; FALSE prevents handle
-  // inheritance. No wait or service/readiness claim accompanies this result.
-  if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
-                      DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, nullptr, nullptr,
-                      &startup, &process))
-    return ProcessError{ProcessErrorCode::LaunchFailed, "Could not launch process",
-                        {static_cast<int>(GetLastError()), std::system_category()}};
-  CloseHandle(process.hThread);
-  CloseHandle(process.hProcess);
-  return LaunchedProcess{process.dwProcessId};
-#else  // POSIX (supported platforms: macOS and Linux)
+#ifndef _WIN32  // POSIX (Linux and macOS)
   std::vector<std::string> strings{executable.native()};
   for (const auto& argument : arguments) strings.push_back(argument.native());
   std::vector<char*> argv;
@@ -209,6 +193,22 @@ core::internal::Result<LaunchedProcess, ProcessError> launch_process(
     return ProcessError{ProcessErrorCode::LaunchFailed, "Could not execute detached process",
                         {failure ? failure : EIO, std::generic_category()}};
   return LaunchedProcess{id};
+#else  // Windows
+  auto command = quote(executable.native());
+  for (const auto& argument : arguments) command += L" " + quote(argument.native());
+  STARTUPINFOW startup{};
+  startup.cb = sizeof startup;
+  PROCESS_INFORMATION process{};
+  // DETACHED_PROCESS prevents terminal input ownership; FALSE prevents handle
+  // inheritance. No wait or service/readiness claim accompanies this result.
+  if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
+                      DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, nullptr, nullptr,
+                      &startup, &process))
+    return ProcessError{ProcessErrorCode::LaunchFailed, "Could not launch process",
+                        {static_cast<int>(GetLastError()), std::system_category()}};
+  CloseHandle(process.hThread);
+  CloseHandle(process.hProcess);
+  return LaunchedProcess{process.dwProcessId};
 #endif
 }
 }  // namespace folio::application::internal

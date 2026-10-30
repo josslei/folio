@@ -7,15 +7,15 @@
 #include <fstream>
 #include <thread>
 #include <type_traits>
-#ifdef _WIN32
-#define NOMINMAX
-#include <windows.h>
-#else  // POSIX (supported platforms: macOS and Linux)
+#ifndef _WIN32  // POSIX (Linux and macOS)
 #include <csignal>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#else  // Windows
+#define NOMINMAX
+#include <windows.h>
 #endif
 
 namespace {
@@ -112,14 +112,14 @@ TEST_F(Processes, BackendCanOutliveItsLaunchingProcess) {
   Child child{std::stoull(read(control / "launcher-result")), control};
   children.push_back(child);
   const auto launcher = std::get<app::LaunchedProcess>(result).id;
-#ifdef _WIN32
+#ifndef _WIN32  // POSIX (Linux and macOS)
+  ASSERT_TRUE(until([&] { return kill(static_cast<pid_t>(launcher), 0) == -1 && errno == ESRCH; }));
+#else  // Windows
   HANDLE handle = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(launcher));
   if (handle) {
     EXPECT_EQ(WaitForSingleObject(handle, 8000), WAIT_OBJECT_0);
     CloseHandle(handle);
   }
-#else  // POSIX (supported platforms: macOS and Linux)
-  ASSERT_TRUE(until([&] { return kill(static_cast<pid_t>(launcher), 0) == -1 && errno == ESRCH; }));
 #endif
   EXPECT_EQ(acquire(child), "owned");
 }
@@ -165,14 +165,14 @@ TEST_F(Processes, ConcurrentCandidatesHaveExactlyOneOwner) {
 TEST_F(Processes, ForcedProcessTerminationReleasesOwnership) {
   auto child = spawn();
   ASSERT_EQ(acquire(child), "owned");
-#ifdef _WIN32
+#ifndef _WIN32  // POSIX (Linux and macOS)
+  ASSERT_EQ(kill(static_cast<pid_t>(child.id), SIGKILL), 0);
+#else  // Windows
   HANDLE handle = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, static_cast<DWORD>(child.id));
   ASSERT_NE(handle, nullptr);
   ASSERT_TRUE(TerminateProcess(handle, 9));
   EXPECT_EQ(WaitForSingleObject(handle, 8000), WAIT_OBJECT_0);
   CloseHandle(handle);
-#else  // POSIX (supported platforms: macOS and Linux)
-  ASSERT_EQ(kill(static_cast<pid_t>(child.id), SIGKILL), 0);
 #endif
   touch(child.control / "killed");
   ASSERT_TRUE(until([&] { return std::holds_alternative<app::RepositoryOwnership>(app::RepositoryOwnership::acquire(paths)); }));

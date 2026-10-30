@@ -5,10 +5,10 @@
 
 namespace app = folio::application::internal;
 
-#ifdef _WIN32
-int wmain(int argc, wchar_t** argv) {
-#else  // POSIX (supported platforms: macOS and Linux)
+#ifndef _WIN32  // POSIX (Linux and macOS)
 int main(int argc, char** argv) {
+#else  // Windows
+int wmain(int argc, wchar_t** argv) {
 #endif
   // Detect the private mode without interpreting help or unrelated arguments.
   CLI::App mode_parser;
