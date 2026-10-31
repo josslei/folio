@@ -1,4 +1,4 @@
-#include "runtime/process.hpp"
+#include "application/internal/process.hpp"
 
 #include <limits>
 
@@ -53,7 +53,7 @@ std::wstring quote(const std::wstring& value) {
 #endif
 }
 
-core::internal::Result<fs::path, ProcessError> current_executable() {
+core::Result<fs::path, ProcessError> current_executable() {
 #if defined(__linux__)
   std::vector<char> buffer(512);
   for (;;) {
@@ -89,7 +89,7 @@ core::internal::Result<fs::path, ProcessError> current_executable() {
 #endif
 }
 
-core::internal::Result<LaunchedProcess, ProcessError> launch_process(
+core::Result<LaunchedProcess, ProcessError> launch_process(
     const fs::path& executable, const std::vector<fs::path>& arguments) {
   if (!executable.is_absolute() || has_nul(executable))
     return ProcessError{ProcessErrorCode::InvalidArgument, "Executable must be an absolute path without NUL", {}};

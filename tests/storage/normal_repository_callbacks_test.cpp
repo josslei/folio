@@ -125,7 +125,7 @@ class NormalRepositoryCallbacksTest : public testing::Test {
     ASSERT_TRUE(fs::is_regular_file(index));
   }
 
-  static void expect_code(const ::folio::core::internal::Result<std::monostate,
+  static void expect_code(const ::folio::core::Result<std::monostate,
                           storage::RepositoryMutationError>& result,
                           storage::StorageErrorCode code) {
     ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(result));
@@ -306,7 +306,7 @@ TEST_F(NormalRepositoryCallbacksTest, RepositoryFailureNotifiesWithoutProvidingS
       ++callbacks;
     else
       ++failures;
-    return ::folio::core::internal::Result<std::monostate, storage::StorageError>{std::monostate{}};
+    return ::folio::core::Result<std::monostate, storage::StorageError>{std::monostate{}};
   };
   expect_code(repository.create_log(log, observer), storage::StorageErrorCode::DuplicateId);
   auto edited = log;
@@ -503,7 +503,7 @@ TEST_F(NormalRepositoryCallbacksTest, ThrowingCallbacksReportSavedDataWithoutRol
   const auto prior_index = bytes(index);
   const storage::MutationResultCallback<storage::LogMetadata> standard =
       [](const storage::MutationNotification<storage::LogMetadata>&)
-      -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
+      -> ::folio::core::Result<std::monostate, storage::StorageError> {
     throw std::runtime_error("synthetic callback exception");
   };
   const auto first = log_snapshot();
@@ -518,7 +518,7 @@ TEST_F(NormalRepositoryCallbacksTest, ThrowingCallbacksReportSavedDataWithoutRol
 
   const storage::MutationResultCallback<storage::LogMetadata> nonstandard =
       [](const storage::MutationNotification<storage::LogMetadata>&)
-      -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
+      -> ::folio::core::Result<std::monostate, storage::StorageError> {
     throw 7;
   };
   auto second = first;
@@ -673,7 +673,7 @@ TEST_F(NormalRepositoryCallbacksTest, ProjectionFailureIsClassifiedBeforeSuccess
 TEST_F(NormalRepositoryCallbacksTest, ExceptionAfterWriterPublicationReportsUncertainty) {
   ScopedRepositoryHooks hooks;
   storage::internal::repository_test_hooks.write = [](const fs::path& path, std::string_view value, bool)
-      -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
+      -> ::folio::core::Result<std::monostate, storage::StorageError> {
     auto result = storage::create_file_atomic(path, value);
     if (std::holds_alternative<storage::StorageError>(result)) return result;
     throw std::runtime_error("writer exception after publication");
@@ -697,7 +697,7 @@ TEST_F(NormalRepositoryCallbacksTest, FailureNotificationPreservesOriginalErrorE
   bool failure_seen = false;
   const storage::MutationResultCallback<storage::LogMetadata> callback =
       [&](const storage::MutationNotification<storage::LogMetadata>& notification)
-          -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
+          -> ::folio::core::Result<std::monostate, storage::StorageError> {
     ++calls;
     const auto& error = std::get<std::reference_wrapper<const storage::RepositoryMutationError>>(notification).get();
     failure_seen = true;
@@ -719,14 +719,14 @@ TEST_F(NormalRepositoryCallbacksTest, FailureNotificationPreservesOriginalErrorE
 TEST_F(NormalRepositoryCallbacksTest, FailureNotificationReturnErrorCannotReplacePersistenceError) {
   ScopedRepositoryHooks hooks;
   storage::internal::repository_test_hooks.write = [](const fs::path& path, std::string_view, bool)
-      -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
+      -> ::folio::core::Result<std::monostate, storage::StorageError> {
     return storage::StorageError{storage::StorageErrorCode::IoError, path,
         "original metadata write error", std::make_error_code(std::errc::permission_denied)};
   };
   int calls = 0;
   const storage::MutationResultCallback<storage::DirectoryMetadata> callback =
       [&](const storage::MutationNotification<storage::DirectoryMetadata>& notification)
-          -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
+          -> ::folio::core::Result<std::monostate, storage::StorageError> {
     ++calls;
     const auto& error = std::get<std::reference_wrapper<const storage::RepositoryMutationError>>(notification).get();
     EXPECT_EQ(error.stage, storage::MutationFailureStage::AuthoritativeStateMayHaveChanged);
@@ -781,7 +781,7 @@ TEST_F(NormalRepositoryCallbacksTest, CatalogCallbackFailureAutomaticallyMarksIn
 TEST_F(NormalRepositoryCallbacksTest, IncompleteDirectoryFolderIsReportedWithoutClaimingPublication) {
   ScopedRepositoryHooks hooks;
   storage::internal::repository_test_hooks.write = [](const fs::path& path, std::string_view, bool)
-      -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
+      -> ::folio::core::Result<std::monostate, storage::StorageError> {
     return storage::StorageError{storage::StorageErrorCode::IoError, path,
                                 "metadata write denied", std::make_error_code(std::errc::permission_denied)};
   };
@@ -809,7 +809,7 @@ bool injected_sync(int descriptor) {
   return ::fsync(descriptor) == 0;
 }
 auto injected_write(const fs::path& path, std::string_view value, bool create_only)
-    -> ::folio::core::internal::Result<std::monostate, storage::StorageError> {
+    -> ::folio::core::Result<std::monostate, storage::StorageError> {
   sync_calls = 0;
   return storage::internal::write_file_atomic(path, value, create_only, injected_sync);
 }

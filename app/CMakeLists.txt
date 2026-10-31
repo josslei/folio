@@ -1,4 +1,4 @@
-add_executable(folio src/main.cpp src/tui/frontend.cpp)
+add_executable(folio src/main.cpp src/tui/tui.cpp)
 target_include_directories(folio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_features(folio PRIVATE cxx_std_20)
 set_target_properties(folio PROPERTIES CXX_EXTENSIONS OFF)

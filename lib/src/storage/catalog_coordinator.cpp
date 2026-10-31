@@ -68,7 +68,7 @@ CoordinatorError binary_error(BinaryReadError source) {
 }
 
 struct Locations { fs::path cache_root; fs::path parent; fs::path file; };
-::folio::core::internal::Result<Locations, CoordinatorError> locations(const StoragePaths& paths) {
+::folio::core::Result<Locations, CoordinatorError> locations(const StoragePaths& paths) {
   auto checked = validate_storage_paths(paths);
   if (auto* problem = std::get_if<StorageError>(&checked)) return storage_error(*problem);
   std::error_code ec;
@@ -77,7 +77,7 @@ struct Locations { fs::path cache_root; fs::path parent; fs::path file; };
   const auto relative = index_relative_path();
   return Locations{root, root / relative.parent_path(), root / relative};
 }
-::folio::core::internal::Result<fs::file_status, CoordinatorError> inspect(const fs::path& path) {
+::folio::core::Result<fs::file_status, CoordinatorError> inspect(const fs::path& path) {
   std::error_code ec;
   const auto status = fs::symlink_status(path, ec);
   if (ec == std::errc::no_such_file_or_directory)
@@ -87,7 +87,7 @@ struct Locations { fs::path cache_root; fs::path parent; fs::path file; };
     return error(CoordinatorErrorCode::InvalidPath, path, "Symlink in lifecycle path");
   return status;
 }
-::folio::core::internal::Result<bool, CoordinatorError> directory_ready(const fs::path& path) {
+::folio::core::Result<bool, CoordinatorError> directory_ready(const fs::path& path) {
   auto inspected = inspect(path);
   if (auto* problem = std::get_if<CoordinatorError>(&inspected)) return *problem;
   const auto status = std::get<fs::file_status>(inspected);
@@ -96,7 +96,7 @@ struct Locations { fs::path cache_root; fs::path parent; fs::path file; };
     return error(CoordinatorErrorCode::InvalidPath, path, "Lifecycle parent is not a directory");
   return true;
 }
-::folio::core::internal::Result<bool, CoordinatorError> file_ready(const fs::path& path) {
+::folio::core::Result<bool, CoordinatorError> file_ready(const fs::path& path) {
   auto inspected = inspect(path);
   if (auto* problem = std::get_if<CoordinatorError>(&inspected)) return *problem;
   const auto status = std::get<fs::file_status>(inspected);
@@ -109,7 +109,7 @@ struct Locations { fs::path cache_root; fs::path parent; fs::path file; };
 
 // Marker location must survive independent Cache/Runtime deletion. Application
 // categories can otherwise share parents; only this durable file is constrained.
-::folio::core::internal::Result<bool, CoordinatorError>
+::folio::core::Result<bool, CoordinatorError>
 CatalogCoordinator::previous_marker() const {
   auto validated = validate_storage_paths(paths_);
   if (auto* problem = std::get_if<StorageError>(&validated)) return storage_error(*problem);
@@ -137,7 +137,7 @@ CatalogCoordinator::previous_marker() const {
   return file_ready(marker_path(paths_));
 }
 
-::folio::core::internal::Result<std::monostate, CoordinatorError>
+::folio::core::Result<std::monostate, CoordinatorError>
 CatalogCoordinator::establish_marker() {
   auto present = previous_marker();
   if (auto* problem = std::get_if<CoordinatorError>(&present)) return *problem;
@@ -157,7 +157,7 @@ CatalogCoordinator::CatalogCoordinator(StoragePaths paths, MetadataCatalog& cata
     : paths_(std::move(paths)),
       catalog_(catalog),
       creation_check_([this](const core::Id& id)
-          -> ::folio::core::internal::Result<std::monostate, StorageError> {
+          -> ::folio::core::Result<std::monostate, StorageError> {
         if (status_ != CatalogStatus::Ready)
           return StorageError{StorageErrorCode::RecoveryRequired, paths_.normal_root,
                               "Creation requires an initialized, consistent Catalog", {}, false};
@@ -199,7 +199,7 @@ CatalogCoordinator::CatalogCoordinator(StoragePaths paths, MetadataCatalog& cata
             return catalog_.update_directory(metadata);
           })) {}
 
-::folio::core::internal::Result<InitializationOutcome, CoordinatorError>
+::folio::core::Result<InitializationOutcome, CoordinatorError>
 CatalogCoordinator::startup_load() {
   if (load_attempted_)
     return error(CoordinatorErrorCode::Lifecycle, {}, "Startup load already attempted");
@@ -214,7 +214,7 @@ CatalogCoordinator::startup_load() {
         std::get<std::vector<ExcludedObject>>(std::move(rebuilt)), true};
   }
   // Keep cache-read errors distinct so only unusable caches trigger a rebuild.
-  auto load_index = [&]() -> ::folio::core::internal::Result<std::monostate, CoordinatorError> {
+  auto load_index = [&]() -> ::folio::core::Result<std::monostate, CoordinatorError> {
     auto resolved = locations(paths_);
     if (auto* problem = std::get_if<CoordinatorError>(&resolved)) return *problem;
     const auto& path = std::get<Locations>(resolved);
@@ -259,7 +259,7 @@ CatalogCoordinator::startup_load() {
   return InitializationOutcome{};
 }
 
-::folio::core::internal::Result<std::vector<ExcludedObject>, CoordinatorError>
+::folio::core::Result<std::vector<ExcludedObject>, CoordinatorError>
 CatalogCoordinator::rebuild() {
   auto paths = validate_storage_paths(paths_);
   if (auto* problem = std::get_if<StorageError>(&paths)) return storage_error(*problem);
@@ -289,7 +289,7 @@ CatalogCoordinator::rebuild() {
   return std::move(inventory.diagnostics);
 }
 
-::folio::core::internal::Result<std::vector<ExcludedObject>, CoordinatorError>
+::folio::core::Result<std::vector<ExcludedObject>, CoordinatorError>
 CatalogCoordinator::refresh_all() {
   if (status_ == CatalogStatus::Stopped)
     return error(CoordinatorErrorCode::Lifecycle, {}, "Session already finalized");
@@ -297,7 +297,7 @@ CatalogCoordinator::refresh_all() {
   return rebuild();
 }
 
-::folio::core::internal::Result<SaveOutcome, CoordinatorError> CatalogCoordinator::shutdown_save() {
+::folio::core::Result<SaveOutcome, CoordinatorError> CatalogCoordinator::shutdown_save() {
   if (status_ == CatalogStatus::Inconsistent)
     return error(CoordinatorErrorCode::Unavailable, {},
                  "Catalog requires successful Refresh before Index persistence");
@@ -334,10 +334,10 @@ CatalogCoordinator::refresh_all() {
   return SaveOutcome::Saved;
 }
 
-::folio::core::internal::Result<SaveOutcome, CoordinatorError>
+::folio::core::Result<SaveOutcome, CoordinatorError>
 CatalogCoordinator::finish_session() {
   // No once-only guard on saving: explicit retries remain possible.
-  ::folio::core::internal::Result<SaveOutcome, CoordinatorError> saved = SaveOutcome::SkippedPersisted;
+  ::folio::core::Result<SaveOutcome, CoordinatorError> saved = SaveOutcome::SkippedPersisted;
   if (!marker_cleanup_pending_) saved = shutdown_save();
   if (auto* problem = std::get_if<CoordinatorError>(&saved)) return *problem;
   auto resolved = locations(paths_);

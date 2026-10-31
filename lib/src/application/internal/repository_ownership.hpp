@@ -1,6 +1,7 @@
 #pragma once
 
-#include "runtime/process.hpp"
+#include <folio/application/backend.hpp>
+#include <folio/application/ipc.hpp>
 #include "storage/filesystem.hpp"
 
 #include <memory>
@@ -10,7 +11,8 @@ namespace folio::application::internal {
 // Exclusive access to the configured Repositories, acquired by the Backend
 // before Catalog lifecycle access. Repository denotes the persistent storage
 // location; NormalRepository/VaultRepository are its management classes. Move-only RAII
-// releases handles, never saves an Index, finalizes a session or deletes locks.
+// releases the endpoint before lock handles, never saves an Index, finalizes
+// a session or deletes lock targets.
 // Callers must not unlink/replace lock files or roots during ownership.
 class RepositoryOwnership {
  public:
@@ -23,9 +25,17 @@ class RepositoryOwnership {
   // Locks State/backend.lock and Normal/.folio-backend.lock; locks an existing
   // Vault root too, but never creates Vault. Missing Normal/State parents may be
   // created. Root aliases resolve to the same physical lock file. Partial
-  // acquisition releases all handles. Permission failure is not AlreadyOwned.
-  [[nodiscard]] static core::internal::Result<RepositoryOwnership, ProcessError>
+  // acquisition releases all resources. After locking, establishes the IPC
+  // listener and reclaims only a stale endpoint. Permission failure is not
+  // AlreadyOwned.
+  [[nodiscard]] static core::Result<RepositoryOwnership, ProcessError>
   acquire(const core::storage::StoragePaths& paths);
+
+  // Nonblocking connection acceptance while the ownership resource is active.
+  core::Result<std::optional<IpcStream>, IpcError> accept();
+  // Stop admission and remove the owned endpoint, retaining all Repo locks
+  // through explicit Catalog finalization. Safe to call more than once.
+  void stop_listening() noexcept;
 
  private:
   struct Handles;

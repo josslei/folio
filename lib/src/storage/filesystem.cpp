@@ -79,7 +79,7 @@ fs::path temporary_name(const fs::path& destination) {
   return name;
 }
 
-::folio::core::internal::Result<std::monostate, StorageError> check_pending_temporary(const fs::path& parent,
+::folio::core::Result<std::monostate, StorageError> check_pending_temporary(const fs::path& parent,
                                               const fs::path& destination) {
   const auto prefix = temporary_prefix(destination).native();
   std::error_code ec;
@@ -161,7 +161,7 @@ bool sync_file(int descriptor) {
 
 }  // namespace
 
-::folio::core::internal::Result<StoragePaths, StorageError> validate_storage_paths(const StoragePaths& paths) {
+::folio::core::Result<StoragePaths, StorageError> validate_storage_paths(const StoragePaths& paths) {
   std::vector<fs::path> roots{paths.normal_root, paths.vault_root,
       paths.application.config, paths.application.data,
       paths.application.state, paths.application.cache};
@@ -199,7 +199,7 @@ bool sync_file(int descriptor) {
   return paths;
 }
 
-::folio::core::internal::Result<std::string, StorageError> normal_record_filename(RecordType type, const core::Id& id,
+::folio::core::Result<std::string, StorageError> normal_record_filename(RecordType type, const core::Id& id,
                                          core::Timestamp created) {
   using namespace std::chrono;
   const char* extension;
@@ -235,7 +235,7 @@ bool sync_file(int descriptor) {
 
 namespace internal {
 
-::folio::core::internal::Result<std::monostate, StorageError> write_file_atomic(const fs::path& path,
+::folio::core::Result<std::monostate, StorageError> write_file_atomic(const fs::path& path,
                                         std::string_view contents,
                                         bool create_only, SyncFile sync) {
   if (path.empty() || has_nul(path) || path.filename().empty() ||
@@ -454,7 +454,7 @@ namespace internal {
 
 }  // namespace internal
 
-::folio::core::internal::Result<std::monostate, StorageError> create_file_atomic(const fs::path& path, std::string_view contents) {
+::folio::core::Result<std::monostate, StorageError> create_file_atomic(const fs::path& path, std::string_view contents) {
   return internal::write_file_atomic(path, contents, true,
 #ifdef _WIN32
                                      nullptr);
@@ -463,7 +463,7 @@ namespace internal {
 #endif
 }
 
-::folio::core::internal::Result<std::monostate, StorageError> replace_file_atomic(const fs::path& path, std::string_view contents) {
+::folio::core::Result<std::monostate, StorageError> replace_file_atomic(const fs::path& path, std::string_view contents) {
   return internal::write_file_atomic(path, contents, false,
 #ifdef _WIN32
                                      nullptr);
@@ -472,7 +472,7 @@ namespace internal {
 #endif
 }
 
-::folio::core::internal::Result<std::string, BinaryReadError> read_binary_file(const std::filesystem::path& path,
+::folio::core::Result<std::string, BinaryReadError> read_binary_file(const std::filesystem::path& path,
                                                std::size_t max_bytes) {
   if (path.empty() || path.native().find(std::filesystem::path::value_type{}) !=
                           std::filesystem::path::string_type::npos)
@@ -516,7 +516,7 @@ bool lifecycle_sync(int descriptor) {
 }
 #endif
 
-::folio::core::internal::Result<std::monostate, StorageError>
+::folio::core::Result<std::monostate, StorageError>
 validate_lifecycle_file_path(const fs::path& path) {
   if (!path.is_absolute() || has_nul(path) || path != path.lexically_normal() ||
       path.filename().empty() || path.filename() == "." || path.filename() == "..")
@@ -547,7 +547,7 @@ SyncFile set_lifecycle_sync_for_testing(SyncFile sync) noexcept {
 }
 }
 
-::folio::core::internal::Result<std::monostate, StorageError>
+::folio::core::Result<std::monostate, StorageError>
 create_directories_durable(const fs::path& path) {
   if (!path.is_absolute() || has_nul(path) || path != path.lexically_normal())
     return error(StorageErrorCode::InvalidPath, path, "Expected canonical absolute directory path");
@@ -592,7 +592,7 @@ create_directories_durable(const fs::path& path) {
   return std::monostate{};
 }
 
-::folio::core::internal::Result<std::monostate, StorageError>
+::folio::core::Result<std::monostate, StorageError>
 create_empty_file_durable(const fs::path& path) {
   auto valid = validate_lifecycle_file_path(path);
   if (auto* problem = std::get_if<StorageError>(&valid)) return *problem;
@@ -622,7 +622,7 @@ create_empty_file_durable(const fs::path& path) {
   return std::monostate{};
 }
 
-::folio::core::internal::Result<std::monostate, StorageError>
+::folio::core::Result<std::monostate, StorageError>
 sync_regular_file(const fs::path& path) {
   auto valid = validate_lifecycle_file_path(path);
   if (auto* problem = std::get_if<StorageError>(&valid)) return *problem;
@@ -655,7 +655,7 @@ sync_regular_file(const fs::path& path) {
   return std::monostate{};
 }
 
-::folio::core::internal::Result<std::monostate, StorageError>
+::folio::core::Result<std::monostate, StorageError>
 remove_file_durable(const fs::path& path) {
   auto valid = validate_lifecycle_file_path(path);
   if (auto* problem = std::get_if<StorageError>(&valid)) return *problem;

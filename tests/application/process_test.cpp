@@ -1,5 +1,7 @@
-#include "runtime/repository_ownership.hpp"
-#include "runtime/backend.hpp"
+#include "application/internal/process.hpp"
+#include "application/internal/repository_ownership.hpp"
+#include <folio/application/backend.hpp>
+#include "application/internal/configuration_test_hooks.hpp"
 #include "folio/core/types.hpp"
 
 #include <gtest/gtest.h>
@@ -49,7 +51,13 @@ class Processes : public testing::Test {
   struct Child { std::uint64_t id; fs::path control; };
   std::vector<Child> children;
   void SetUp() override {
-    base = fs::temp_directory_path() / ("folio-process-" + folio::core::Id::generate().to_string());
+#ifdef __APPLE__
+    // macOS per-user temporary paths can consume most of sockaddr_un.sun_path.
+    const auto temporary = fs::path("/private/tmp");
+#else
+    const auto temporary = fs::temp_directory_path();
+#endif
+    base = temporary / ("fp-" + folio::core::Id::generate().to_string().substr(0, 8));
     ASSERT_TRUE(fs::create_directory(base));
     base = fs::canonical(base);
     paths = {base / "normal", base / "vault",
@@ -75,9 +83,9 @@ class Processes : public testing::Test {
     fs::create_directory(control);
     auto result = app::launch_process(fs::path{FOLIO_PROCESS_CHILD},
         {config_base.empty() ? base : config_base, control, normal.empty() ? paths.normal_root : normal});
-    if (auto* error = std::get_if<app::ProcessError>(&result))
+    if (auto* error = std::get_if<folio::application::ProcessError>(&result))
       throw std::runtime_error(error->message + ": " + error->system_error.message());
-    Child child{std::get<app::LaunchedProcess>(result).id, control};
+    Child child{std::get<folio::application::LaunchedProcess>(result).id, control};
     children.push_back(child);
     if (!until([&] { return fs::exists(control / "started"); }))
       throw std::runtime_error("Child did not start");
@@ -96,10 +104,10 @@ TEST_F(Processes, LaunchReportsExecFailureAndResolvesActualExecutable) {
   ASSERT_TRUE(std::holds_alternative<fs::path>(executable));
   EXPECT_TRUE(fs::is_regular_file(std::get<fs::path>(executable)));
   auto result = app::launch_process(base / "does-not-exist", {});
-  ASSERT_TRUE(std::holds_alternative<app::ProcessError>(result));
-  EXPECT_EQ(std::get<app::ProcessError>(result).code, app::ProcessErrorCode::LaunchFailed);
-  EXPECT_TRUE(std::get<app::ProcessError>(result).system_error);
-  EXPECT_TRUE(std::holds_alternative<app::ProcessError>(app::launch_process("relative", {})));
+  ASSERT_TRUE(std::holds_alternative<folio::application::ProcessError>(result));
+  EXPECT_EQ(std::get<folio::application::ProcessError>(result).code, folio::application::ProcessErrorCode::LaunchFailed);
+  EXPECT_TRUE(std::get<folio::application::ProcessError>(result).system_error);
+  EXPECT_TRUE(std::holds_alternative<folio::application::ProcessError>(app::launch_process("relative", {})));
 }
 
 TEST_F(Processes, BackendCanOutliveItsLaunchingProcess) {
@@ -107,11 +115,11 @@ TEST_F(Processes, BackendCanOutliveItsLaunchingProcess) {
   fs::create_directory(control);
   auto result = app::launch_process(fs::path{FOLIO_PROCESS_CHILD},
       {"--test-launch-child", base, control, paths.normal_root});
-  ASSERT_TRUE(std::holds_alternative<app::LaunchedProcess>(result));
+  ASSERT_TRUE(std::holds_alternative<folio::application::LaunchedProcess>(result));
   ASSERT_TRUE(until([&] { return fs::exists(control / "launcher-result"); }));
   Child child{std::stoull(read(control / "launcher-result")), control};
   children.push_back(child);
-  const auto launcher = std::get<app::LaunchedProcess>(result).id;
+  const auto launcher = std::get<folio::application::LaunchedProcess>(result).id;
 #ifndef _WIN32  // POSIX (Linux and macOS)
   ASSERT_TRUE(until([&] { return kill(static_cast<pid_t>(launcher), 0) == -1 && errno == ESRCH; }));
 #else  // Windows
@@ -131,8 +139,8 @@ TEST_F(Processes, OwnershipIsMoveOnlyAndLockFilesSurviveRelease) {
     ASSERT_TRUE(std::holds_alternative<app::RepositoryOwnership>(first));
     auto owner = std::move(std::get<app::RepositoryOwnership>(first));
     auto second = app::RepositoryOwnership::acquire(paths);
-    ASSERT_TRUE(std::holds_alternative<app::ProcessError>(second));
-    EXPECT_EQ(std::get<app::ProcessError>(second).code, app::ProcessErrorCode::AlreadyOwned);
+    ASSERT_TRUE(std::holds_alternative<folio::application::ProcessError>(second));
+    EXPECT_EQ(std::get<folio::application::ProcessError>(second).code, folio::application::ProcessErrorCode::AlreadyOwned);
     EXPECT_FALSE(fs::exists(paths.vault_root));
   }
   EXPECT_TRUE(fs::is_regular_file(paths.application.state / "backend.lock"));
@@ -144,8 +152,8 @@ TEST_F(Processes, IndependentProcessHoldsOwnershipUntilExplicitRelease) {
   auto child = spawn();
   ASSERT_EQ(acquire(child), "owned");
   auto result = app::RepositoryOwnership::acquire(paths);
-  ASSERT_TRUE(std::holds_alternative<app::ProcessError>(result));
-  EXPECT_EQ(std::get<app::ProcessError>(result).code, app::ProcessErrorCode::AlreadyOwned);
+  ASSERT_TRUE(std::holds_alternative<folio::application::ProcessError>(result));
+  EXPECT_EQ(std::get<folio::application::ProcessError>(result).code, folio::application::ProcessErrorCode::AlreadyOwned);
   touch(child.control / "release");
   ASSERT_TRUE(until([&] { return fs::exists(child.control / "released"); }));
   EXPECT_TRUE(std::holds_alternative<app::RepositoryOwnership>(app::RepositoryOwnership::acquire(paths)));
@@ -184,8 +192,8 @@ TEST_F(Processes, DifferentStateLocationsStillProtectSharedNormalRoot) {
   auto other = paths;
   other.application.state = base / "other-state";
   auto result = app::RepositoryOwnership::acquire(other);
-  ASSERT_TRUE(std::holds_alternative<app::ProcessError>(result));
-  EXPECT_EQ(std::get<app::ProcessError>(result).code, app::ProcessErrorCode::AlreadyOwned);
+  ASSERT_TRUE(std::holds_alternative<folio::application::ProcessError>(result));
+  EXPECT_EQ(std::get<folio::application::ProcessError>(result).code, folio::application::ProcessErrorCode::AlreadyOwned);
   // Failure on the root lock must release the earlier State lock.
   other.normal_root = base / "other-normal";
   EXPECT_TRUE(std::holds_alternative<app::RepositoryOwnership>(app::RepositoryOwnership::acquire(other)));
@@ -199,8 +207,8 @@ TEST_F(Processes, ExistingVaultIsProtectedButAbsentVaultIsNeverCreated) {
   other.application.state = base / "other-state";
   other.normal_root = base / "other-normal";
   auto result = app::RepositoryOwnership::acquire(other);
-  ASSERT_TRUE(std::holds_alternative<app::ProcessError>(result));
-  EXPECT_EQ(std::get<app::ProcessError>(result).code, app::ProcessErrorCode::AlreadyOwned);
+  ASSERT_TRUE(std::holds_alternative<folio::application::ProcessError>(result));
+  EXPECT_EQ(std::get<folio::application::ProcessError>(result).code, folio::application::ProcessErrorCode::AlreadyOwned);
 }
 
 TEST_F(Processes, ProcessOwnershipNeverTouchesMarkerOrIndex) {
@@ -212,22 +220,26 @@ TEST_F(Processes, ProcessOwnershipNeverTouchesMarkerOrIndex) {
   touch(index, "existing index");
   const auto marker_time = fs::last_write_time(marker);
   const auto index_time = fs::last_write_time(index);
-  EXPECT_EQ(app::run_backend(paths), app::backend_service_unavailable_exit);
+  {
+    auto ownership = app::RepositoryOwnership::acquire(paths);
+    ASSERT_TRUE(std::holds_alternative<app::RepositoryOwnership>(ownership));
+  }
   EXPECT_EQ(read(marker), "existing session");
   EXPECT_EQ(read(index), "existing index");
   EXPECT_EQ(fs::last_write_time(marker), marker_time);
   EXPECT_EQ(fs::last_write_time(index), index_time);
   auto owner = app::RepositoryOwnership::acquire(paths);
   ASSERT_TRUE(std::holds_alternative<app::RepositoryOwnership>(owner));
-  EXPECT_EQ(app::run_backend(paths), app::backend_already_owned_exit);
+  app::testing::ScopedConfigurationOverride configuration(paths);
+  EXPECT_EQ(folio::application::run_backend(), 4);
 }
 
 TEST_F(Processes, UnsafeTargetsAndCacheLockLocationAreRejected) {
   auto invalid = paths;
   invalid.application.state = paths.application.cache / "state";
-  EXPECT_TRUE(std::holds_alternative<app::ProcessError>(app::RepositoryOwnership::acquire(invalid)));
+  EXPECT_TRUE(std::holds_alternative<folio::application::ProcessError>(app::RepositoryOwnership::acquire(invalid)));
   fs::create_directories(paths.application.state / "backend.lock");
-  EXPECT_TRUE(std::holds_alternative<app::ProcessError>(app::RepositoryOwnership::acquire(paths)));
+  EXPECT_TRUE(std::holds_alternative<folio::application::ProcessError>(app::RepositoryOwnership::acquire(paths)));
 }
 
 TEST_F(Processes, NativeUnicodeAndSpaceArgumentsReachIndependentChild) {
@@ -246,15 +258,15 @@ TEST_F(Processes, PhysicalRootAliasesContendAcrossProcesses) {
   auto child = spawn(base / "other-config", alias);
   ASSERT_EQ(acquire(child), "owned");
   auto result = app::RepositoryOwnership::acquire(paths);
-  ASSERT_TRUE(std::holds_alternative<app::ProcessError>(result));
-  EXPECT_EQ(std::get<app::ProcessError>(result).code, app::ProcessErrorCode::AlreadyOwned);
+  ASSERT_TRUE(std::holds_alternative<folio::application::ProcessError>(result));
+  EXPECT_EQ(std::get<folio::application::ProcessError>(result).code, folio::application::ProcessErrorCode::AlreadyOwned);
 }
 
 TEST_F(Processes, LockTargetSymlinkIsRejectedWithoutChangingDestination) {
   fs::create_directories(paths.application.state);
   touch(base / "unrelated", "preserve");
   fs::create_symlink(base / "unrelated", paths.application.state / "backend.lock");
-  EXPECT_TRUE(std::holds_alternative<app::ProcessError>(app::RepositoryOwnership::acquire(paths)));
+  EXPECT_TRUE(std::holds_alternative<folio::application::ProcessError>(app::RepositoryOwnership::acquire(paths)));
   EXPECT_EQ(read(base / "unrelated"), "preserve");
 }
 

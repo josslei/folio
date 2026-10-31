@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/internal/result.hpp"
+#include <folio/core/result.hpp>
 
 #include "folio/core/directory.hpp"
 #include "folio/core/types.hpp"
@@ -26,7 +26,7 @@ struct BinaryReadError {
 
 // Reads opaque bytes, including embedded NUL. The caller supplies the cap and
 // owns path confinement and symlink policy.
-[[nodiscard]] ::folio::core::internal::Result<std::string, BinaryReadError> read_binary_file(
+[[nodiscard]] ::folio::core::Result<std::string, BinaryReadError> read_binary_file(
     const std::filesystem::path& path, std::size_t max_bytes);
 
 // Effective application-owned directories, supplied explicitly for now. Platform
@@ -83,9 +83,9 @@ struct StorageError {
 // when checking authoritative roots against each other and application paths.
 // Application categories may share or nest directories; authoritative storage
 // must remain disjoint from all application-managed directories.
-[[nodiscard]] ::folio::core::internal::Result<StoragePaths, StorageError> validate_storage_paths(const StoragePaths& paths);
+[[nodiscard]] ::folio::core::Result<StoragePaths, StorageError> validate_storage_paths(const StoragePaths& paths);
 
-[[nodiscard]] ::folio::core::internal::Result<std::string, StorageError> normal_record_filename(
+[[nodiscard]] ::folio::core::Result<std::string, StorageError> normal_record_filename(
     RecordType type, const core::Id& id, core::Timestamp created);
 
 // Contents are opaque bytes: no text encoding, parsing, or encryption occurs
@@ -104,9 +104,9 @@ struct StorageError {
 // A failure after publication requires caller reconciliation before further
 // writes; recovery is outside this API. A successful rename is not rolled back
 // by a failed sync.
-[[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> create_file_atomic(
+[[nodiscard]] ::folio::core::Result<std::monostate, StorageError> create_file_atomic(
     const std::filesystem::path& path, std::string_view contents);
-[[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> replace_file_atomic(
+[[nodiscard]] ::folio::core::Result<std::monostate, StorageError> replace_file_atomic(
     const std::filesystem::path& path, std::string_view contents);
 
 // Lifecycle-only durability helpers. Absolute paths without symlink components
@@ -118,16 +118,16 @@ struct StorageError {
 // means the unlink happened, not that its durability was confirmed.
 // Windows flushes file contents; directory creation/deletion metadata has no
 // portable flush guarantee through these APIs. See architecture durability notes.
-[[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError>
+[[nodiscard]] ::folio::core::Result<std::monostate, StorageError>
 create_directories_durable(const std::filesystem::path& path);
 // Presence-only files need no staged payload: exclusive creation avoids orphan
 // staging files blocking the next lifecycle attempt. Existing files are never
 // overwritten. A failed sync leaves the published empty file conservatively.
-[[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError>
+[[nodiscard]] ::folio::core::Result<std::monostate, StorageError>
 create_empty_file_durable(const std::filesystem::path& path);
-[[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError>
+[[nodiscard]] ::folio::core::Result<std::monostate, StorageError>
 sync_regular_file(const std::filesystem::path& path);
-[[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError>
+[[nodiscard]] ::folio::core::Result<std::monostate, StorageError>
 remove_file_durable(const std::filesystem::path& path);
 
 }  // namespace folio::core::storage

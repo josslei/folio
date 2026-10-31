@@ -60,7 +60,7 @@ Private process code uses `folio::application::internal`. Domain/Storage namespa
 | [IndexCodec](../lib/src/storage/index_codec.hpp) | Pure deterministic MessagePack encode/decode; temporary validated Catalog, no file I/O |
 | [Filesystem](../lib/src/storage/filesystem.hpp) | Binary reads, safe paths, filenames, atomic create/replace |
 
-There is no BinaryIO, IndexStore, IndexBuilder, IndexRefresh, Application Service, daemon service loop, or IPC implementation. Private process launching and OS ownership are implemented under `lib/src/runtime/`. The [executable](../app/src/main.cpp) dispatches default welcome TUI or internal Backend bootstrap; neither initializes Catalog lifecycle or saves an Index in Phase 4.1a. The historical `binary_io_test.cpp` filename does not denote a production BinaryIO module.
+There is no BinaryIO, IndexStore, IndexBuilder, IndexRefresh, Application Service, daemon service loop, or IPC implementation. Private process launching and OS ownership are implemented under `lib/src/application/internal/`. The [executable](../app/src/main.cpp) dispatches default welcome TUI or internal Backend bootstrap; neither initializes Catalog lifecycle or saves an Index in Phase 4.1a. The historical `binary_io_test.cpp` filename does not denote a production BinaryIO module.
 
 ## Catalog-centric flows — Implemented internal capabilities
 
@@ -163,8 +163,10 @@ The single static `folio_backend` target owns public headers in `lib/include/`
 and private Core, Storage and runtime implementations in `lib/src/`. The `folio`
 executable owns `app/src/main.cpp` and TUI code and links that library. Its include
 paths contain `app/src/` and the library's public headers, never `lib/src/`.
-`folio/application/backend.hpp` exports only the existing internal-mode dispatch
-entry point and argument spelling; no Storage types are exposed. Tests explicitly
+`folio/application/backend.hpp` exposes Backend launching and the internal-mode
+execution entry point. `backend_connection_handle.hpp` exposes shared Backend connection
+and handshake/startup functionality for all Frontends. Generic process creation
+is private under `application/internal/`; no Storage types are exposed. Tests explicitly
 receive `lib/src/` when testing internals. FTXUI and CLI11 belong to the executable.
 Build-target ownership does not alter the separate-process Backend architecture.
 
@@ -172,3 +174,14 @@ Phase 4.1a is complete. Phase 4.1a.5 is the structure-only refactor. The unrevie
 4.1b implementation is retained separately in a Git stash and is not included in
 this changeset. Its restoration and conflict resolution must preserve IPC behavior;
 Phase 4.2 has not started. No placeholder module directories are required.
+
+
+### Phase 4.1b status update
+
+Internal local IPC, readiness handshake, Client lifetime, bootstrap configuration,
+and Backend Catalog startup/finalization are now implemented. The default welcome
+TUI connects to or starts the Backend and retains its connection. See the
+[implemented connection lifecycle](application-design.md#phase-41b-connection-lifecycle--implemented)
+for current contracts. Earlier Phase 4.1a-only baseline statements above describe
+the prior milestone. Public Application operations, queues, Edit Locks and Push
+Events remain planned.

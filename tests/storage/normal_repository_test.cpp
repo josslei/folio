@@ -116,19 +116,19 @@ const storage::StorageError& diagnostic(const storage::RepositoryMutationError& 
 }
 
 template <typename T, typename Error>
-void expect_error(const ::folio::core::internal::Result<T, Error>& result) {
+void expect_error(const ::folio::core::Result<T, Error>& result) {
   EXPECT_TRUE(std::holds_alternative<Error>(result));
 }
 
 template <typename T, typename Error>
-void expect_error_code(const ::folio::core::internal::Result<T, Error>& result,
+void expect_error_code(const ::folio::core::Result<T, Error>& result,
                        storage::StorageErrorCode code) {
   ASSERT_TRUE(std::holds_alternative<Error>(result));
   EXPECT_EQ(diagnostic(std::get<Error>(result)).code, code);
 }
 
 template <typename T, typename Error>
-bool operation_succeeded(const ::folio::core::internal::Result<T, Error>& result) {
+bool operation_succeeded(const ::folio::core::Result<T, Error>& result) {
   if (std::holds_alternative<T>(result)) return true;
   const auto& error = diagnostic(std::get<Error>(result));
   ADD_FAILURE() << "StorageError code=" << static_cast<int>(error.code)

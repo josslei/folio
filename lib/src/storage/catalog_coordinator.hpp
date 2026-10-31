@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/internal/result.hpp"
+#include <folio/core/result.hpp>
 
 #include "storage/filesystem.hpp"
 #include "storage/index_codec.hpp"
@@ -58,18 +58,18 @@ class CatalogCoordinator {
   // or a previous durable Session Marker exists. Ready requires a durable Marker.
   // Uses application.cache/index/normal.msgpack; former State indexes are ignored
   // and are neither migrated nor removed. Construction performs no Index I/O.
-  [[nodiscard]] ::folio::core::internal::Result<InitializationOutcome, CoordinatorError>
+  [[nodiscard]] ::folio::core::Result<InitializationOutcome, CoordinatorError>
   startup_load();
   // Explicit full replacement from authoritative Normal files, not a targeted
   // correction of individual cached records.
-  [[nodiscard]] ::folio::core::internal::Result<std::vector<ExcludedObject>, CoordinatorError>
+  [[nodiscard]] ::folio::core::Result<std::vector<ExcludedObject>, CoordinatorError>
   refresh_all();
-  [[nodiscard]] ::folio::core::internal::Result<SaveOutcome, CoordinatorError> shutdown_save();
+  [[nodiscard]] ::folio::core::Result<SaveOutcome, CoordinatorError> shutdown_save();
   // Backend shutdown entry point: stop work first, then call finish_session().
   // Saves if needed, then durably removes the Marker; failures are retryable.
   // shutdown_save() alone leaves the Marker in place and does not end a session.
   // No authoritative mutations may follow successful finalization.
-  [[nodiscard]] ::folio::core::internal::Result<SaveOutcome, CoordinatorError> finish_session();
+  [[nodiscard]] ::folio::core::Result<SaveOutcome, CoordinatorError> finish_session();
   [[nodiscard]] CatalogStatus status() const noexcept;
   // Created once by the constructor. Accessors borrow the stored callbacks;
   // use them by const reference and keep this coordinator alive during use.
@@ -113,7 +113,7 @@ class CatalogCoordinator {
   MutationResultCallback<Metadata> wrap_catalog_update(Update update) {
     return [this, update = std::move(update)](
         const MutationNotification<Metadata>& notification)
-        -> ::folio::core::internal::Result<std::monostate, StorageError> {
+        -> ::folio::core::Result<std::monostate, StorageError> {
       if (const auto* failure = std::get_if<
               std::reference_wrapper<const RepositoryMutationError>>(&notification)) {
         if (failure->get().stage != MutationFailureStage::BeforeAuthoritativeChange)
@@ -139,9 +139,9 @@ class CatalogCoordinator {
   // Explicit full rebuild/Refresh from authoritative Normal files. Failure
   // preserves catalog and readiness; success is Ready and unpersisted, with no
   // Index I/O, and prevents a later stale startup load from replacing it.
-  [[nodiscard]] ::folio::core::internal::Result<std::vector<ExcludedObject>, CoordinatorError> rebuild();
-  [[nodiscard]] ::folio::core::internal::Result<bool, CoordinatorError> previous_marker() const;
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, CoordinatorError> establish_marker();
+  [[nodiscard]] ::folio::core::Result<std::vector<ExcludedObject>, CoordinatorError> rebuild();
+  [[nodiscard]] ::folio::core::Result<bool, CoordinatorError> previous_marker() const;
+  [[nodiscard]] ::folio::core::Result<std::monostate, CoordinatorError> establish_marker();
   StoragePaths paths_;
   MetadataCatalog& catalog_;
   CatalogStatus status_ = CatalogStatus::Unloaded;

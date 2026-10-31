@@ -86,3 +86,8 @@ Phase 4 status: 4.1a is complete; 4.1a.5 reorganizes physical files and targets
 without behavioral changes. The separately preserved 4.1b implementation awaits
 review/acceptance and restoration after the structural commit. Phase 4.2 is not
 started.
+
+
+Phase 4 progress: private process ownership and local IPC connection/lifecycle
+support are implemented through 4.1b. Public Application contracts and operations
+remain the next design boundary; no CRUD, queue, Edit Locks or events exist yet.

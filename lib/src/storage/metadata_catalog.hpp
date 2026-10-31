@@ -121,16 +121,16 @@ struct RootListing {
 // indirectly. UUID lookup and Directory membership listing use ordered IDs.
 class MetadataCatalog {
  public:
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> insert_record(RecordMetadata metadata);
+  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError> insert_record(RecordMetadata metadata);
   // Identical updates are successful no-ops and preserve unpersisted state.
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> update_record(RecordMetadata metadata);
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> remove_record(const Id& id);
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> insert_directory(DirectoryMetadata metadata);
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> update_directory(DirectoryMetadata metadata);
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> remove_directory(const Id& id);
+  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError> update_record(RecordMetadata metadata);
+  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError> remove_record(const Id& id);
+  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError> insert_directory(DirectoryMetadata metadata);
+  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError> update_directory(DirectoryMetadata metadata);
+  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError> remove_directory(const Id& id);
   // Validates a complete candidate in isolation, then adopts it atomically.
   // A successful replacement is unpersisted even if all vectors are empty.
-  [[nodiscard]] ::folio::core::internal::Result<std::monostate, StorageError> rebuild(
+  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError> rebuild(
       std::vector<LogMetadata> logs,
       std::vector<MemoMetadata> memos,
       std::vector<TodoMetadata> todos,
@@ -141,7 +141,7 @@ class MetadataCatalog {
   [[nodiscard]] std::optional<RecordMetadata> find_record(const Id& id) const;
   [[nodiscard]] std::optional<DirectoryMetadata> find_directory(const Id& id) const;
   [[nodiscard]] RootListing list_root(RecordType module) const;
-  [[nodiscard]] ::folio::core::internal::Result<std::vector<RecordMetadata>, StorageError> list_directory(
+  [[nodiscard]] ::folio::core::Result<std::vector<RecordMetadata>, StorageError> list_directory(
       DirectoryKind kind, const Id& id) const;
   [[nodiscard]] std::vector<DirectoryMetadata> list_directories(DirectoryKind kind) const;
   [[nodiscard]] std::vector<RecordMetadata> query(const RecordQuery& query = {}) const;

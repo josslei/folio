@@ -1,7 +1,8 @@
+#include "application/internal/process.hpp"
 // Test-only independent process. File barriers belong only to these tests;
 // they are not a Folio IPC protocol or production Backend lifecycle.
-#include "runtime/repository_ownership.hpp"
-#include "runtime/backend.hpp"
+#include "application/internal/repository_ownership.hpp"
+#include <folio/application/backend.hpp>
 
 #include <chrono>
 #include <fstream>
@@ -33,11 +34,11 @@ int wmain(int argc, wchar_t** argv) {
   for (int i = 1; i < argc; ++i) arguments.emplace_back(argv[i]);
   if (arguments.size() == 4 && arguments[0] == "--test-launch-child") {
     auto executable = app::current_executable();
-    if (std::holds_alternative<app::ProcessError>(executable)) return 1;
+    if (std::holds_alternative<folio::application::ProcessError>(executable)) return 1;
     auto result = app::launch_process(std::get<fs::path>(executable),
                                     {arguments[1], arguments[2], arguments[3]});
-    if (std::holds_alternative<app::ProcessError>(result)) return 1;
-    report(arguments[2] / "launcher-result", std::to_string(std::get<app::LaunchedProcess>(result).id));
+    if (std::holds_alternative<folio::application::ProcessError>(result)) return 1;
+    report(arguments[2] / "launcher-result", std::to_string(std::get<folio::application::LaunchedProcess>(result).id));
     return 0;
   }
   if (arguments.size() != 3) return 2;
@@ -54,9 +55,9 @@ int wmain(int argc, wchar_t** argv) {
   }
   {
     auto owner = app::RepositoryOwnership::acquire(paths);
-    if (auto* error = std::get_if<app::ProcessError>(&owner)) {
-      report(control / "result", error->code == app::ProcessErrorCode::AlreadyOwned ? "busy" : "error:" + error->message);
-      return error->code == app::ProcessErrorCode::AlreadyOwned ? 4 : 1;
+    if (auto* error = std::get_if<folio::application::ProcessError>(&owner)) {
+      report(control / "result", error->code == folio::application::ProcessErrorCode::AlreadyOwned ? "busy" : "error:" + error->message);
+      return error->code == folio::application::ProcessErrorCode::AlreadyOwned ? 4 : 1;
     }
     report(control / "result", "owned");
     while (!fs::exists(control / "release")) {

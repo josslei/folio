@@ -1,4 +1,6 @@
 add_library(folio_backend STATIC
+  src/application/internal/configuration.cpp
+  src/application/ipc.cpp
   src/core/directory.cpp
   src/core/id.cpp
   src/core/log.cpp
@@ -6,9 +8,12 @@ add_library(folio_backend STATIC
   src/core/todo.cpp
   src/core/types.cpp
   src/core/version.cpp
-  src/runtime/backend.cpp
-  src/runtime/process.cpp
-  src/runtime/repository_ownership.cpp
+  src/application/backend.cpp
+  src/application/backend_connection_handle.cpp
+  src/application/internal/backend_state_machine.cpp
+  src/application/internal/backend_states.cpp
+  src/application/internal/process.cpp
+  src/application/internal/repository_ownership.cpp
   src/storage/catalog_coordinator.cpp
   src/storage/codec.cpp
   src/storage/filesystem.cpp
@@ -26,4 +31,8 @@ target_link_libraries(folio_backend PRIVATE folio_sodium tomlplusplus::tomlplusp
 if(UNIX)
   find_package(Threads REQUIRED)
   target_link_libraries(folio_backend PRIVATE Threads::Threads)
+endif()
+
+if(WIN32)
+  target_link_libraries(folio_backend PRIVATE shell32 ole32 advapi32)
 endif()

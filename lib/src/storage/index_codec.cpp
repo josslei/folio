@@ -556,7 +556,7 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
 }
 }  // namespace
 
-::folio::core::internal::Result<std::string, IndexCodecError> encode_index(const MetadataCatalog& catalog) {
+::folio::core::Result<std::string, IndexCodecError> encode_index(const MetadataCatalog& catalog) {
   try {
     auto directories = catalog.list_directories(DirectoryKind::Memo);
     auto todo_directories = catalog.list_directories(DirectoryKind::Todo);
@@ -593,7 +593,7 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
   }
 }
 
-::folio::core::internal::Result<MetadataCatalog, IndexCodecError> decode_index(std::string_view bytes) {
+::folio::core::Result<MetadataCatalog, IndexCodecError> decode_index(std::string_view bytes) {
   try {
     require(bytes.size() <= kMaxBytes, IndexCodecErrorCode::LimitExceeded,
             "", "Index exceeds 64 MiB");

@@ -70,14 +70,23 @@ if(MINGW)
   target_link_options(folio_process_child PRIVATE -municode)
 endif()
 
-add_executable(folio_application_tests application/process_test.cpp)
+add_executable(folio_backend_child application/backend_child.cpp)
+target_include_directories(folio_backend_child PRIVATE "${PROJECT_SOURCE_DIR}/lib/src")
+target_compile_features(folio_backend_child PRIVATE cxx_std_20)
+target_link_libraries(folio_backend_child PRIVATE folio_backend)
+if(MINGW)
+  target_link_options(folio_backend_child PRIVATE -municode)
+endif()
+add_executable(folio_application_tests application/backend_states_test.cpp application/backend_lifecycle_test.cpp application/process_test.cpp application/backend_test.cpp)
 target_include_directories(folio_application_tests PRIVATE "${PROJECT_SOURCE_DIR}/lib/src")
 target_compile_features(folio_application_tests PRIVATE cxx_std_20)
 set_target_properties(folio_application_tests PROPERTIES CXX_EXTENSIONS OFF)
 target_link_libraries(folio_application_tests PRIVATE folio_backend GTest::gtest_main)
 target_compile_definitions(folio_application_tests PRIVATE
   "FOLIO_PROCESS_CHILD=\"$<TARGET_FILE:folio_process_child>\"")
-add_dependencies(folio_application_tests folio_process_child folio)
+target_compile_definitions(folio_application_tests PRIVATE
+  "FOLIO_BACKEND_CHILD=\"$<TARGET_FILE:folio_backend_child>\"")
+add_dependencies(folio_application_tests folio_process_child folio_backend_child folio)
 gtest_discover_tests(folio_application_tests DISCOVERY_TIMEOUT 30 PROPERTIES TIMEOUT 30)
 
 # Exercise the real executable's CLI11 parsing without opening an interactive TUI.
@@ -85,7 +94,10 @@ add_test(NAME Cli.Help COMMAND folio --help)
 set_tests_properties(Cli.Help PROPERTIES PASS_REGULAR_EXPRESSION "Print this help message and exit")
 add_test(NAME Cli.RejectsUnknownCommand COMMAND folio unknown-command)
 set_tests_properties(Cli.RejectsUnknownCommand PROPERTIES WILL_FAIL TRUE)
-# The incomplete Backend bootstrap reports unavailable with a nonzero exit.
+# Missing synthetic configuration makes private-mode parser tests exit before Storage.
 add_test(NAME Cli.BackendMode COMMAND folio --backend-process)
 add_test(NAME Cli.BackendIgnoresOtherArguments COMMAND folio --help unknown --backend-process --invalid)
 set_tests_properties(Cli.BackendMode Cli.BackendIgnoresOtherArguments PROPERTIES WILL_FAIL TRUE)
+
+set_tests_properties(Cli.BackendMode Cli.BackendIgnoresOtherArguments PROPERTIES
+  ENVIRONMENT "FOLIO_CONFIG_FILE=${CMAKE_CURRENT_BINARY_DIR}/absent-config.toml")

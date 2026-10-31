@@ -59,7 +59,7 @@ Before implementation resolve launcher/lock race handling, platform IPC transpor
 
 ## Process foundation — Implemented in Phase 4.1a
 
-Private implementation lives in [src/application](../lib/src/runtime/), compiled
+Private implementation lives in [src/application](../lib/src/application/internal/), compiled
 as `folio_application` with a private dependency on the existing `folio_backend`.
 The executable entry point is [app/src/main.cpp](../app/src/main.cpp); presentation stays
 in `app/src/tui/`. No Application headers are public yet. Public Application APIs
@@ -74,10 +74,18 @@ in `backend.cpp`, OS process mechanisms in `process.cpp`, and exclusive ownershi
 in `repository_ownership.cpp`. Unrecognized/incomplete arguments fail before opening
 the TUI. This argument
 format is private bootstrap plumbing, not a supported command/configuration API.
-`launch_backend()` resolves the current executable through the OS and launches
-it with only `--backend-process`. Paths must come from Backend-owned configuration, never command-line arguments. It reports executable creation, not ownership or readiness.
-There is no automatic launch from the welcome TUI while configuration and IPC
-are absent.
+The shared Application function `launch_backend()` in `backend.hpp` resolves the
+current executable through private OS helpers and starts it with only
+`--backend-process`. Paths come from configuration, never command-line arguments.
+Successful launch means process creation, not ownership or readiness.
+
+`BackendConnectionHandle` and `connect_or_start_backend()` are shared Application
+functionality in `backend_connection_handle.hpp/.cpp`, reusable by TUI, CLI, or a future
+GUI. The TUI holds a connection during its lifetime; it does not implement process
+launching or IPC connection policy. Generic `launch_process()` and
+`current_executable()` declarations and implementations are private under
+`application/internal/`. Tests receive explicit private include access; no
+Frontend implementation source is compiled into tests.
 
 On POSIX, `launch_process()` uses a detached double-fork/exec sequence. All C++
 argument preparation happens before fork; children perform only signal-safe OS
@@ -125,14 +133,15 @@ locks alone does not establish a durable Session Marker or application readiness
 See the OS contracts for [flock](https://man7.org/linux/man-pages/man2/flock.2.html)
 and [LockFileEx](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex).
 
-Configuration loading remains deferred: production `run_backend()` currently
-returns exit code 3 without accessing user directories. The explicitly injected
-`run_backend(paths)` internal overload exercises ownership/bootstrap in tests;
-it acquires ownership and immediately returns exit code 3 (service unavailable); contention returns 4, other acquisition errors return 1.
-It never starts Catalog lifecycle or claims Ready. There is no idle daemon or
-placeholder IPC loop. The test-only child executable uses bounded file barriers
-to exercise long-lived ownership, independent processes and forced termination;
-these barriers are absent from production.
+The executable dispatches Backend mode to the single public
+`folio::application::run_backend()` entry point. Backend startup resolves
+configuration and effective paths internally, then acquires ownership before
+initializing Storage. Tests use a private scoped configuration override with
+isolated temporary paths; no Storage types appear in the public Backend header.
+Configuration resolution itself does not create directories.
+
+The following paragraph records the original Phase 4.1a integration boundary;
+Phase 4.1b implementation status is described below.
 
 Phase 4.1b must replace the bounded bootstrap with connection/handshake handling,
 retain ownership for the whole Backend lifetime, call Coordinator startup before
@@ -150,3 +159,115 @@ remain under `lib/src/`, available explicitly to internal tests only. Frontend
 operations must retain their IPC path when the separately stashed 4.1b work is
 restored; linking the Backend library does not authorize bypassing IPC.
 Phase 4.1b exists but awaits review/acceptance; this refactor adds no functionality.
+
+
+## Phase 4.1b connection lifecycle — Implemented
+
+Private `application/client.hpp`, `ipc.hpp`, and `backend.hpp` implement on-demand
+connections. Default Frontend startup retains a Client through the welcome TUI;
+connection loss exits the TUI with an explicit error. No automatic request replay
+occurs. Public operations remain Phase 4.2.
+
+Bootstrap reads `<config>/config.toml` (or explicit `FOLIO_CONFIG_FILE`) with exactly
+two UTF-8 string keys: `normal_root` and `vault_root`, both absolute. Missing or
+invalid configuration fails without selecting authoritative roots. No wizard or
+configuration writer exists. Linux uses XDG defaults/absolute overrides; macOS
+uses Library Application Support/Folio, Library/Caches/Folio and confstr's user
+temporary directory; Windows uses Roaming/Local Known Folders. Resolution creates
+nothing. Internal tests inject all effective directories.
+
+Unix uses a user-owned 0700 directory and 0600 Unix socket, with OS peer UID
+verification. Runtime is preferred; a private State/ipc directory is the fallback.
+Windows uses duplex local Named Pipes with a current-user SID DACL and remote
+clients rejected. Endpoint names are not authentication. RepositoryOwnership is
+required before stale endpoint cleanup, binding, Catalog startup, or finalization.
+Only stale sockets are reclaimed; live endpoints are preserved.
+
+Frames use a big-endian 32-bit length (including the following header), 16-bit
+version 1 and 16-bit kind; the maximum frame body is 64 KiB. Hello/Ready confirm protocol compatibility and readiness with empty payloads;
+Ping/Pong also carry no payload. Reject
+contains an internal diagnostic. Unknown versions/kinds/invalid lengths are
+rejected. This internal lifecycle protocol has no CRUD or event schemas.
+
+One Backend loop owns lifecycle and all connection state, capped at 64 peers.
+Handshake/partial-frame/output deadlines are three seconds. A ten-second initial
+registration window permits the launching Client to arrive. Once Clients have
+registered, the final disconnect stops admission immediately. Pending handshakes
+may retry against the next owner; startup retries are bounded to fifteen seconds.
+The five-millisecond transport poll interval is not a persistence timer.
+
+The endpoint is bound under ownership before Storage initialization so startup
+errors can be returned, but no successful handshake is processed until
+`CatalogCoordinator::startup_load()` succeeds. No Ready precedes the durable
+Marker. Shutdown closes admission/connections, explicitly calls `finish_session()`,
+and releases ownership last. Failed finalization returns failure and retains the
+Marker according to Storage's existing contract. Backend crashes release locks,
+break connections and leave Marker-based reconstruction for the next session.
+There are no application operations to drain yet; Phase 4.3 must extend this
+single lifecycle boundary to account for queued/active work.
+
+`run_backend()` defines five lifecycle states: Bootstrap, Serve, Stopping,
+Report, and Finish. Bootstrap performs configuration, ownership acquisition,
+and Storage initialization. Serve serves connections. Stopping closes admission.
+Unrecoverable failures in Bootstrap, Serve, or Stopping go to the same Report state;
+Report always proceeds to Finish, including when reporting fails. The executor
+executes Finish's final cleanup action before finishing, rather than merely
+using it as a loop termination condition.
+
+The independent private `BackendStateMachine` module only executes registered
+handlers and follows the supplied transition table. It has no Storage, IPC, or
+configuration dependencies. `backend_states.cpp` implements five standalone
+handlers and registers them once against a shared data-only `BackendContext`.
+`run_backend()` shows the transition table and assembles the machine with those
+handlers. Handler implementation changes do not alter the lifecycle table.
+Executor tests register synthetic handlers directly; no production test hook is
+needed.
+
+Finish closes admission even when Stopping was bypassed, attempts session finalization only
+after successful initialization, and releases resources including ownership.
+Failed startup cannot certify an incomplete Catalog or clear its Marker.
+Finalization failure or an ordinary finalization exception still allows resource
+release. Final cleanup diagnostics remain local stderr output until the logging
+system is designed; they are retained internally without returning to Report.
+
+The context retains ordered typed diagnostics tagged with their lifecycle phase.
+Process, IPC, and Coordinator errors keep their codes, paths, system errors, and
+nested causes; exceptions keep their exception pointers. The first failure is
+primary and later reporting/cleanup failures append without replacing it.
+Formatting occurs only for presentation. The successful-initialization flag is
+a historical cleanup obligation, not an assertion of current consistency:
+Coordinator retains authority to reject unsafe finalization and preserve its
+Marker. Resource ownership itself determines which handles need release.
+
+Report retains the existing bounded startup handshake rejection where an endpoint
+was established, and prints queued diagnostics. Configuration and ownership
+failures before an endpoint exists still lack reliable Frontend delivery. On
+serving-loop failure its connections close before Report; no final broadcast is
+promised. Multiple Frontends remain independent, and the final disconnect ends
+the session. Complete final Frontend reporting and pre-IPC bootstrap delivery
+remain deferred pending output/protocol design. No new IPC message is introduced.
+
+Ordinary action exceptions follow the same failure transitions. If notifying the
+owner of an action exception also throws, the executor retains both exceptions
+and still advances toward Finish. The owner collects those notification failures
+after the lifecycle ends. A failure to output local cleanup diagnostics is also
+retained and cannot prevent resource release. These are execution-path guarantees,
+not guarantees against process termination or resource exhaustion that makes
+further cleanup impossible.
+
+Platform runtime verification for this phase is macOS only. Windows/Linux native
+execution, access-control and shutdown behavior still require platform testing.
+
+### Ownership and endpoint resource grouping
+
+`RepositoryOwnership::acquire()` acquires the Repo locks and then establishes the
+IPC listener. Its private implementation retains both resources. Failed endpoint
+setup releases the acquired locks. Endpoint addresses are derived by configuration
+bootstrap; IPC transport no longer depends on StoragePaths or Repo identities.
+The duplicate private IPC header has been removed.
+
+The Backend serves connections through `RepositoryOwnership::accept()`. Before
+explicit Catalog finalization it calls `stop_listening()`, which closes admission
+and removes its owned endpoint while retaining Repo locks. Destruction also closes
+the listener before releasing lock handles. Neither operation saves the Index or
+finalizes the Marker; those remain explicit Backend lifecycle responsibilities.
