@@ -1,8 +1,9 @@
 #include "application/internal/backend_states.hpp"
 
 #include <gtest/gtest.h>
+#include <folio/logging/logging.hpp>
+#include <spdlog/sinks/base_sink.h>
 #include <fstream>
-#include <iostream>
 #include <stdexcept>
 
 namespace folio::application::internal {
@@ -23,13 +24,15 @@ class BackendStates : public ::testing::Test {
     base = fs::canonical(base);
     paths = {base / "normal", base / "vault",
              {base / "config", base / "data", base / "state",
-              base / "cache", base / "runtime"}};
+              base / "cache", base / "logs", base / "runtime"}};
+    ASSERT_TRUE(logging::initialize(logging::ProcessRole::Backend, paths.application.logs));
   }
 
   void TearDown() override {
     context.coordinator.reset();
     context.repository.reset();
     context.ownership.reset();
+    logging::shutdown();
     std::error_code ignored;
     fs::remove_all(base, ignored);
   }
@@ -163,34 +166,49 @@ TEST_F(BackendStates, InconsistentCatalogCannotBeFinalizedAsClean) {
   expect_released();
 }
 
-TEST_F(BackendStates, FailedLocalCleanupOutputDoesNotPreventRelease) {
+TEST_F(BackendStates, FailedLoggingDoesNotPreventReleaseOrChangeDiagnostics) {
   ASSERT_EQ(bootstrap(), BackendActionOutcome::Success);
   block_index_save();
-  class FailingBuffer : public std::streambuf {
-    std::streamsize xsputn(const char*, std::streamsize) override { return 0; }
-    int_type overflow(int_type) override { return traits_type::eof(); }
-  } buffer;
-  const auto previous_exceptions = std::cerr.exceptions();
-  const auto previous_state = std::cerr.rdstate();
-  auto* previous_buffer = std::cerr.rdbuf(&buffer);
-  std::cerr.exceptions(std::ios::badbit | std::ios::failbit);
-  BackendActionOutcome result = BackendActionOutcome::Success;
-  try {
-    result = Finish(context);
-  } catch (...) {
-    std::cerr.exceptions(std::ios::goodbit);
-    std::cerr.rdbuf(previous_buffer);
-    std::cerr.clear(previous_state);
-    std::cerr.exceptions(previous_exceptions);
-    throw;
+  class FailingSink : public spdlog::sinks::base_sink<std::mutex> {
+    void sink_it_(const spdlog::details::log_msg&) override {
+      throw spdlog::spdlog_ex("synthetic log failure");
+    }
+    void flush_() override {}
+  };
+  auto sink = std::make_shared<FailingSink>();
+  auto logger = std::make_shared<spdlog::logger>("backend", sink);
+  unsigned logging_failures = 0;
+  logger->set_error_handler([&](const std::string&) { ++logging_failures; });
+  auto previous = spdlog::default_logger();
+  spdlog::set_default_logger(logger);
+  EXPECT_EQ(Finish(context), BackendActionOutcome::Failure);
+  spdlog::set_default_logger(previous);
+  EXPECT_EQ(logging_failures, 1u);
+  ASSERT_EQ(context.diagnostics.size(), 1u);
+  EXPECT_TRUE(std::holds_alternative<storage::CoordinatorError>(context.diagnostics.back().error));
+  EXPECT_TRUE(fs::exists(marker()));
+  expect_released();
+}
+
+TEST_F(BackendStates, LogsPrimaryAndCleanupFailuresWithoutSensitiveMessages) {
+  const std::string sensitive = "synthetic-secret-body-never-log";
+  record_backend_failure(context, {Phase::Bootstrap,
+      config::ConfigurationError{config::ConfigurationErrorCode::InvalidValue, {}, sensitive, {}}});
+  record_backend_failure(context, {Phase::Serve,
+      std::make_exception_ptr(std::runtime_error(sensitive))});
+  ASSERT_EQ(bootstrap(), BackendActionOutcome::Success);
+  block_index_save();
+  EXPECT_EQ(Finish(context), BackendActionOutcome::Failure);
+  spdlog::default_logger()->flush();
+  std::string text;
+  for (const auto& entry : fs::directory_iterator(paths.application.logs / "backend")) {
+    std::ifstream in(entry.path());
+    text.append(std::istreambuf_iterator<char>(in), {});
   }
-  std::cerr.exceptions(std::ios::goodbit);
-  std::cerr.rdbuf(previous_buffer);
-  std::cerr.clear(previous_state);
-  std::cerr.exceptions(previous_exceptions);
-  EXPECT_EQ(result, BackendActionOutcome::Failure);
-  ASSERT_EQ(context.diagnostics.size(), 2u);
-  EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(context.diagnostics.back().error));
+  EXPECT_NE(text.find("primary failure during Bootstrap: ConfigurationError"), std::string::npos);
+  EXPECT_NE(text.find("secondary failure during Finish: CoordinatorError"), std::string::npos);
+  EXPECT_NE(text.find("[critical]"), std::string::npos);
+  EXPECT_EQ(text.find(sensitive), std::string::npos);
   EXPECT_TRUE(fs::exists(marker()));
   expect_released();
 }

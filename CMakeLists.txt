@@ -41,6 +41,16 @@ set(CLI11_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(CLI11_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(thirdparty/cli11 EXCLUDE_FROM_ALL)
 
+set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
+if(WIN32)
+  set(SPDLOG_WCHAR_FILENAMES ON CACHE BOOL "" FORCE)
+endif()
+add_subdirectory(thirdparty/spdlog EXCLUDE_FROM_ALL)
+
 # Phase 4.1a uses native desktop process and ownership APIs only.
 if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin|Windows)$")
   message(FATAL_ERROR "Folio Application process support requires Linux, macOS, or Windows")

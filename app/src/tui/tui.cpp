@@ -1,5 +1,6 @@
 #include "tui.hpp"
 #include <folio/application/backend_connection_handle.hpp>
+#include <folio/logging/logging.hpp>
 #include "folio/core/version.hpp"
 #include <atomic>
 #include <chrono>
@@ -51,6 +52,13 @@ int folio::tui::run() {
   screen.Loop(component);
   monitor.request_stop();
   monitor.join();
-  if (connection_lost) std::cerr << "Backend connection lost; restart Folio to reconnect\n";
+  if (connection_lost) {
+    try {
+      SPDLOG_WARN("Frontend lost its Backend connection");
+    } catch (...) {
+      // User-visible connection-loss handling remains independent of logging.
+    }
+    std::cerr << "Backend connection lost; restart Folio to reconnect\n";
+  }
   return connection_lost ? 1 : 0;
 }

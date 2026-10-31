@@ -1,6 +1,7 @@
 #include "application/internal/process.hpp"
 // Test-only process entry point with injected paths and bounded file barriers.
 #include <folio/application/backend.hpp>
+#include <folio/logging/logging.hpp>
 #include "application/internal/backend_states.hpp"
 #include <folio/application/backend_connection_handle.hpp>
 #include <folio/application/ipc.hpp>
@@ -29,7 +30,16 @@ int wmain(int argc, wchar_t** argv) {
   folio::config::StoragePaths paths{base / "normal",
                               base / "vault",
                               {base / "config", base / "data", base / "state",
-                               base / "cache", base / "runtime"}};
+                               base / "cache", base / "logs", base / "runtime"}};
+  const auto log_file = folio::logging::initialize(
+      mode == "backend" ? folio::logging::ProcessRole::Backend
+                        : folio::logging::ProcessRole::Frontend,
+      paths.application.logs);
+  (void)log_file;
+  SPDLOG_WARN("Synthetic process fixture initialized");
+  struct FlushOnExit {
+    ~FlushOnExit() { folio::logging::shutdown(); }
+  } flush_on_exit;
   if (mode == "backend") {
     const int result = app::run_backend(paths);
     report(control, std::to_string(result));

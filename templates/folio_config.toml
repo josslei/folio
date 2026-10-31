@@ -10,3 +10,6 @@ use_default_location = true
 use_default_location = true
 # Resolving this location does not initialize Vault.
 # path = "/absolute/custom/vault"
+
+[diagnostics]
+log_level = "warn"

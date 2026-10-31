@@ -13,6 +13,8 @@ struct ApplicationPaths {
   std::filesystem::path data;
   std::filesystem::path state;
   std::filesystem::path cache;
+  // Platform-specific diagnostics location; resolution does not create it.
+  std::filesystem::path logs;
   std::optional<std::filesystem::path> runtime;
 };
 
@@ -23,11 +25,15 @@ struct StoragePaths {
   ApplicationPaths application;
 };
 
+enum class LogLevel { Trace, Debug, Info, Warn, Error, Critical };
+
 // Validated application settings for one startup, independent of the TOML layout.
-// Currently contains only paths; future supported preferences belong here too.
+// Contains effective paths and diagnostic preferences; future supported settings
+// belong here too.
 // Consumers receive the settings they need (for example, paths for Storage).
 struct EffectiveConfig {
   StoragePaths paths;
+  LogLevel log_level;
 };
 
 enum class ConfigurationErrorCode { SyntaxError, InvalidValue, InvalidPath, IoError };

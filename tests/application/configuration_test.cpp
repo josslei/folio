@@ -21,7 +21,7 @@ class Configuration : public ::testing::Test {
     base = fs::temp_directory_path() / ("fcfg-" + core::Id::generate().to_string().substr(0, 8));
     fs::create_directory(base);
     base = fs::canonical(base);
-    application = {base / "config", base / "data", base / "state", base / "cache",
+    application = {base / "config", base / "data", base / "state", base / "cache", base / "logs",
                    base / "runtime"};
     file = application.config / "folio_config.toml";
   }
@@ -78,6 +78,34 @@ TEST_F(Configuration, RejectsUnsupportedVersionAndContradictoryPathSelection) {
                folio::config::ConfigurationErrorCode::InvalidValue);
   expect_error("[general.normal_storage]\nuse_default_location = 'true'",
                folio::config::ConfigurationErrorCode::InvalidValue);
+}
+
+TEST_F(Configuration, LoggingDefaultsOverridesAndValidation) {
+  auto defaults = folio::config::configuration_defaults(application);
+  ASSERT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(defaults));
+  EXPECT_EQ(std::get<folio::config::EffectiveConfig>(defaults).log_level,
+            folio::config::LogLevel::Warn);
+  // Older files without diagnostics keep the template default, without rewrite.
+  write("schema_version = 1\n");
+  auto omitted = folio::config::load_configuration(application, file);
+  ASSERT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(omitted));
+  EXPECT_EQ(std::get<folio::config::EffectiveConfig>(omitted).log_level,
+            folio::config::LogLevel::Warn);
+  const std::pair<std::string, folio::config::LogLevel> levels[] = {
+      {"trace", folio::config::LogLevel::Trace}, {"debug", folio::config::LogLevel::Debug},
+      {"info", folio::config::LogLevel::Info}, {"warn", folio::config::LogLevel::Warn},
+      {"error", folio::config::LogLevel::Error}, {"critical", folio::config::LogLevel::Critical}};
+  for (const auto& [name, level] : levels) {
+    write("[diagnostics]\nlog_level = '" + name + "'\n");
+    auto loaded = folio::config::load_configuration(application, file);
+    ASSERT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(loaded));
+    EXPECT_EQ(std::get<folio::config::EffectiveConfig>(loaded).log_level, level);
+  }
+  for (const auto& text : {"[diagnostics]\nlog_level = 'verbose'", "[diagnostics]\nlog_level = 'off'",
+                           "[diagnostics]\nlog_level = 2", "diagnostics = false",
+                           "[diagnostics]\nlog_levle = 'warn'"}) {
+    expect_error(text, folio::config::ConfigurationErrorCode::InvalidValue);
+  }
 }
 
 TEST_F(Configuration, InvalidExistingFileIsNeverReplacedByFactoryDefaults) {
@@ -233,6 +261,7 @@ TEST_F(Configuration, PlatformDefaultsAreResolvedWithoutCreatingDirectories) {
   EXPECT_EQ(paths.config, base / ".config/folio");
   EXPECT_EQ(paths.data, base / ".local/share/folio");
   EXPECT_EQ(paths.state, base / ".local/state/folio");
+  EXPECT_EQ(paths.logs, base / ".local/state/folio/logs");
   EXPECT_EQ(paths.cache, base / ".cache/folio");
   EXPECT_FALSE(paths.runtime);
 #elif defined(__APPLE__)
@@ -240,6 +269,7 @@ TEST_F(Configuration, PlatformDefaultsAreResolvedWithoutCreatingDirectories) {
   EXPECT_EQ(paths.data, base / "Library/Application Support/Folio/data");
   EXPECT_EQ(paths.state, base / "Library/Application Support/Folio/state");
   EXPECT_EQ(paths.cache, base / "Library/Caches/Folio");
+  EXPECT_EQ(paths.logs, base / "Library/Logs/Folio");
 #endif
   EXPECT_TRUE(fs::is_empty(base));
 }
@@ -258,6 +288,7 @@ TEST_F(Configuration, XdgAbsoluteOverridesAndRelativeFallbacks) {
   EXPECT_EQ(paths.config, base / "settings/folio");
   EXPECT_EQ(paths.data, base / ".local/share/folio");
   EXPECT_EQ(paths.state, base / "persistent/folio");
+  EXPECT_EQ(paths.logs, base / "persistent/folio/logs");
   EXPECT_EQ(paths.cache, base / ".cache/folio");
   EXPECT_EQ(paths.runtime, base / "run/folio");
   EXPECT_TRUE(fs::is_empty(base));
@@ -272,6 +303,8 @@ TEST_F(Configuration, WindowsKnownFoldersProvideAbsoluteEffectivePaths) {
   EXPECT_TRUE(paths.data.is_absolute());
   EXPECT_TRUE(paths.state.is_absolute());
   EXPECT_TRUE(paths.cache.is_absolute());
+  EXPECT_TRUE(paths.logs.is_absolute());
+  EXPECT_EQ(paths.logs, paths.state.parent_path() / "Logs");
   EXPECT_EQ(paths.config.filename(), "config");
   EXPECT_EQ(paths.data.filename(), "data");
   EXPECT_FALSE(paths.runtime);  // Windows IPC uses Named Pipes.

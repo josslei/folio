@@ -1,4 +1,5 @@
 #include <folio/application/backend_connection_handle.hpp>
+#include <folio/logging/logging.hpp>
 #include <array>
 #include <thread>
 
@@ -95,15 +96,34 @@ core::Result<BackendConnectionHandle, IpcError> connect_or_start_backend(
       return std::move(*connection);
     last = std::get<IpcError>(std::move(connected));
     if (last.code != IpcErrorCode::Unavailable &&
-        last.code != IpcErrorCode::ConnectionLost && last.code != IpcErrorCode::Timeout)
+        last.code != IpcErrorCode::ConnectionLost && last.code != IpcErrorCode::Timeout) {
+      try {
+        SPDLOG_ERROR("Backend connection failed: IpcError code={}", static_cast<int>(last.code));
+      } catch (...) {
+        // Logging cannot replace the connection error.
+      }
       return last;
+    }
     if (Clock::now() >= next_launch) {
       auto started = launch();
-      if (auto* problem = std::get_if<ProcessError>(&started))
+      if (auto* problem = std::get_if<ProcessError>(&started)) {
+        try {
+          SPDLOG_ERROR("Backend launch failed: ProcessError code={} system_error={}",
+                       static_cast<int>(problem->code), problem->system_error.value());
+        } catch (...) {
+          // Preserve the process creation failure.
+        }
         return IpcError{IpcErrorCode::IoError, problem->message, problem->system_error};
+      }
       next_launch = Clock::now() + std::chrono::seconds(1);
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(25));
+  }
+  try {
+    SPDLOG_ERROR("Backend connection/startup deadline expired: IpcError code={}",
+                 static_cast<int>(last.code));
+  } catch (...) {
+    // Preserve the original timeout result.
   }
   return IpcError{IpcErrorCode::Timeout,
                   "Backend startup deadline expired: " + last.message,

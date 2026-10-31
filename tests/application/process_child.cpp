@@ -46,7 +46,7 @@ int wmain(int argc, wchar_t** argv) {
   const auto& control = arguments[1];
   const auto& normal = arguments[2];
   storage::StoragePaths paths{normal, base / "vault",
-      {base / "config", base / "data", base / "state", base / "cache", std::nullopt}};
+      {base / "config", base / "data", base / "state", base / "cache", base / "logs", std::nullopt}};
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{15};
   report(control / "started", "started");
   while (!fs::exists(control / "go")) {

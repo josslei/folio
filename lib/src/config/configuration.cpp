@@ -5,6 +5,7 @@
 #include <thread>
 #include <chrono>
 #include <vector>
+#include <utility>
 #include <toml++/toml.hpp>
 #include <cstdlib>
 #ifndef _WIN32
@@ -55,6 +56,7 @@ core::Result<ApplicationPaths, ConfigurationError> application_paths() {
                                    directory("XDG_DATA_HOME", home / ".local/share"),
                                    directory("XDG_STATE_HOME", home / ".local/state"),
                                    directory("XDG_CACHE_HOME", home / ".cache"),
+                                   directory("XDG_STATE_HOME", home / ".local/state") / "logs",
                                    runtime};
 #elif defined(__APPLE__)
   auto support = home / "Library/Application Support/Folio";
@@ -71,6 +73,7 @@ core::Result<ApplicationPaths, ConfigurationError> application_paths() {
   }
   return ApplicationPaths{support / "config", support / "data",
                                    support / "state", home / "Library/Caches/Folio",
+                                   home / "Library/Logs/Folio",
                                    runtime};
 #endif
 #elif defined(_WIN32)
@@ -87,6 +90,7 @@ core::Result<ApplicationPaths, ConfigurationError> application_paths() {
     return invalid("Cannot resolve user Known Folders");
   return ApplicationPaths{roaming / L"Folio/config", local / L"Folio/data",
                                    local / L"Folio/state", local / L"Folio/cache",
+                                   local / L"Folio/Logs",
                                    std::nullopt};
 #endif
 }
@@ -101,7 +105,7 @@ ConfigurationError path_error(ConfigurationErrorCode code, fs::path path,
 core::Result<StoragePaths, ConfigurationError> validate_effective_paths(const StoragePaths& paths) {
   std::vector<fs::path> roots{paths.normal_root, paths.vault_root,
       paths.application.config, paths.application.data,
-      paths.application.state, paths.application.cache};
+      paths.application.state, paths.application.cache, paths.application.logs};
   if (paths.application.runtime) roots.push_back(*paths.application.runtime);
   std::vector<fs::path> resolved(roots.size());
   for (std::size_t i = 0; i < roots.size(); ++i) {
@@ -153,7 +157,7 @@ core::Result<EffectiveConfig, ConfigurationError> parse_configuration(
   try {
     auto table = toml::parse(text);
     for (const auto& [key, value] : table) {
-      if (key != "schema_version" && key != "general")
+      if (key != "schema_version" && key != "general" && key != "diagnostics")
         return invalid_value("Unknown configuration key: " + std::string(key.str()));
     }
     if (table["schema_version"]) {
@@ -167,7 +171,29 @@ core::Result<EffectiveConfig, ConfigurationError> parse_configuration(
         if (key != "normal_storage" && key != "vault_storage")
           return invalid_value("Unknown general setting: " + std::string(key.str()));
     }
-    EffectiveConfig config{{{}, {}, application}};
+    auto* diagnostics = table["diagnostics"].as_table();
+    if (table["diagnostics"] && !diagnostics)
+      return invalid_value("diagnostics must be a table");
+    if (diagnostics) {
+      for (const auto& [key, value] : *diagnostics)
+        if (key != "log_level")
+          return invalid_value("Unknown diagnostics setting: " + std::string(key.str()));
+    }
+    const auto* level = diagnostics ? diagnostics->get("log_level") : nullptr;
+    if (!level && defaults)
+      level = (*defaults)["diagnostics"]["log_level"].node();
+    const auto level_name = level ? level->value<std::string>() : std::nullopt;
+    if (!level_name) return invalid_value("diagnostics.log_level must be a string");
+    std::optional<LogLevel> log_level;
+    const std::pair<std::string_view, LogLevel> levels[] = {
+        {"trace", LogLevel::Trace}, {"debug", LogLevel::Debug},
+        {"info", LogLevel::Info}, {"warn", LogLevel::Warn},
+        {"error", LogLevel::Error}, {"critical", LogLevel::Critical}};
+    for (const auto& [name, value] : levels)
+      if (*level_name == name) log_level = value;
+    if (!log_level)
+      return invalid_value("diagnostics.log_level must be trace, debug, info, warn, error, or critical");
+    EffectiveConfig config{{{}, {}, application}, *log_level};
     for (auto name : {"normal_storage", "vault_storage"}) {
       const toml::node* node = general ? general->get(name) : nullptr;
       const auto* storage = node ? node->as_table() : nullptr;

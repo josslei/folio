@@ -61,7 +61,7 @@ class Processes : public testing::Test {
     ASSERT_TRUE(fs::create_directory(base));
     base = fs::canonical(base);
     paths = {base / "normal", base / "vault",
-        {base / "config", base / "data", base / "state", base / "cache", base / "runtime"}};
+        {base / "config", base / "data", base / "state", base / "cache", base / "logs", base / "runtime"}};
   }
   void TearDown() override {
     for (const auto& child : children) {

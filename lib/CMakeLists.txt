@@ -6,6 +6,7 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/config_template.hpp"
   "#pragma once\n#include <string_view>\nnamespace folio::config { inline constexpr std::string_view factory_template = R\"folio(${folio_config_contents})folio\"; }\n")
 
 add_library(folio_backend STATIC
+  src/logging/logging.cpp
   src/config/configuration.cpp
   src/io/filesystem.cpp
   src/io/path.cpp
@@ -35,6 +36,9 @@ target_include_directories(folio_backend
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 target_compile_features(folio_backend PUBLIC cxx_std_20)
+# Keep all six levels available; runtime configuration selects filtering.
+target_compile_definitions(folio_backend PUBLIC SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE)
+target_link_libraries(folio_backend PUBLIC spdlog::spdlog)
 set_target_properties(folio_backend PROPERTIES CXX_EXTENSIONS OFF)
 target_link_libraries(folio_backend PRIVATE folio_sodium tomlplusplus::tomlplusplus msgpack-cxx stduuid)
 if(UNIX)

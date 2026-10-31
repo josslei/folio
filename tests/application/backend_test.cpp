@@ -81,7 +81,7 @@ class Backend : public testing::Test {
     base = fs::canonical(base);
     paths = {base / "normal",
              base / "vault",
-             {base / "config", base / "data", base / "state", base / "cache",
+             {base / "config", base / "data", base / "state", base / "cache", base / "logs",
               base / "runtime"}};
   }
 
@@ -172,6 +172,29 @@ TEST_F(Backend, StartsOnDemandReadinessRequiresMarkerAndLastDisconnectSaves) {
   EXPECT_EQ(read(children[0].result), "0");
   EXPECT_FALSE(fs::exists(marker()));
   EXPECT_TRUE(fs::exists(index()));
+}
+
+TEST_F(Backend, IndependentFrontendAndBackendProcessesHaveSeparateSessionLogs) {
+  auto keeper = connect();
+  const auto control = base / "frontend-control";
+  fs::create_directory(control);
+  auto launched = app::launch_process(FOLIO_BACKEND_CHILD, {"frontend", base, control});
+  ASSERT_TRUE(std::holds_alternative<folio::application::LaunchedProcess>(launched));
+  children.push_back({std::get<folio::application::LaunchedProcess>(launched).id, control / "done"});
+  ASSERT_TRUE(until([&] { return fs::exists(control / "connected"); }));
+  write(control / "disconnect");
+  ASSERT_TRUE(until([&] { return fs::exists(control / "done"); }));
+  fs::path backend_file, frontend_file;
+  for (const auto& entry : fs::directory_iterator(paths.application.logs / "backend"))
+    backend_file = entry.path();
+  for (const auto& entry : fs::directory_iterator(paths.application.logs / "frontend"))
+    frontend_file = entry.path();
+  ASSERT_FALSE(backend_file.empty());
+  ASSERT_FALSE(frontend_file.empty());
+  EXPECT_NE(backend_file.filename(), frontend_file.filename());
+  EXPECT_NE(read(frontend_file).find("[frontend]"), std::string::npos);
+  EXPECT_EQ(read(frontend_file).find("[backend]"), std::string::npos);
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(keeper.ping()));
 }
 
 TEST_F(Backend, NewFrontendConfigurationDoesNotReconfigureActiveBackend) {

@@ -173,7 +173,7 @@ Configuration is a shared startup snapshot. Loading reads
 missing file from the embedded `templates/folio_config.toml`. User-facing storage
 policies are transformed into validated effective roots. Existing files are not
 rewritten; no hot reload is implemented. See [Configuration](configuration.md)
-for schema, compatibility, and validation. Logging remains Phase 4.1d.
+for schema, compatibility, and validation. Logging is implemented in Phase 4.1d; see [Logging](logging.md).
 
 Unix uses a user-owned 0700 directory and 0600 Unix socket, with OS peer UID
 verification. Runtime is preferred; a private State/ipc directory is the fallback.
@@ -226,8 +226,8 @@ Finish closes admission even when Stopping was bypassed, attempts session finali
 after successful initialization, and releases resources including ownership.
 Failed startup cannot certify an incomplete Catalog or clear its Marker.
 Finalization failure or an ordinary finalization exception still allows resource
-release. Final cleanup diagnostics remain local stderr output until the logging
-system is designed; they are retained internally without returning to Report.
+release. Final cleanup diagnostics use the process logger; they are retained internally
+without returning to Report.
 
 The context retains ordered typed diagnostics tagged with their lifecycle phase.
 Process, IPC, and Coordinator errors keep their codes, paths, system errors, and
@@ -239,7 +239,7 @@ Coordinator retains authority to reject unsafe finalization and preserve its
 Marker. Resource ownership itself determines which handles need release.
 
 Report retains the existing bounded startup handshake rejection where an endpoint
-was established, and prints queued diagnostics. Configuration and ownership
+was established, without printing internal diagnostics to the terminal. Configuration and ownership
 failures before an endpoint exists still lack reliable Frontend delivery. On
 serving-loop failure its connections close before Report; no final broadcast is
 promised. Multiple Frontends remain independent, and the final disconnect ends
@@ -249,8 +249,7 @@ remain deferred pending output/protocol design. No new IPC message is introduced
 Ordinary action exceptions follow the same failure transitions. If notifying the
 owner of an action exception also throws, the executor retains both exceptions
 and still advances toward Finish. The owner collects those notification failures
-after the lifecycle ends. A failure to output local cleanup diagnostics is also
-retained and cannot prevent resource release. These are execution-path guarantees,
+after the lifecycle ends. Logging failure cannot change retained operational errors or prevent resource release. These are execution-path guarantees,
 not guarantees against process termination or resource exhaustion that makes
 further cleanup impossible.
 
@@ -270,3 +269,14 @@ explicit Catalog finalization it calls `stop_listening()`, which closes admissio
 and removes its owned endpoint while retaining Repo locks. Destruction also closes
 the listener before releasing lock handles. Neither operation saves the Index or
 finalizes the Marker; those remain explicit Backend lifecycle responsibilities.
+
+## Process diagnostic logging — Phase 4.1d implemented
+
+The executable selects its role and initializes a default spdlog logger before
+Configuration loading or Backend Bootstrap/TUI connection setup. Platform paths
+alone determine the log root. Each process has a distinct role/session file.
+Successful configuration loading updates its severity without reopening the file.
+Backend diagnostics are logged once where retained, including cleanup failures;
+logging does not alter the lifecycle table or replace Frontend error delivery.
+Explicit logger flush/release follows Finish or Frontend completion. Existing
+user-facing TUI stderr messages remain separate. See [Logging](logging.md).

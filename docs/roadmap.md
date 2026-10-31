@@ -7,7 +7,7 @@ Status labels follow [architecture](architecture.md). Stage numbers are planning
 | Phase 1–3.3.7 | Core and Normal Storage foundation | Implemented; not a complete application |
 | Phase D | Architecture documentation consolidation | This documentation delivery |
 | Phase 3.4 | Platform paths and Session Marker | Effective paths, Cache relocation, and Marker implemented; platform/configuration defaults completed in 4.1c |
-| Phase 4 | Public Application, Backend daemon, IPC | In progress: private process launch/OS ownership implemented; connections and public APIs pending |
+| Phase 4 | Public Application, Backend daemon, IPC | Process ownership, IPC/lifecycle, Configuration and Logging implemented; public operations pending |
 | Phase 5 | Normal Trash and Recovery foundation | Planned; after Public API contracts |
 | Phase 6 | Minimal Normal TUI/editor | Planned; after Recovery foundation |
 | Phase 7 | Vault/encryption | Planned; after Normal workflow |
@@ -95,8 +95,16 @@ remain the next design boundary; no CRUD, queue, Edit Locks or events exist yet.
 ## Configuration baseline — Phase 4.1c implemented
 
 Validated built-in Normal/Vault roots and optional TOML overrides now form a
-startup snapshot. Missing files use defaults; malformed existing files fail
-explicitly. Platform paths remain separate, and loading writes nothing. See
-[Configuration](configuration.md). Phase 4.1d Logging follows this configuration
-baseline; Phase 4.2 public operations remain unimplemented. No detailed Logging
-schema or rotation policy is frozen here.
+startup snapshot. Missing files are atomically created from the factory template; malformed existing
+files fail explicitly. Platform paths remain separate. See
+[Configuration](configuration.md). Phase 4.1d Logging is implemented after this baseline; Phase 4.2 public operations
+remain unimplemented.
+
+## Process Logging — Phase 4.1d implemented
+
+One synchronous spdlog default logger per Backend/Frontend process records local
+diagnostics in platform log directories. Session files are exclusive, timestamped
+and never automatically rotated/deleted. The factory template supplies Warn-level
+configuration; initialization precedes TOML loading. Lifecycle error retention and
+IPC behavior remain separate from logging. See [Logging](logging.md). Public
+operations, mutation queue, Edit Locks and Push Events remain deferred.

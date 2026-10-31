@@ -1,4 +1,5 @@
 #include <folio/application/ipc.hpp>
+#include <folio/logging/logging.hpp>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -70,9 +71,16 @@ core::Result<ConnectionSettings, IpcError> connection_settings(
 
 core::Result<ConnectionSettings, IpcError> connection_settings() {
   auto paths = folio::config::load_configuration();
-  if (auto* e = std::get_if<folio::config::ConfigurationError>(&paths))
+  if (auto* e = std::get_if<folio::config::ConfigurationError>(&paths)) {
+    try {
+      SPDLOG_ERROR("Frontend configuration loading failed: ConfigurationError code={} system_error={}",
+                   static_cast<int>(e->code), e->system_error.value());
+    } catch (...) {}
     return IpcError{IpcErrorCode::IoError, e->message, e->system_error};
-  return connection_settings(std::get<folio::config::EffectiveConfig>(paths).paths);
+  }
+  const auto& effective = std::get<folio::config::EffectiveConfig>(paths);
+  logging::set_level(effective.log_level);
+  return connection_settings(effective.paths);
 }
 
 

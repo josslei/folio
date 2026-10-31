@@ -29,11 +29,17 @@ use_default_location = true
 [general.vault_storage]
 use_default_location = true
 # path = "/absolute/custom/vault"
+
+[diagnostics]
+log_level = "warn"
 ```
 
 Default locations resolve to `<application.data>/normal` and `/vault`.
 A custom location requires `use_default_location = false` and an absolute string
-`path`. Providing `path` with the flag true is rejected. Unknown settings, wrong
+`path`. Providing `path` with the flag true is rejected. `diagnostics.log_level` accepts lowercase `trace`, `debug`, `info`, `warn`,
+`error`, or `critical`. Its typed effective value is applied after loading,
+without replacing the process logger. Missing diagnostics inherit the template.
+Unknown settings, wrong
 types, and schema versions other than integer 1 are rejected. Omitted settings
 are filled from the template in memory; existing files are not rewritten.
 The former flat root keys are rejected, not silently ignored or migrated.
@@ -43,10 +49,16 @@ must be specified in the new file before starting against those Entries.
 `application_paths()` retains the platform directory resolver. Resolution alone
 creates nothing. Tests inject temporary application directories.
 
+`ApplicationPaths.logs` is resolved separately from State: Linux uses
+`$XDG_STATE_HOME/folio/logs` (default `~/.local/state/folio/logs`), macOS uses
+`~/Library/Logs/Folio`, and Windows uses `<LocalAppData>/Folio/Logs`.
+Resolution does not create the log directory or initialize Logging. See [Logging](logging.md). Logs must
+remain disjoint from authoritative roots, like the other support directories.
+
 Roots must be nonempty absolute paths without NUL bytes. Existing targets must
 be directories. Normal and Vault must not overlap, including existing filesystem
 aliases. Data may be a strict ancestor of either root, permitting the defaults;
-Data must not equal or lie inside an authoritative root. Config, State, Cache,
+Data must not equal or lie inside an authoritative root. Config, State, Cache, Logs,
 and Runtime must remain disjoint from authoritative roots. Support directories
 may share parents or nest where these rules permit.
 
@@ -88,7 +100,7 @@ not discover or migrate the former roots. Restore the old explicit roots to use
 that existing data. Changing roots deliberately selects different authoritative
 locations, so complete Backend shutdown before doing so.
 
-No Logging, Vault initialization, public CRUD/Query API, or data migration is
+No Vault initialization, public CRUD/Query API, or data migration is
 implemented by this configuration system.
 
 The shared public interface is `<folio/config/configuration.hpp>`, implemented in

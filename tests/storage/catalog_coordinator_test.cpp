@@ -189,7 +189,7 @@ class CatalogCoordinatorTest : public testing::Test {
 
   storage::StoragePaths paths() const {
     return {normal, vault, {temporary.path() / "config", temporary.path() / "data",
-                           state, cache, std::nullopt}};
+                           state, cache, state.parent_path() / "logs", std::nullopt}};
   }
   void seed(const storage::MetadataCatalog& catalog) const {
     const auto encoded = codec::encode_index(catalog);

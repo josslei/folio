@@ -77,7 +77,7 @@ target_link_libraries(folio_backend_child PRIVATE folio_backend)
 if(MINGW)
   target_link_options(folio_backend_child PRIVATE -municode)
 endif()
-add_executable(folio_application_tests application/configuration_test.cpp application/backend_states_test.cpp application/backend_lifecycle_test.cpp application/process_test.cpp application/backend_test.cpp)
+add_executable(folio_application_tests application/logging_test.cpp application/configuration_test.cpp application/backend_states_test.cpp application/backend_lifecycle_test.cpp application/process_test.cpp application/backend_test.cpp)
 target_include_directories(folio_application_tests PRIVATE "${PROJECT_SOURCE_DIR}/lib/src")
 target_compile_features(folio_application_tests PRIVATE cxx_std_20)
 set_target_properties(folio_application_tests PROPERTIES CXX_EXTENSIONS OFF)
@@ -89,15 +89,27 @@ target_compile_definitions(folio_application_tests PRIVATE
 add_dependencies(folio_application_tests folio_process_child folio_backend_child folio)
 gtest_discover_tests(folio_application_tests DISCOVERY_TIMEOUT 30 PROPERTIES TIMEOUT 30)
 
-# Exercise the real executable's CLI11 parsing without opening an interactive TUI.
-add_test(NAME Cli.Help COMMAND folio --help)
+# Compile the same entry point with an injected log root. This keeps CLI tests
+# away from real user logs on Windows as well as POSIX, without a production
+# environment override or a test switch in folio.
+add_executable(folio_cli_test ../app/src/main.cpp ../app/src/tui/tui.cpp)
+target_include_directories(folio_cli_test PRIVATE "${PROJECT_SOURCE_DIR}/app/src")
+target_link_libraries(folio_cli_test PRIVATE folio_backend ftxui::component CLI11::CLI11)
+target_compile_definitions(folio_cli_test PRIVATE
+  "FOLIO_TEST_LOG_ROOT=\"${CMAKE_CURRENT_BINARY_DIR}/cli-logs\"")
+if(MINGW)
+  target_link_options(folio_cli_test PRIVATE -municode)
+endif()
+
+# Exercise production CLI11 dispatch without opening an interactive TUI.
+add_test(NAME Cli.Help COMMAND folio_cli_test --help)
 set_tests_properties(Cli.Help PROPERTIES PASS_REGULAR_EXPRESSION "Print this help message and exit")
-add_test(NAME Cli.RejectsUnknownCommand COMMAND folio unknown-command)
+add_test(NAME Cli.RejectsUnknownCommand COMMAND folio_cli_test unknown-command)
 set_tests_properties(Cli.RejectsUnknownCommand PROPERTIES WILL_FAIL TRUE)
 # Invalid synthetic configuration makes private-mode parser tests exit before Storage.
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/invalid-config.toml" "normal_root = 42\n")
-add_test(NAME Cli.BackendMode COMMAND folio --backend-process)
-add_test(NAME Cli.BackendIgnoresOtherArguments COMMAND folio --help unknown --backend-process --invalid)
+add_test(NAME Cli.BackendMode COMMAND folio_cli_test --backend-process)
+add_test(NAME Cli.BackendIgnoresOtherArguments COMMAND folio_cli_test --help unknown --backend-process --invalid)
 set_tests_properties(Cli.BackendMode Cli.BackendIgnoresOtherArguments PROPERTIES WILL_FAIL TRUE)
 
 set_tests_properties(Cli.BackendMode Cli.BackendIgnoresOtherArguments PROPERTIES

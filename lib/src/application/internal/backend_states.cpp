@@ -1,12 +1,12 @@
 #include "application/internal/backend_states.hpp"
 #include <folio/application/ipc.hpp>
 #include <folio/config/configuration.hpp>
+#include <folio/logging/logging.hpp>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <exception>
-#include <iostream>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -30,7 +30,9 @@ BackendActionOutcome Bootstrap(BackendContext& context) {
     if (auto* error = std::get_if<config::ConfigurationError>(&resolved)) {
       return record_backend_failure(context, {Phase::Bootstrap, *error});
     }
-    context.paths.emplace(std::get<config::EffectiveConfig>(std::move(resolved)).paths);
+    auto effective = std::get<config::EffectiveConfig>(std::move(resolved));
+    logging::set_level(effective.log_level);
+    context.paths.emplace(std::move(effective.paths));
   }
   auto acquired = RepositoryOwnership::acquire(*context.paths);
   if (auto* error = std::get_if<ProcessError>(&acquired)) {
@@ -47,6 +49,19 @@ BackendActionOutcome Bootstrap(BackendContext& context) {
   auto result = context.coordinator->startup_load();
   if (auto* error = std::get_if<storage::CoordinatorError>(&result)) {
     return record_backend_failure(context, {Phase::Bootstrap, *error});
+  }
+  const auto& outcome = std::get<storage::InitializationOutcome>(result);
+  try {
+    if (outcome.previous_session_incomplete)
+      SPDLOG_WARN("Previous session incomplete; Catalog rebuilt from authoritative Entries");
+    if (outcome.index_error)
+      SPDLOG_WARN("Normal Index rejected; Catalog rebuilt (CoordinatorError code={})",
+                  static_cast<int>(outcome.index_error->code));
+    if (!outcome.diagnostics.empty())
+      SPDLOG_WARN("Authoritative scan reported {} excluded filesystem objects",
+                  outcome.diagnostics.size());
+  } catch (...) {
+    // Diagnostic failure cannot alter a successfully established session.
   }
   context.initialized = true;
   return BackendActionOutcome::Success;
@@ -79,9 +94,6 @@ BackendActionOutcome Report(BackendContext& context) {
       record_backend_failure(context, {Phase::Report, *error});
     }
   }
-  for (const auto& diagnostic : context.diagnostics) {
-    std::cerr << diagnostic_message(diagnostic) << '\n';
-  }
   return BackendActionOutcome::Success;
 }
 
@@ -93,14 +105,8 @@ BackendActionOutcome Finish(BackendContext& context) {
   }
   auto cleanup_error = [&](BackendDiagnostic diagnostic) {
     record_backend_failure(context, std::move(diagnostic));
-    // Retain cleanup errors, but do not reenter Report or send another IPC report.
-    // Local stderr is temporary until the logging system is designed. A failed
-    // local output must not prevent release of the remaining resources.
-    try {
-      std::cerr << diagnostic_message(context.diagnostics.back()) << '\n';
-    } catch (...) {
-      record_backend_failure(context, {Phase::Finish, std::current_exception()});
-    }
+    // Already logged at the retention boundary; do not reenter Report or send
+    // a second IPC report. Logging failure cannot prevent resource release.
   };
   bool failed = false;
   try {
@@ -279,6 +285,42 @@ std::string diagnostic_message(const BackendDiagnostic& diagnostic) {
 
 BackendActionOutcome record_backend_failure(BackendContext& context,
                                             BackendDiagnostic diagnostic) {
+  // Never log arbitrary error messages, exception text, paths or payloads:
+  // parser/codec errors can include sensitive user-controlled Entry content.
+  // Retain the full typed diagnostic separately for the existing error protocol.
+  try {
+    static constexpr const char* phases[] = {"Bootstrap", "Serve", "Stopping", "Report", "Finish"};
+    const auto* phase = phases[static_cast<std::size_t>(diagnostic.phase)];
+    const auto* priority = context.diagnostics.empty() ? "primary" : "secondary";
+    std::visit([&](const auto& error) {
+      using Error = std::decay_t<decltype(error)>;
+      if constexpr (std::is_same_v<Error, std::exception_ptr>) {
+        SPDLOG_CRITICAL("Backend {} exception during {} (details retained internally)", priority, phase);
+      } else if constexpr (std::is_same_v<Error, storage::CoordinatorError>) {
+        SPDLOG_ERROR("Backend {} failure during {}: CoordinatorError code={} storage_code={} file_code={} read_code={} codec_code={} system_error={}",
+                     priority, phase, static_cast<int>(error.code),
+                     error.storage_error ? static_cast<int>(error.storage_error->code) : -1,
+                     error.file_error ? static_cast<int>(error.file_error->code) : -1,
+                     error.binary_error ? static_cast<int>(error.binary_error->code) : -1,
+                     error.codec_error ? static_cast<int>(error.codec_error->code) : -1,
+                     error.file_error ? error.file_error->system_error.value()
+                         : error.binary_error ? error.binary_error->system_error.value() : 0);
+      } else {
+        const auto* type = std::is_same_v<Error, config::ConfigurationError> ? "ConfigurationError"
+                         : std::is_same_v<Error, ProcessError> ? "ProcessError" : "IpcError";
+        if constexpr (std::is_same_v<Error, ProcessError>) {
+          if (error.code == ProcessErrorCode::AlreadyOwned) {
+            SPDLOG_WARN("Backend ownership already held by another process");
+            return;
+          }
+        }
+        SPDLOG_ERROR("Backend {} failure during {}: {} code={} system_error={}",
+                     priority, phase, type, static_cast<int>(error.code), error.system_error.value());
+      }
+    }, diagnostic.error);
+  } catch (...) {
+    // Logging is independent of diagnostic retention and lifecycle transitions.
+  }
   context.diagnostics.push_back(std::move(diagnostic));
   if (context.exit_code == 0) {
     context.exit_code = 1;

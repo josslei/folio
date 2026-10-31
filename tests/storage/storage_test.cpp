@@ -102,7 +102,7 @@ TEST_F(StorageFilesystemTest, ValidatesSuppliedPathsWithoutCreatingDirectories) 
   const auto root = temporary.path();
   const storage::StoragePaths paths{root / "normal", root / "vault",
       {root / "app/config", root / "app/data", root / "app/state",
-       root / "cache", root / "runtime"}};
+       root / "cache", root / "logs", root / "runtime"}};
   const auto validated = storage::validate_storage_paths(paths);
   ASSERT_TRUE(std::holds_alternative<storage::StoragePaths>(validated));
   const auto& value = std::get<storage::StoragePaths>(validated);
@@ -113,21 +113,22 @@ TEST_F(StorageFilesystemTest, ValidatesSuppliedPathsWithoutCreatingDirectories) 
   EXPECT_EQ(value.application.state, paths.application.state);
   EXPECT_EQ(value.application.cache, paths.application.cache);
   EXPECT_EQ(value.application.runtime, paths.application.runtime);
+  EXPECT_EQ(value.application.logs, paths.application.logs);
   EXPECT_TRUE(children(root).empty());
 }
 
 TEST_F(StorageFilesystemTest, RequiresAbsoluteNonemptyNulFreeEffectivePaths) {
   const auto root = temporary.path();
   const storage::StoragePaths paths{root / "normal", root / "vault",
-      {root / "config", root / "data", root / "state", root / "cache", root / "runtime"}};
+      {root / "config", root / "data", root / "state", root / "cache", root / "logs", root / "runtime"}};
   expect_storage_error(storage::validate_storage_paths(storage::StoragePaths{}));
-  for (int i = 0; i < 7; ++i) {
+  for (int i = 0; i < 8; ++i) {
     for (const auto& invalid : {fs::path{}, fs::path{"relative"},
              root / fs::path{std::string{"bad\0suffix", 10}}}) {
       auto candidate = paths;
       const std::array fields{&candidate.normal_root, &candidate.vault_root,
           &candidate.application.config, &candidate.application.data,
-          &candidate.application.state, &candidate.application.cache,
+          &candidate.application.state, &candidate.application.cache, &candidate.application.logs,
           &*candidate.application.runtime};
       *fields[i] = invalid;
       expect_storage_error(storage::validate_storage_paths(candidate));
@@ -139,7 +140,7 @@ TEST_F(StorageFilesystemTest, RequiresAbsoluteNonemptyNulFreeEffectivePaths) {
 TEST_F(StorageFilesystemTest, AllowsSharedAndNestedApplicationPathsAndNoRuntime) {
   const auto root = temporary.path();
   const storage::StoragePaths paths{root / "normal", root / "vault",
-      {root / "app", root / "app", root / "app/state", root / "cache", std::nullopt}};
+      {root / "app", root / "app", root / "app/state", root / "cache", root / "logs", std::nullopt}};
   EXPECT_TRUE(std::holds_alternative<storage::StoragePaths>(
       storage::validate_storage_paths(paths)));
   EXPECT_TRUE(children(root).empty());
@@ -148,18 +149,18 @@ TEST_F(StorageFilesystemTest, AllowsSharedAndNestedApplicationPathsAndNoRuntime)
 TEST_F(StorageFilesystemTest, RejectsAuthoritativeOverlapsAndSupportFileConflicts) {
   const auto root = temporary.path();
   const storage::StoragePaths paths{root / "normal", root / "vault",
-      {root / "config", root / "data", root / "state", root / "cache", root / "runtime"}};
+      {root / "config", root / "data", root / "state", root / "cache", root / "logs", root / "runtime"}};
   for (const auto& target : {paths.normal_root, paths.normal_root / "child", root}) {
     auto candidate = paths;
     candidate.vault_root = target;
     expect_storage_error(storage::validate_storage_paths(candidate));
   }
-  for (int i = 0; i < 5; ++i) {
+  for (int i = 0; i < 6; ++i) {
     for (const auto& authoritative : {paths.normal_root, paths.vault_root}) {
       for (const auto& target : {authoritative, authoritative / "todos/support", root}) {
         auto candidate = paths;
         const std::array fields{&candidate.application.config, &candidate.application.data,
-            &candidate.application.state, &candidate.application.cache, &*candidate.application.runtime};
+            &candidate.application.state, &candidate.application.cache, &candidate.application.logs, &*candidate.application.runtime};
         *fields[i] = target;
         if (i == 1 && target == root) {
           // Data may contain authoritative roots, but may not equal or be
@@ -178,7 +179,7 @@ TEST_F(StorageFilesystemTest, RejectsAuthoritativeOverlapsAndSupportFileConflict
 TEST_F(StorageFilesystemTest, RejectsExistingFilesAndResolvesSymlinkAliases) {
   const auto root = temporary.path();
   storage::StoragePaths paths{root / "normal", root / "vault",
-      {root / "config", root / "data", root / "state", root / "cache", std::nullopt}};
+      {root / "config", root / "data", root / "state", root / "cache", root / "logs", std::nullopt}};
   seed_file(paths.application.state, "not a directory");
   expect_storage_error(storage::validate_storage_paths(paths));
   fs::remove(paths.application.state);
