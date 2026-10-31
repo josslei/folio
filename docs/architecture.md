@@ -5,7 +5,9 @@ Status vocabulary throughout these documents: **Implemented** means present in t
 ## Documentation map
 
 - [Storage specification](storage-design.md): existing codecs, physical layout, atomic writes, Catalog, and Index contracts. Preserved during this consolidation; some future-facing statements require separately approved amendments.
-- [Application](application-design.md): planned public boundary, processes, IPC, and editing.
+- [Application](application-design.md): public boundary, processes, IPC, and editing.
+- [Configuration](configuration.md): implemented defaults, user overrides, and startup snapshots.
+- [File I/O](io.md): internal byte-oriented filesystem operations and atomic publication.
 - [Recovery](recovery-design.md): Session Marker, Journals, Trash, and pending drafts.
 - [Vault](vault-design.md): privacy and encryption boundaries.
 - [Git Sync](git-sync-design.md): branch/worktree direction.
@@ -58,7 +60,8 @@ Private process code uses `folio::application::internal`. Domain/Storage namespa
 | [MetadataCatalog](../lib/src/storage/metadata_catalog.hpp) | Four typed maps, derived UUID membership sets, non-recursive listing and Record metadata search; no filesystem I/O |
 | [CatalogCoordinator](../lib/src/storage/catalog_coordinator.hpp) | Borrows owner-supplied Catalog; startup, full Refresh, Index shutdown persistence, stored synchronization callbacks and consistency status |
 | [IndexCodec](../lib/src/storage/index_codec.hpp) | Pure deterministic MessagePack encode/decode; temporary validated Catalog, no file I/O |
-| [Filesystem](../lib/src/storage/filesystem.hpp) | Binary reads, safe paths, filenames, atomic create/replace |
+| [I/O](../lib/src/io/filesystem.hpp) | Generic byte reads, atomic create/replace, and durability operations |
+| [Storage common types](../lib/src/storage/common.hpp) | Storage-specific errors, mixed Repository results, and effective-path validation |
 
 There is no BinaryIO, IndexStore, IndexBuilder, IndexRefresh, Application Service, daemon service loop, or IPC implementation. Private process launching and OS ownership are implemented under `lib/src/application/internal/`. The [executable](../app/src/main.cpp) dispatches default welcome TUI or internal Backend bootstrap; neither initializes Catalog lifecycle or saves an Index in Phase 4.1a. The historical `binary_io_test.cpp` filename does not denote a production BinaryIO module.
 
@@ -72,7 +75,7 @@ Future owner / current internal caller
     → unpersisted = true
 
 Catalog query → memory only
-CatalogCoordinator → IndexCodec → filesystem → application.cache/index/normal.msgpack
+CatalogCoordinator → IndexCodec / I/O → application.cache/index/normal.msgpack
 Explicit refresh_all → Repository.scan → typed metadata → Catalog.rebuild
 ```
 
@@ -97,11 +100,11 @@ Snapshot-to-metadata coverage guards in [metadata tests](../tests/storage/metada
 **Decided/Planned:** Application owns Catalog, Coordinator, and Repositories, presents public CLI/TUI APIs, and runs in one per-user Backend. Storage stays private. Normal Index Cache relocation is implemented. Durable Session Marker and private process ownership are implemented; Backend connections/lifecycle integration are not. Follow the [roadmap](roadmap.md), not speculative APIs.
 ## Effective storage paths — Implemented
 
-Internal `StoragePaths` separates configurable `normal_root` and `vault_root` from an `ApplicationPaths application` value containing `config`, `data`, `state`, `cache`, and optional `runtime`. Internal callers supply these effective absolute paths; tests inject temporary locations. Platform defaults and configuration-file setup are deferred until application configuration is developed. No environment or home-directory lookup is performed.
+Internal `StoragePaths` separates configurable `normal_root` and `vault_root` from an `ApplicationPaths application` value containing `config`, `data`, `state`, `cache`, and optional `runtime`. Internal callers supply these effective absolute paths; tests inject temporary locations. Application bootstrap resolves platform defaults and loads validated optional configuration overrides. See [Configuration](configuration.md) for the implemented Phase 4.1c contract; tests inject temporary paths.
 
-`validate_storage_paths()` creates nothing, checks required absolute paths and existing directory types, and resolves existing filesystem aliases for overlap checks. Normal and Vault must be disjoint from each other and every application directory. Application categories may share a location or nest beneath a common parent; this permits native platform layouts without prescribing one. Path validation does not establish ownership, permissions, or a secure IPC location; future resolution/runtime setup must establish those properties. Cache and runtime must not be used to store durable recovery data.
+`validate_storage_paths()` creates nothing, checks required absolute paths and existing directory types, and resolves existing filesystem aliases for overlap checks. Normal and Vault must be disjoint from each other and application support directories. Data may be their strict ancestor, allowing the default authoritative roots beneath Data. Application categories may share a location or nest beneath a common parent; this permits native platform layouts without prescribing one. Path validation does not establish ownership, permissions, or a secure IPC location; future resolution/runtime setup must establish those properties. Cache and runtime must not be used to store durable recovery data.
 
-The Normal Index uses `<application.cache>/index/normal.msgpack`. Former State indexes are ignored, without reading, migrating, or deleting them. Missing Cache triggers authoritative rebuilding; saving occurs only on an explicit shutdown save when required, never immediately after rebuilding. Cache parents are created only during save. Durable Session Marker is implemented in Phase 3.4.3; Backend lifecycle remains planned for Phase 4; platform default resolution and configuration persistence are deferred.
+The Normal Index uses `<application.cache>/index/normal.msgpack`. Former State indexes are ignored, without reading, migrating, or deleting them. Missing Cache triggers authoritative rebuilding; saving occurs only on an explicit shutdown save when required, never immediately after rebuilding. Cache parents are created only during save. Durable Session Marker is implemented in Phase 3.4.3 and Backend lifecycle in 4.1b. Platform resolution and optional read-only configuration are implemented through 4.1c; no automatic configuration writer exists.
 
 ## Session lifecycle — Implemented internal support
 
@@ -185,3 +188,7 @@ TUI connects to or starts the Backend and retains its connection. See the
 for current contracts. Earlier Phase 4.1a-only baseline statements above describe
 the prior milestone. Public Application operations, queues, Edit Locks and Push
 Events remain planned.
+
+Configuration and I/O ownership now follow [Configuration](configuration.md) and
+[File I/O](io.md). Config and Storage reuse internal I/O without reverse dependencies;
+Application-specific connection settings and endpoint derivation live in `application/ipc.cpp`.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "application/internal/backend_state_machine.hpp"
+#include <folio/application/ipc.hpp>
 #include "application/internal/repository_ownership.hpp"
 #include "storage/catalog_coordinator.hpp"
 #include "storage/normal_repository.hpp"
@@ -21,7 +22,7 @@ namespace storage = core::storage;
 // these errors as text. No public output or IPC contract is implied.
 struct BackendDiagnostic {
   BackendStateMachine::State phase;
-  std::variant<ProcessError, IpcError, storage::CoordinatorError, std::exception_ptr> error;
+  std::variant<folio::config::ConfigurationError, ProcessError, IpcError, storage::CoordinatorError, std::exception_ptr> error;
   std::chrono::steady_clock::time_point occurred_at = std::chrono::steady_clock::now();
 };
 
@@ -29,6 +30,8 @@ std::string diagnostic_message(const BackendDiagnostic& diagnostic);
 
 // Shared resources for handlers; contains no lifecycle control logic.
 struct BackendContext {
+  // Explicit internal bootstrap input; absent in normal executable startup.
+  std::optional<config::StoragePaths> startup_paths;
   std::optional<storage::StoragePaths> paths;
   std::optional<RepositoryOwnership> ownership;
   storage::MetadataCatalog catalog;
@@ -49,6 +52,8 @@ BackendActionOutcome Stopping(BackendContext& context);
 BackendActionOutcome Report(BackendContext& context);
 BackendActionOutcome Finish(BackendContext& context);
 BackendActionOutcome record_backend_failure(BackendContext& context, BackendDiagnostic diagnostic);
+
+int run_backend(std::optional<config::StoragePaths> startup_paths);
 
 // Registered once; the context must outlive the resulting handlers.
 BackendStateMachine::Handlers register_backend_states(BackendContext& context);

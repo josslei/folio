@@ -640,9 +640,9 @@ TEST(MetadataCatalogTest, MovesAndRefreshesMetadataWithoutChangingIdentity) {
   std::get<storage::LogMetadata>(wrong_type).id = memo.id;
   expect_error(catalog.update_record(wrong_type), storage::StorageErrorCode::InvalidMetadata);
   expect_error(catalog.remove_record(id("a7183823-2574-4bfd-b411-99ed177d3e43")),
-               storage::StorageErrorCode::NotFound);
+               storage::StorageErrorCode::MetadataNotFound);
   expect_error(catalog.remove_directory(id("a7183823-2574-4bfd-b411-99ed177d3e43")),
-               storage::StorageErrorCode::NotFound);
+               storage::StorageErrorCode::MetadataNotFound);
   EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(memo.id)).relative_path,
             saved.relative_path);
   EXPECT_FALSE(catalog.unpersisted());
@@ -903,7 +903,7 @@ TEST(MetadataCatalogTest, CrossTypeQueriesAndMutationsKeepOtherEntriesIntact) {
     }
   }
   EXPECT_TRUE(catalog.query().empty());
-  expect_error(catalog.remove_record(log.id), storage::StorageErrorCode::NotFound);
+  expect_error(catalog.remove_record(log.id), storage::StorageErrorCode::MetadataNotFound);
   EXPECT_FALSE(catalog.unpersisted());
 }
 

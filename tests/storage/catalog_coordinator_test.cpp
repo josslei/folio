@@ -1,3 +1,4 @@
+#include "io/filesystem.hpp"
 #include "storage/catalog_coordinator.hpp"
 #include "storage/normal_repository.hpp"
 #include "storage/filesystem_durability_test_hooks.hpp"
@@ -532,8 +533,8 @@ TEST_F(CatalogCoordinatorTest, InvalidRootsAndIoFailureDoNotCreateCache) {
   storage::CatalogCoordinator io{invalid, io_catalog};
   const auto failure = io.startup_load();
   expect_error(failure, storage::CoordinatorErrorCode::IoError);
-  ASSERT_TRUE(std::get<storage::CoordinatorError>(failure).storage_error.has_value());
-  EXPECT_TRUE(std::get<storage::CoordinatorError>(failure).storage_error->system_error);
+  ASSERT_TRUE(std::get<storage::CoordinatorError>(failure).file_error.has_value());
+  EXPECT_TRUE(std::get<storage::CoordinatorError>(failure).file_error->system_error);
   EXPECT_FALSE(fs::exists(state / "index"));
   expect_no_data_roots();
 }
@@ -577,9 +578,9 @@ TEST_F(CatalogCoordinatorTest, PendingTemporaryBlocksReplacementWithoutNewTemp) 
   const auto failed = coordinator.shutdown_save();
   expect_error(failed, storage::CoordinatorErrorCode::StorageFailure);
   const auto& cause = std::get<storage::CoordinatorError>(failed);
-  ASSERT_TRUE(cause.storage_error.has_value());
-  EXPECT_EQ(cause.storage_error->code, storage::StorageErrorCode::RecoveryRequired);
-  EXPECT_FALSE(cause.storage_error->replacement_completed);
+  ASSERT_TRUE(cause.file_error.has_value());
+  EXPECT_EQ(cause.file_error->code, folio::io::FileErrorCode::RecoveryRequired);
+  EXPECT_FALSE(cause.file_error->replacement_completed);
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_EQ(read_bytes(file), original);
   EXPECT_EQ(read_bytes(pending), "unfinished cache");
@@ -1027,9 +1028,9 @@ TEST_F(CatalogCoordinatorTest, DirectoryLockFailurePreservesExistingCacheAndUnpe
   const auto failed = coordinator.shutdown_save();
   expect_error(failed, storage::CoordinatorErrorCode::IoError);
   const auto& cause = std::get<storage::CoordinatorError>(failed);
-  ASSERT_TRUE(cause.storage_error.has_value());
-  EXPECT_EQ(cause.storage_error->code, storage::StorageErrorCode::IoError);
-  EXPECT_FALSE(cause.storage_error->replacement_completed);
+  ASSERT_TRUE(cause.file_error.has_value());
+  EXPECT_EQ(cause.file_error->code, folio::io::FileErrorCode::IoError);
+  EXPECT_FALSE(cause.file_error->replacement_completed);
   EXPECT_EQ(read_bytes(file), original);
   EXPECT_TRUE(owned_catalog.unpersisted());
   expect_no_data_roots();
@@ -1221,7 +1222,7 @@ TEST_F(CatalogCoordinatorTest, SaveFailureAndInconsistencyCannotClearMarker) {
   EXPECT_TRUE(fs::exists(state / "session.marker"));
   const storage::RepositoryMutationError failure{
       storage::MutationFailureStage::AuthoritativeStateMayHaveChanged,
-      {storage::StorageErrorCode::IoError, normal, "original failure", {}, true}};
+      folio::io::FileError{folio::io::FileErrorCode::IoError, normal, "original failure", {}, true}};
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       coordinator.log_update_callback()(std::cref(failure))));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
@@ -1242,8 +1243,8 @@ TEST_F(CatalogCoordinatorTest, MissingCleanCacheCannotCertifyCleanShutdown) {
 
 #ifndef _WIN32
 struct LifecycleSyncGuard {
-  storage::internal::SyncFile prior;
-  explicit LifecycleSyncGuard(storage::internal::SyncFile hook)
+  folio::io::internal::SyncFile prior;
+  explicit LifecycleSyncGuard(folio::io::internal::SyncFile hook)
       : prior(storage::internal::set_lifecycle_sync_for_testing(hook)) {}
   ~LifecycleSyncGuard() { storage::internal::set_lifecycle_sync_for_testing(prior); }
 };
@@ -1256,9 +1257,9 @@ TEST_F(CatalogCoordinatorTest, FailedMarkerDurabilityCannotPublishDecodedOrRebui
     LifecycleSyncGuard fail{fail_lifecycle_sync};
     const auto loaded = coordinator.startup_load();
     expect_error(loaded, storage::CoordinatorErrorCode::StorageFailure);
-    ASSERT_TRUE(std::get<storage::CoordinatorError>(loaded).storage_error);
-    EXPECT_EQ(std::get<storage::CoordinatorError>(loaded).storage_error->code,
-              storage::StorageErrorCode::DurabilityFailure);
+    ASSERT_TRUE(std::get<storage::CoordinatorError>(loaded).file_error);
+    EXPECT_EQ(std::get<storage::CoordinatorError>(loaded).file_error->code,
+              folio::io::FileErrorCode::DurabilityFailure);
     EXPECT_TRUE(owned_catalog.query().empty());
     EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Unavailable);
     expect_error(coordinator.refresh_all(), storage::CoordinatorErrorCode::StorageFailure);
@@ -1355,8 +1356,8 @@ TEST_F(CatalogCoordinatorTest, MarkerCreationSyncFailureRetainsPublishedMarkerAn
     LifecycleSyncGuard fail_file_sync{fail_regular_file_sync};
     const auto loaded = coordinator.startup_load();
     expect_error(loaded, storage::CoordinatorErrorCode::StorageFailure);
-    ASSERT_TRUE(std::get<storage::CoordinatorError>(loaded).storage_error);
-    EXPECT_TRUE(std::get<storage::CoordinatorError>(loaded).storage_error->replacement_completed);
+    ASSERT_TRUE(std::get<storage::CoordinatorError>(loaded).file_error);
+    EXPECT_TRUE(std::get<storage::CoordinatorError>(loaded).file_error->replacement_completed);
     EXPECT_TRUE(fs::is_regular_file(state / "session.marker"));
     EXPECT_TRUE(owned_catalog.query().empty());
     EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Unavailable);
@@ -1384,26 +1385,26 @@ TEST_F(CatalogCoordinatorTest, FinalIndexSyncFailureCannotClearMarker) {
 
 TEST_F(CatalogCoordinatorTest, DurableFilesystemHelpersRejectUnsafeTargetsAndAllowRemovalRetry) {
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      storage::create_directories_durable(state / "nested")));
+      folio::io::create_directories_durable(state / "nested")));
   const auto target = state / "nested/file";
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(storage::create_empty_file_durable(target)));
-  EXPECT_TRUE(std::holds_alternative<storage::StorageError>(storage::create_empty_file_durable(target)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(folio::io::create_empty_file_durable(target)));
+  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::create_empty_file_durable(target)));
   EXPECT_TRUE(read_bytes(target).empty());
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(storage::sync_regular_file(target)));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(storage::remove_file_durable(target)));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(storage::remove_file_durable(target)));
-  EXPECT_TRUE(std::holds_alternative<storage::StorageError>(storage::sync_regular_file(state / "nested")));
-  EXPECT_TRUE(std::holds_alternative<storage::StorageError>(storage::remove_file_durable(state / "nested")));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(folio::io::sync_regular_file(target)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(folio::io::remove_file_durable(target)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(folio::io::remove_file_durable(target)));
+  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::sync_regular_file(state / "nested")));
+  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::remove_file_durable(state / "nested")));
   fs::create_directory_symlink(state / "nested", state / "alias");
-  EXPECT_TRUE(std::holds_alternative<storage::StorageError>(storage::create_directories_durable(state / "alias/child")));
+  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::create_directories_durable(state / "alias/child")));
   EXPECT_FALSE(fs::exists(state / "nested/child"));
   write_bytes(target, "keep");
   fs::create_symlink(target, state / "link");
-  EXPECT_TRUE(std::holds_alternative<storage::StorageError>(storage::sync_regular_file(state / "link")));
-  EXPECT_TRUE(std::holds_alternative<storage::StorageError>(storage::remove_file_durable(state / "link")));
-  EXPECT_TRUE(std::holds_alternative<storage::StorageError>(storage::remove_file_durable(state / "alias/file")));
-  EXPECT_TRUE(std::holds_alternative<storage::StorageError>(storage::create_directories_durable("relative")));
-  EXPECT_TRUE(std::holds_alternative<storage::StorageError>(storage::remove_file_durable("relative")));
+  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::sync_regular_file(state / "link")));
+  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::remove_file_durable(state / "link")));
+  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::remove_file_durable(state / "alias/file")));
+  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::create_directories_durable("relative")));
+  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::remove_file_durable("relative")));
   EXPECT_EQ(read_bytes(target), "keep");
 }
 
@@ -1411,11 +1412,11 @@ TEST_F(CatalogCoordinatorTest, ExistingDirectoryLinksAreSyncedOnRetry) {
   fs::create_directories(state / "nested");
   {
     LifecycleSyncGuard fail{fail_lifecycle_sync};
-    const auto failed = storage::create_directories_durable(state / "nested");
-    ASSERT_TRUE(std::holds_alternative<storage::StorageError>(failed));
-    EXPECT_EQ(std::get<storage::StorageError>(failed).code, storage::StorageErrorCode::DurabilityFailure);
+    const auto failed = folio::io::create_directories_durable(state / "nested");
+    ASSERT_TRUE(std::holds_alternative<folio::io::FileError>(failed));
+    EXPECT_EQ(std::get<folio::io::FileError>(failed).code, folio::io::FileErrorCode::DurabilityFailure);
   }
-  EXPECT_TRUE(std::holds_alternative<std::monostate>(storage::create_directories_durable(state / "nested")));
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(folio::io::create_directories_durable(state / "nested")));
 }
 
 fs::path cleanup_marker;
@@ -1438,9 +1439,9 @@ TEST_F(CatalogCoordinatorTest, MarkerRemovalSyncFailurePreservesOriginalErrorAnd
     LifecycleSyncGuard fail_cleanup{fail_marker_unlink_sync};
     const auto failed = coordinator.finish_session();
     expect_error(failed, storage::CoordinatorErrorCode::StorageFailure);
-    ASSERT_TRUE(std::get<storage::CoordinatorError>(failed).storage_error);
-    const auto& cause = *std::get<storage::CoordinatorError>(failed).storage_error;
-    EXPECT_EQ(cause.code, storage::StorageErrorCode::DurabilityFailure);
+    ASSERT_TRUE(std::get<storage::CoordinatorError>(failed).file_error);
+    const auto& cause = *std::get<storage::CoordinatorError>(failed).file_error;
+    EXPECT_EQ(cause.code, folio::io::FileErrorCode::DurabilityFailure);
     EXPECT_TRUE(cause.replacement_completed); // Unlink occurred; durability uncertain.
     EXPECT_EQ(cause.system_error, std::error_code(EIO, std::generic_category()));
     EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Unavailable);

@@ -1,8 +1,7 @@
 #include "application/internal/process.hpp"
 #include <folio/application/backend.hpp>
 #include <folio/application/backend_connection_handle.hpp>
-#include "application/internal/configuration.hpp"
-#include "application/internal/configuration.hpp"
+#include <folio/application/ipc.hpp>
 #include "application/internal/repository_ownership.hpp"
 #include "storage/catalog_coordinator.hpp"
 #include "storage/index_codec.hpp"
@@ -142,7 +141,7 @@ TEST_F(Backend, OwnershipStopsEndpointBeforeReleasingLocks) {
     auto acquired = app::RepositoryOwnership::acquire(paths);
     ASSERT_TRUE(std::holds_alternative<app::RepositoryOwnership>(acquired));
     auto& ownership = std::get<app::RepositoryOwnership>(acquired);
-    auto endpoint = std::get<fs::path>(app::ipc_endpoint(paths));
+    auto endpoint = std::get<app::ConnectionSettings>(app::connection_settings(paths)).endpoint;
     auto connected = app::IpcStream::connect(endpoint);
     ASSERT_TRUE(std::holds_alternative<app::IpcStream>(connected));
     ownership.stop_listening();
@@ -173,6 +172,33 @@ TEST_F(Backend, StartsOnDemandReadinessRequiresMarkerAndLastDisconnectSaves) {
   EXPECT_EQ(read(children[0].result), "0");
   EXPECT_FALSE(fs::exists(marker()));
   EXPECT_TRUE(fs::exists(index()));
+}
+
+TEST_F(Backend, NewFrontendConfigurationDoesNotReconfigureActiveBackend) {
+  fs::create_directory(paths.application.config);
+  const auto file = paths.application.config / "folio_config.toml";
+  write(file, "[general.normal_storage]\nuse_default_location = false\npath = '" + paths.normal_root.generic_string() +
+                  "'\n[general.vault_storage]\nuse_default_location = false\npath = '" + paths.vault_root.generic_string() + "'\n");
+  {
+    auto first = connect();
+    const auto changed_root = base / "changed-normal";
+    write(file, "[general.normal_storage]\nuse_default_location = false\npath = '" + changed_root.generic_string() + "'\n");
+    auto settings = folio::config::load_configuration(paths.application, file);
+    ASSERT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(settings));
+    auto second = folio::application::connect_or_start_backend(
+        std::get<app::ConnectionSettings>(app::connection_settings(
+            std::get<folio::config::EffectiveConfig>(settings).paths)),
+        [&] { return launch(); }, 8s);
+    ASSERT_TRUE(std::holds_alternative<folio::application::BackendConnectionHandle>(second));
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(
+        std::get<folio::application::BackendConnectionHandle>(second).ping()));
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(first.ping()));
+    EXPECT_EQ(children.size(), 1u);
+    EXPECT_FALSE(fs::exists(changed_root));
+    EXPECT_TRUE(fs::exists(paths.normal_root / ".folio-backend.lock"));
+  }
+  ASSERT_TRUE(until([&] { return fs::exists(children.front().result); }));
+  EXPECT_EQ(read(children.front().result), "0");
 }
 
 TEST_F(Backend, OneDisconnectLeavesOtherClientAndReadOnlyIndexUnchanged) {
@@ -286,7 +312,7 @@ TEST_F(Backend, ValidCacheDoesNotScanMalformedAuthoritativeFile) {
 
 TEST_F(Backend, InvalidFramesRejectedWithoutTerminatingOtherClient) {
   auto keeper = connect();
-  auto endpoint = std::get<fs::path>(app::ipc_endpoint(paths));
+  auto endpoint = std::get<app::ConnectionSettings>(app::connection_settings(paths)).endpoint;
   for (const auto& bytes :
        {app::encode_message({app::MessageKind::Hello, {}, 2}),
         std::string("\x00\x02\x00\x00", 4), std::string("\0\0\0\1", 4),
@@ -335,7 +361,7 @@ TEST_F(Backend, ConnectDuringLastDisconnectCanRetryNewOwner) {
 TEST_F(Backend, StaleSocketReclaimedAndUnsafeEndpointRejected) {
   fs::create_directory(*paths.application.runtime);
   chmod(paths.application.runtime->c_str(), 0700);
-  auto endpoint = std::get<fs::path>(app::ipc_endpoint(paths));
+  auto endpoint = std::get<app::ConnectionSettings>(app::connection_settings(paths)).endpoint;
   int fd = socket(AF_UNIX, SOCK_STREAM, 0);
   ASSERT_GE(fd, 0);
   sockaddr_un address{};
@@ -359,20 +385,20 @@ TEST_F(Backend, UnsafeRuntimePermissionsAreNotSilentlyAccepted) {
   EXPECT_EQ(std::get<app::IpcError>(result).code, app::IpcErrorCode::AccessDenied);
 }
 #endif
-TEST_F(Backend, ConfigurationRequiresExplicitRootsAndCreatesNothing) {
+TEST_F(Backend, ConfigurationAcceptsOverridesAndCreatesNothing) {
   fs::create_directory(paths.application.config);
-  auto config = paths.application.config / "config.toml";
-  write(config, "normal_root = '" + paths.normal_root.generic_string() +
-                    "'\nvault_root = '" + paths.vault_root.generic_string() + "'\n");
-  auto result = app::load_configuration(paths.application, config);
-  ASSERT_TRUE(std::holds_alternative<storage::StoragePaths>(result));
+  auto config = paths.application.config / "folio_config.toml";
+  write(config, "[general.normal_storage]\nuse_default_location = false\npath = '" + paths.normal_root.generic_string() +
+                    "'\n[general.vault_storage]\nuse_default_location = false\npath = '" + paths.vault_root.generic_string() + "'\n");
+  auto result = folio::config::load_configuration(paths.application, config);
+  ASSERT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(result));
   EXPECT_FALSE(fs::exists(paths.normal_root));
   EXPECT_FALSE(fs::exists(paths.application.state));
-  write(config, "normal_root = 'relative'\nvault_root = 'relative2'\n");
-  EXPECT_TRUE(std::holds_alternative<folio::application::ProcessError>(
-      app::load_configuration(paths.application, config)));
-  EXPECT_TRUE(std::holds_alternative<folio::application::ProcessError>(
-      app::load_configuration(paths.application, base / "missing")));
+  write(config, "[general.normal_storage]\nuse_default_location = false\npath = 'relative'\n[general.vault_storage]\nuse_default_location = false\npath = 'relative2'\n");
+  EXPECT_TRUE(std::holds_alternative<folio::config::ConfigurationError>(
+      folio::config::load_configuration(paths.application, config)));
+  EXPECT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(
+      folio::config::load_configuration(paths.application, base / "missing")));
 }
 
 TEST(IpcProtocol, BinaryPayloadRoundTrip) {

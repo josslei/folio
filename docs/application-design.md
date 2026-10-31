@@ -168,13 +168,12 @@ connections. Default Frontend startup retains a Client through the welcome TUI;
 connection loss exits the TUI with an explicit error. No automatic request replay
 occurs. Public operations remain Phase 4.2.
 
-Bootstrap reads `<config>/config.toml` (or explicit `FOLIO_CONFIG_FILE`) with exactly
-two UTF-8 string keys: `normal_root` and `vault_root`, both absolute. Missing or
-invalid configuration fails without selecting authoritative roots. No wizard or
-configuration writer exists. Linux uses XDG defaults/absolute overrides; macOS
-uses Library Application Support/Folio, Library/Caches/Folio and confstr's user
-temporary directory; Windows uses Roaming/Local Known Folders. Resolution creates
-nothing. Internal tests inject all effective directories.
+Configuration is a shared startup snapshot. Loading reads
+`<config>/folio_config.toml` (or `FOLIO_CONFIG_FILE`) and atomically creates a
+missing file from the embedded `templates/folio_config.toml`. User-facing storage
+policies are transformed into validated effective roots. Existing files are not
+rewritten; no hot reload is implemented. See [Configuration](configuration.md)
+for schema, compatibility, and validation. Logging remains Phase 4.1d.
 
 Unix uses a user-owned 0700 directory and 0600 Unix socket, with OS peer UID
 verification. Runtime is preferred; a private State/ipc directory is the fallback.

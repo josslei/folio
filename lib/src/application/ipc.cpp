@@ -19,6 +19,65 @@ namespace folio::application::internal {
 namespace fs = std::filesystem;
 
 namespace {
+#ifdef _WIN32
+core::Result<std::wstring, IpcError> endpoint_user_sid() {
+  HANDLE token;
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+    return IpcError{IpcErrorCode::AccessDenied, "Cannot inspect user token"};
+  DWORD size = 0;
+  GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+  std::vector<char> buffer(size);
+  const bool success =
+      GetTokenInformation(token, TokenUser, buffer.data(), size, &size);
+  CloseHandle(token);
+  if (!success)
+    return IpcError{IpcErrorCode::AccessDenied, "Cannot inspect user SID"};
+  LPWSTR value = nullptr;
+  if (!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(buffer.data())->User.Sid,
+                              &value))
+    return IpcError{IpcErrorCode::IoError, "Cannot encode user SID"};
+  std::wstring result(value);
+  LocalFree(value);
+  return result;
+}
+#endif
+
+core::Result<fs::path, IpcError> backend_endpoint_path(
+    const config::ApplicationPaths& application_paths) {
+#ifndef _WIN32
+  // A private durable-state subdirectory is a safe fallback when no OS runtime
+  // directory exists. It holds only a removable socket, never the ownership lock.
+  return application_paths.runtime.value_or(application_paths.state / "ipc") /
+         "backend.sock";
+#else
+  auto sid = endpoint_user_sid();
+  if (auto* problem = std::get_if<IpcError>(&sid))
+    return *problem;
+  // One per-user endpoint; the DACL, not its name, controls access.
+  return fs::path(L"\\\\.\\pipe\\folio-" + std::get<std::wstring>(sid));
+#endif
+}
+
+}  // namespace
+
+core::Result<ConnectionSettings, IpcError> connection_settings(
+    const config::StoragePaths& paths) {
+  auto endpoint = backend_endpoint_path(paths.application);
+  if (auto* e = std::get_if<IpcError>(&endpoint))
+    return *e;
+  return ConnectionSettings{std::get<std::filesystem::path>(endpoint)};
+}
+
+core::Result<ConnectionSettings, IpcError> connection_settings() {
+  auto paths = folio::config::load_configuration();
+  if (auto* e = std::get_if<folio::config::ConfigurationError>(&paths))
+    return IpcError{IpcErrorCode::IoError, e->message, e->system_error};
+  return connection_settings(std::get<folio::config::EffectiveConfig>(paths).paths);
+}
+
+
+
+namespace {
 IpcError error(IpcErrorCode code, std::string message) {
   return {code, std::move(message)};
 }

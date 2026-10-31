@@ -1,3 +1,4 @@
+#include "error_test_helpers.hpp"
 #include "storage/index_codec.hpp"
 #include "storage/codec.hpp"
 #include "storage/metadata_catalog.hpp"
@@ -99,10 +100,14 @@ class CatalogRebuildTest : public testing::Test {
     text.replace(position, from.size(), to);
     ASSERT_NO_FATAL_FAILURE(write(file, text));
   }
-  static void error_code(const ::folio::core::Result<storage::NormalRepositoryScanResult, storage::StorageError>& result,
-                         storage::StorageErrorCode code) {
-    ASSERT_TRUE(std::holds_alternative<storage::StorageError>(result));
-    EXPECT_EQ(std::get<storage::StorageError>(result).code, code);
+  static void error_code(const storage::StorageResult<storage::NormalRepositoryScanResult>& result,
+                         auto code) {
+    ASSERT_FALSE(std::holds_alternative<storage::NormalRepositoryScanResult>(result));
+    std::visit([&](const auto& value) {
+      using Value = std::decay_t<decltype(value)>;
+      if constexpr (!std::is_same_v<Value, storage::NormalRepositoryScanResult>)
+        EXPECT_EQ(folio::testing::diagnostic(value).code, code);
+    }, result);
   }
 };
 
@@ -304,7 +309,8 @@ TEST_F(CatalogRebuildTest, MalformedFormalAndMissingDirectoryMetadataAreFatal) {
   const auto metadata = root / "memos" / md.id.to_string() / ".folio-dir.toml";
   ASSERT_TRUE(fs::remove(metadata));
   const auto failure = repository.scan();
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(failure));
+  ASSERT_TRUE(std::holds_alternative<folio::io::FileError>(failure));
+  EXPECT_EQ(std::get<folio::io::FileError>(failure).system_error, std::errc::no_such_file_or_directory);
   EXPECT_FALSE(fs::exists(metadata));
 }
 
@@ -371,7 +377,7 @@ TEST_F(CatalogRebuildTest, ModuleRootRegularFileCannotBeEnumeratedAsDirectory) {
   ASSERT_TRUE(fs::create_directory(root));
   ASSERT_NO_FATAL_FAILURE(write(root / "logs", "blocking module"));
   storage::NormalRepository repository{root};
-  error_code(repository.scan(), storage::StorageErrorCode::InvalidPath);
+  error_code(repository.scan(), folio::io::FileErrorCode::InvalidPath);
   EXPECT_EQ(bytes(root / "logs"), "blocking module");
 }
 
@@ -379,7 +385,7 @@ TEST_F(CatalogRebuildTest, NestedAndSymlinkedFormalStructuresAreFatal) {
   storage::NormalRepository repository{root};
   ASSERT_TRUE(fs::create_directories(root / "logs" / "nested"));
   ASSERT_NO_FATAL_FAILURE(write(root / "logs" / "nested" / "entry.md", "bad"));
-  error_code(repository.scan(), storage::StorageErrorCode::RecoveryRequired);
+  error_code(repository.scan(), storage::StorageErrorCode::InvalidLayout);
   ASSERT_TRUE(fs::remove_all(root / "logs" / "nested") > 0);
   const auto l = log();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(l)));
@@ -390,7 +396,7 @@ TEST_F(CatalogRebuildTest, NestedAndSymlinkedFormalStructuresAreFatal) {
   std::error_code ec;
   fs::create_symlink(outside, root / "logs" / "linked.md", ec);
   if (ec) GTEST_SKIP() << "Cannot create file symlink: " << ec.message();
-  error_code(repository.scan(), storage::StorageErrorCode::InvalidPath);
+  error_code(repository.scan(), folio::io::FileErrorCode::InvalidPath);
   EXPECT_TRUE(fs::is_regular_file(outside));
 }
 
@@ -402,7 +408,7 @@ TEST_F(CatalogRebuildTest, NestedMemoEntryAndSymlinkedUuidDirectoryAreFatal) {
   const auto nested = root / "memos" / md.id.to_string() / "nested";
   ASSERT_TRUE(fs::create_directory(nested));
   ASSERT_NO_FATAL_FAILURE(write(nested / "entry.md", "not an Entry"));
-  error_code(repository.scan(), storage::StorageErrorCode::RecoveryRequired);
+  error_code(repository.scan(), storage::StorageErrorCode::InvalidLayout);
   ASSERT_TRUE(fs::remove_all(nested) > 0);
   const auto outside = sandbox / "outside-directory";
   ASSERT_TRUE(fs::create_directory(outside));
@@ -410,7 +416,7 @@ TEST_F(CatalogRebuildTest, NestedMemoEntryAndSymlinkedUuidDirectoryAreFatal) {
   std::error_code ec;
   fs::create_directory_symlink(outside, root / "memos" / linked_id.to_string(), ec);
   if (ec) GTEST_SKIP() << "Cannot create directory symlink: " << ec.message();
-  error_code(repository.scan(), storage::StorageErrorCode::InvalidPath);
+  error_code(repository.scan(), folio::io::FileErrorCode::InvalidPath);
   EXPECT_TRUE(fs::is_empty(outside));
 }
 

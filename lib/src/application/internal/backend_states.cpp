@@ -1,5 +1,6 @@
 #include "application/internal/backend_states.hpp"
-#include "application/internal/configuration.hpp"
+#include <folio/application/ipc.hpp>
+#include <folio/config/configuration.hpp>
 
 #include <algorithm>
 #include <array>
@@ -18,11 +19,19 @@ core::Result<std::monostate, IpcError> serve(
 }  // namespace
 
 BackendActionOutcome Bootstrap(BackendContext& context) {
-  auto resolved = load_configuration();
-  if (auto* error = std::get_if<ProcessError>(&resolved)) {
-    return record_backend_failure(context, {Phase::Bootstrap, *error});
+  if (context.startup_paths) {
+    auto validated = config::validate_effective_paths(*context.startup_paths);
+    if (auto* error = std::get_if<config::ConfigurationError>(&validated)) {
+      return record_backend_failure(context, {Phase::Bootstrap, *error});
+    }
+    context.paths = std::get<config::StoragePaths>(std::move(validated));
+  } else {
+    auto resolved = config::load_configuration();
+    if (auto* error = std::get_if<config::ConfigurationError>(&resolved)) {
+      return record_backend_failure(context, {Phase::Bootstrap, *error});
+    }
+    context.paths.emplace(std::get<config::EffectiveConfig>(std::move(resolved)).paths);
   }
-  context.paths.emplace(std::get<storage::StoragePaths>(std::move(resolved)));
   auto acquired = RepositoryOwnership::acquire(*context.paths);
   if (auto* error = std::get_if<ProcessError>(&acquired)) {
     if (error->code == ProcessErrorCode::AlreadyOwned) {

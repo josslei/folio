@@ -37,14 +37,19 @@ CoordinatorError error(CoordinatorErrorCode code, const fs::path& path,
   return {code, path, std::move(message), std::nullopt, std::nullopt, std::nullopt};
 }
 CoordinatorError storage_error(StorageError source) {
-  const auto code = source.code == StorageErrorCode::InvalidPath
+  return {CoordinatorErrorCode::StorageFailure, source.path, source.message,
+          std::move(source), std::nullopt, std::nullopt, std::nullopt};
+}
+CoordinatorError storage_error(io::FileError source) {
+  const auto code = source.code == io::FileErrorCode::InvalidPath
       ? CoordinatorErrorCode::InvalidPath
-      : (source.code == StorageErrorCode::IoError ? CoordinatorErrorCode::IoError
+      : (source.code == io::FileErrorCode::IoError ? CoordinatorErrorCode::IoError
                                                   : CoordinatorErrorCode::StorageFailure);
-  return {code, source.path, source.message, std::move(source), std::nullopt, std::nullopt};
+  return {code, source.path, source.message, std::nullopt, std::nullopt,
+          std::nullopt, std::move(source)};
 }
 CoordinatorError io_error(const fs::path& path, std::string message, std::error_code ec) {
-  return storage_error(StorageError{StorageErrorCode::IoError, path,
+  return storage_error(io::FileError{io::FileErrorCode::IoError, path,
                                     std::move(message), ec, false});
 }
 CoordinatorError codec_error(const fs::path& path, index_codec::IndexCodecError source,
@@ -61,8 +66,8 @@ CoordinatorError codec_error(const fs::path& path, index_codec::IndexCodecError 
   }
   return {code, path, source.message, std::nullopt, std::move(source), std::nullopt};
 }
-CoordinatorError binary_error(BinaryReadError source) {
-  const auto code = source.code == BinaryReadErrorCode::LimitExceeded
+CoordinatorError binary_error(io::ReadError source) {
+  const auto code = source.code == io::ReadErrorCode::LimitExceeded
       ? CoordinatorErrorCode::LimitExceeded : CoordinatorErrorCode::IoError;
   return {code, source.path, source.message, std::nullopt, std::nullopt, std::move(source)};
 }
@@ -71,6 +76,7 @@ struct Locations { fs::path cache_root; fs::path parent; fs::path file; };
 ::folio::core::Result<Locations, CoordinatorError> locations(const StoragePaths& paths) {
   auto checked = validate_storage_paths(paths);
   if (auto* problem = std::get_if<StorageError>(&checked)) return storage_error(*problem);
+  if (auto* problem = std::get_if<io::FileError>(&checked)) return storage_error(*problem);
   std::error_code ec;
   const auto root = fs::weakly_canonical(paths.application.cache, ec);
   if (ec) return io_error(paths.application.cache, "Could not resolve cache root", ec);
@@ -113,6 +119,7 @@ struct Locations { fs::path cache_root; fs::path parent; fs::path file; };
 CatalogCoordinator::previous_marker() const {
   auto validated = validate_storage_paths(paths_);
   if (auto* problem = std::get_if<StorageError>(&validated)) return storage_error(*problem);
+  if (auto* problem = std::get_if<io::FileError>(&validated)) return storage_error(*problem);
   std::error_code ec;
   const auto marker = fs::weakly_canonical(marker_path(paths_), ec);
   if (ec) return io_error(marker_path(paths_), "Could not resolve Session Marker", ec);
@@ -141,14 +148,14 @@ CatalogCoordinator::previous_marker() const {
 CatalogCoordinator::establish_marker() {
   auto present = previous_marker();
   if (auto* problem = std::get_if<CoordinatorError>(&present)) return *problem;
-  auto parents = create_directories_durable(paths_.application.state);
-  if (auto* problem = std::get_if<StorageError>(&parents)) return storage_error(*problem);
+  auto parents = io::create_directories_durable(paths_.application.state);
+  if (auto* problem = std::get_if<io::FileError>(&parents)) return storage_error(*problem);
   const auto marker = marker_path(paths_);
   // Never remove/recreate an existing Marker during startup. Sync it and its
   // ancestry, including when a previous process failed during publication sync.
-  auto durable = std::get<bool>(present) ? sync_regular_file(marker)
-                                        : create_empty_file_durable(marker);
-  if (auto* problem = std::get_if<StorageError>(&durable)) return storage_error(*problem);
+  auto durable = std::get<bool>(present) ? io::sync_regular_file(marker)
+                                        : io::create_empty_file_durable(marker);
+  if (auto* problem = std::get_if<io::FileError>(&durable)) return storage_error(*problem);
   session_active_ = true;
   return std::monostate{};
 }
@@ -159,7 +166,7 @@ CatalogCoordinator::CatalogCoordinator(StoragePaths paths, MetadataCatalog& cata
       creation_check_([this](const core::Id& id)
           -> ::folio::core::Result<std::monostate, StorageError> {
         if (status_ != CatalogStatus::Ready)
-          return StorageError{StorageErrorCode::RecoveryRequired, paths_.normal_root,
+          return StorageError{StorageErrorCode::CatalogUnavailable, paths_.normal_root,
                               "Creation requires an initialized, consistent Catalog", {}, false};
         if (catalog_.contains_entry(id))
           return StorageError{StorageErrorCode::DuplicateId, paths_.normal_root,
@@ -228,8 +235,8 @@ CatalogCoordinator::startup_load() {
     if (auto* problem = std::get_if<CoordinatorError>(&ready)) return *problem;
     if (!std::get<bool>(ready))
       return error(CoordinatorErrorCode::Missing, path.file, "Normal Index is missing");
-    auto bytes = read_binary_file(path.file, kMaxIndexBytes);
-    if (auto* problem = std::get_if<BinaryReadError>(&bytes)) return binary_error(*problem);
+    auto bytes = io::read_file(path.file, kMaxIndexBytes);
+    if (auto* problem = std::get_if<io::ReadError>(&bytes)) return binary_error(*problem);
     auto decoded = index_codec::decode_index(std::get<std::string>(bytes));
     if (auto* problem = std::get_if<index_codec::IndexCodecError>(&decoded))
       return codec_error(path.file, *problem, true);
@@ -263,9 +270,11 @@ CatalogCoordinator::startup_load() {
 CatalogCoordinator::rebuild() {
   auto paths = validate_storage_paths(paths_);
   if (auto* problem = std::get_if<StorageError>(&paths)) return storage_error(*problem);
+  if (auto* problem = std::get_if<io::FileError>(&paths)) return storage_error(*problem);
   NormalRepository repository(paths_.normal_root);
   auto scanned = repository.scan();
   if (auto* problem = std::get_if<StorageError>(&scanned)) return storage_error(*problem);
+  if (auto* problem = std::get_if<io::FileError>(&scanned)) return storage_error(*problem);
   auto inventory = std::get<NormalRepositoryScanResult>(std::move(scanned));
   // Allocate each typed vector once and move records without combining types.
   auto to_vector = []<class T>(std::deque<T>& records) {
@@ -315,8 +324,8 @@ CatalogCoordinator::refresh_all() {
     auto found = directory_ready(directory);
     if (auto* problem = std::get_if<CoordinatorError>(&found)) return *problem;
   }
-  auto parents = create_directories_durable(path.parent);
-  if (auto* problem = std::get_if<StorageError>(&parents)) return storage_error(*problem);
+  auto parents = io::create_directories_durable(path.parent);
+  if (auto* problem = std::get_if<io::FileError>(&parents)) return storage_error(*problem);
   for (const auto& directory : {path.cache_root, path.parent}) {
     auto found = directory_ready(directory);
     if (auto* problem = std::get_if<CoordinatorError>(&found)) return *problem;
@@ -328,8 +337,8 @@ CatalogCoordinator::refresh_all() {
   if (auto* problem = std::get_if<CoordinatorError>(&found)) return *problem;
   const auto& bytes = std::get<std::string>(encoded);
   auto written = std::get<bool>(found)
-      ? replace_file_atomic(path.file, bytes) : create_file_atomic(path.file, bytes);
-  if (auto* problem = std::get_if<StorageError>(&written)) return storage_error(*problem);
+      ? io::replace_file_atomic(path.file, bytes) : io::create_file_atomic(path.file, bytes);
+  if (auto* problem = std::get_if<io::FileError>(&written)) return storage_error(*problem);
   catalog_.mark_persisted();
   return SaveOutcome::Saved;
 }
@@ -350,18 +359,18 @@ CatalogCoordinator::finish_session() {
                  "Cannot finalize without a persisted Index");
   // Also establish durability for a loaded, unchanged Index before certifying
   // clean shutdown, without rewriting it. This is shutdown-only work.
-  auto parents = create_directories_durable(path.parent);
-  if (auto* problem = std::get_if<StorageError>(&parents)) return storage_error(*problem);
-  auto synced = sync_regular_file(path.file);
-  if (auto* problem = std::get_if<StorageError>(&synced)) return storage_error(*problem);
+  auto parents = io::create_directories_durable(path.parent);
+  if (auto* problem = std::get_if<io::FileError>(&parents)) return storage_error(*problem);
+  auto synced = io::sync_regular_file(path.file);
+  if (auto* problem = std::get_if<io::FileError>(&synced)) return storage_error(*problem);
   auto marker = previous_marker();
   if (auto* problem = std::get_if<CoordinatorError>(&marker)) {
     session_active_ = false;
     status_ = CatalogStatus::Unavailable;
     return *problem;
   }
-  auto removed = remove_file_durable(marker_path(paths_));
-  if (auto* problem = std::get_if<StorageError>(&removed)) {
+  auto removed = io::remove_file_durable(marker_path(paths_));
+  if (auto* problem = std::get_if<io::FileError>(&removed)) {
     // unlink may already have succeeded. The Index is safe, but disallow any
     // further managed work until a retry completes or Refresh reestablishes the
     // Marker. Preserve the original removal/sync diagnostic.

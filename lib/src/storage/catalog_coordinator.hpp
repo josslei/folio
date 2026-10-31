@@ -2,7 +2,8 @@
 
 #include <folio/core/result.hpp>
 
-#include "storage/filesystem.hpp"
+#include "io/filesystem.hpp"
+#include "storage/common.hpp"
 #include "storage/index_codec.hpp"
 #include "storage/normal_repository.hpp"
 
@@ -26,7 +27,8 @@ struct CoordinatorError {
   std::string message;
   std::optional<StorageError> storage_error;
   std::optional<index_codec::IndexCodecError> codec_error;
-  std::optional<BinaryReadError> binary_error;
+  std::optional<io::ReadError> binary_error;
+  std::optional<io::FileError> file_error;
 };
 
 // Successful initialization: without a previous Marker, no index_error means
@@ -121,7 +123,7 @@ class CatalogCoordinator {
         return std::monostate{};
       }
       if (!session_active_)
-        return StorageError{StorageErrorCode::RecoveryRequired, paths_.normal_root,
+        return StorageError{StorageErrorCode::CatalogUnavailable, paths_.normal_root,
                             "Catalog session is not Ready", {}, false};
       try {
         auto result = update(std::get<std::reference_wrapper<const Metadata>>(notification).get());

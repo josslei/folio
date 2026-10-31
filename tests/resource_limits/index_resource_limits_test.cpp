@@ -1,3 +1,4 @@
+#include "io/filesystem.hpp"
 #include "storage/catalog_coordinator.hpp"
 #include "storage/index_codec.hpp"
 #include "storage/normal_repository.hpp"
@@ -80,7 +81,7 @@ class IndexResourceLimitsTest : public testing::Test {
     EXPECT_EQ(outcome.index_error->code, storage::CoordinatorErrorCode::LimitExceeded);
     ASSERT_TRUE(outcome.index_error->binary_error.has_value());
     EXPECT_EQ(outcome.index_error->binary_error->code,
-              storage::BinaryReadErrorCode::LimitExceeded);
+              folio::io::ReadErrorCode::LimitExceeded);
     EXPECT_EQ(outcome.index_error->binary_error->path, file());
     EXPECT_TRUE(outcome.diagnostics.empty());
     EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);

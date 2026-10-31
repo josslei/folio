@@ -77,7 +77,7 @@ target_link_libraries(folio_backend_child PRIVATE folio_backend)
 if(MINGW)
   target_link_options(folio_backend_child PRIVATE -municode)
 endif()
-add_executable(folio_application_tests application/backend_states_test.cpp application/backend_lifecycle_test.cpp application/process_test.cpp application/backend_test.cpp)
+add_executable(folio_application_tests application/configuration_test.cpp application/backend_states_test.cpp application/backend_lifecycle_test.cpp application/process_test.cpp application/backend_test.cpp)
 target_include_directories(folio_application_tests PRIVATE "${PROJECT_SOURCE_DIR}/lib/src")
 target_compile_features(folio_application_tests PRIVATE cxx_std_20)
 set_target_properties(folio_application_tests PROPERTIES CXX_EXTENSIONS OFF)
@@ -94,10 +94,11 @@ add_test(NAME Cli.Help COMMAND folio --help)
 set_tests_properties(Cli.Help PROPERTIES PASS_REGULAR_EXPRESSION "Print this help message and exit")
 add_test(NAME Cli.RejectsUnknownCommand COMMAND folio unknown-command)
 set_tests_properties(Cli.RejectsUnknownCommand PROPERTIES WILL_FAIL TRUE)
-# Missing synthetic configuration makes private-mode parser tests exit before Storage.
+# Invalid synthetic configuration makes private-mode parser tests exit before Storage.
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/invalid-config.toml" "normal_root = 42\n")
 add_test(NAME Cli.BackendMode COMMAND folio --backend-process)
 add_test(NAME Cli.BackendIgnoresOtherArguments COMMAND folio --help unknown --backend-process --invalid)
 set_tests_properties(Cli.BackendMode Cli.BackendIgnoresOtherArguments PROPERTIES WILL_FAIL TRUE)
 
 set_tests_properties(Cli.BackendMode Cli.BackendIgnoresOtherArguments PROPERTIES
-  ENVIRONMENT "FOLIO_CONFIG_FILE=${CMAKE_CURRENT_BINARY_DIR}/absent-config.toml")
+  ENVIRONMENT "FOLIO_CONFIG_FILE=${CMAKE_CURRENT_BINARY_DIR}/invalid-config.toml")

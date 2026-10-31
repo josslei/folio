@@ -4,7 +4,7 @@
 #include "folio/core/log.hpp"
 #include "folio/core/memo.hpp"
 #include "folio/core/todo.hpp"
-#include "storage/filesystem.hpp"
+#include "storage/common.hpp"
 #include "storage/metadata_catalog.hpp"
 
 #include <deque>
@@ -41,7 +41,7 @@ enum class MutationFailureStage {
 
 struct RepositoryMutationError {
   MutationFailureStage stage;
-  StorageError cause;
+  RepositoryError cause;
 };
 
 // Borrowed payloads are valid only during synchronous invocation. Each operation
@@ -62,6 +62,10 @@ using MutationResultCallback = std::function<
 // Without check_creation, creation retains filesystem-wide standalone uniqueness checks.
 using CreationCheck = std::function<
     ::folio::core::Result<std::monostate, StorageError>(const core::Id&)>;
+
+// Canonical Normal Record filename; existing locators may use other filenames.
+[[nodiscard]] ::folio::core::Result<std::string, StorageError> normal_record_filename(
+    RecordType type, const core::Id& id, core::Timestamp created);
 
 // Synchronous plaintext persistence. The root is supplied by the caller.
 // Managed operations must supply the matching Coordinator callback. Repository
@@ -89,13 +93,13 @@ class NormalRepository {
 
   // A supplied locator is read directly, without discovery or fallback.
   // It must still contain the requested stored UUID.
-  [[nodiscard]] ::folio::core::Result<core::Log::Snapshot, StorageError> load_log(
+  [[nodiscard]] StorageResult<core::Log::Snapshot> load_log(
       const core::Id& id,
       std::optional<std::filesystem::path> relative_path = std::nullopt) const;
-  [[nodiscard]] ::folio::core::Result<core::Memo::Snapshot, StorageError> load_memo(
+  [[nodiscard]] StorageResult<core::Memo::Snapshot> load_memo(
       const core::Id& id,
       std::optional<std::filesystem::path> relative_path = std::nullopt) const;
-  [[nodiscard]] ::folio::core::Result<core::Todo::Snapshot, StorageError> load_todo(
+  [[nodiscard]] StorageResult<core::Todo::Snapshot> load_todo(
       const core::Id& id,
       std::optional<std::filesystem::path> relative_path = std::nullopt) const;
 
@@ -118,7 +122,7 @@ class NormalRepository {
       const CreationCheck& check_creation = {});
   // Directory kind and UUID determine the path; validate only that metadata.
   // Global conflicts are detected by explicit discovery/full reconstruction.
-  [[nodiscard]] ::folio::core::Result<core::Directory::Snapshot, StorageError> load_directory(
+  [[nodiscard]] StorageResult<core::Directory::Snapshot> load_directory(
       DirectoryKind kind, const core::Id& id) const;
   [[nodiscard]] ::folio::core::Result<std::monostate, RepositoryMutationError> rename_directory(
       DirectoryKind kind, const core::Id& id, std::string name,
@@ -137,9 +141,9 @@ class NormalRepository {
       const MutationResultCallback<TodoMetadata>& on_result = {},
       std::optional<std::filesystem::path> relative_path = std::nullopt);
 
-  [[nodiscard]] ::folio::core::Result<std::filesystem::path, StorageError> locate_record(
+  [[nodiscard]] StorageResult<std::filesystem::path> locate_record(
       RecordType type, const core::Id& id) const;
-  [[nodiscard]] ::folio::core::Result<std::filesystem::path, StorageError> locate_record(
+  [[nodiscard]] StorageResult<std::filesystem::path> locate_record(
       RecordType type, const std::filesystem::path& relative_path) const;
 
   // Collects authoritative metadata for a complete MetadataCatalog rebuild when
@@ -153,7 +157,7 @@ class NormalRepository {
   // Snapshots are projected per file; bodies are not retained in the result.
   // Missing roots/modules are empty. Unrelated objects produce diagnostics;
   // malformed managed content, duplicate identities, and unsafe paths fail.
-  [[nodiscard]] ::folio::core::Result<NormalRepositoryScanResult, StorageError> scan() const;
+  [[nodiscard]] StorageResult<NormalRepositoryScanResult> scan() const;
 
  private:
   std::filesystem::path root_;

@@ -1,14 +1,13 @@
 #include "application/internal/process.hpp"
 // Test-only process entry point with injected paths and bounded file barriers.
 #include <folio/application/backend.hpp>
-#include "application/internal/configuration_test_hooks.hpp"
+#include "application/internal/backend_states.hpp"
 #include <folio/application/backend_connection_handle.hpp>
-#include "application/internal/configuration.hpp"
+#include <folio/application/ipc.hpp>
 #include <fstream>
 #include <thread>
 namespace fs = std::filesystem;
 namespace app = folio::application::internal;
-namespace storage = folio::core::storage;
 
 void report(const fs::path& path, const std::string& text) {
   auto temp = path;
@@ -27,13 +26,12 @@ int wmain(int argc, wchar_t** argv) {
   if (argc != 4)
     return 2;
   const fs::path mode(argv[1]), base(argv[2]), control(argv[3]);
-  storage::StoragePaths paths{base / "normal",
+  folio::config::StoragePaths paths{base / "normal",
                               base / "vault",
                               {base / "config", base / "data", base / "state",
                                base / "cache", base / "runtime"}};
   if (mode == "backend") {
-    app::testing::ScopedConfigurationOverride configuration(paths);
-    const int result = folio::application::run_backend();
+    const int result = app::run_backend(paths);
     report(control, std::to_string(result));
     return result;
   }

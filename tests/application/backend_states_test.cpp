@@ -1,5 +1,4 @@
 #include "application/internal/backend_states.hpp"
-#include "application/internal/configuration_test_hooks.hpp"
 
 #include <gtest/gtest.h>
 #include <fstream>
@@ -36,7 +35,7 @@ class BackendStates : public ::testing::Test {
   }
 
   BackendActionOutcome bootstrap() {
-    testing::ScopedConfigurationOverride configuration(paths);
+    context.startup_paths = paths;
     return Bootstrap(context);
   }
 
@@ -59,11 +58,11 @@ class BackendStates : public ::testing::Test {
 TEST_F(BackendStates, FailureBeforeOwnershipDoesNotStartSession) {
   auto invalid = paths;
   invalid.vault_root = invalid.normal_root;
-  testing::ScopedConfigurationOverride configuration(invalid);
+  context.startup_paths = invalid;
   EXPECT_EQ(Bootstrap(context), BackendActionOutcome::Failure);
   ASSERT_EQ(context.diagnostics.size(), 1u);
   EXPECT_EQ(context.diagnostics[0].phase, Phase::Bootstrap);
-  EXPECT_TRUE(std::holds_alternative<ProcessError>(context.diagnostics[0].error));
+  EXPECT_TRUE(std::holds_alternative<folio::config::ConfigurationError>(context.diagnostics[0].error));
   EXPECT_FALSE(context.ownership);
   EXPECT_FALSE(context.initialized);
   EXPECT_EQ(Finish(context), BackendActionOutcome::Success);
@@ -130,7 +129,7 @@ TEST_F(BackendStates, FailedNotificationStillRetainsPrimaryBeforeCleanupFailure)
     block_index_save();
     throw std::runtime_error("original serving exception");
   };
-  testing::ScopedConfigurationOverride configuration(paths);
+  context.startup_paths = paths;
   BackendStateMachine machine(transitions, std::move(actions),
       [](State, std::exception_ptr) {
         throw std::runtime_error("notification exception");
@@ -153,7 +152,7 @@ TEST_F(BackendStates, InconsistentCatalogCannotBeFinalizedAsClean) {
   ASSERT_EQ(bootstrap(), BackendActionOutcome::Success);
   storage::RepositoryMutationError uncertain{
       storage::MutationFailureStage::AuthoritativeStateMayHaveChanged,
-      {storage::StorageErrorCode::IoError, paths.normal_root, "partial mutation", {}, true}};
+      folio::io::FileError{folio::io::FileErrorCode::IoError, paths.normal_root, "partial mutation", {}, true}};
   context.coordinator->memo_update_callback()(std::cref(uncertain));
   ASSERT_EQ(context.coordinator->status(), storage::CatalogStatus::Inconsistent);
   EXPECT_EQ(Finish(context), BackendActionOutcome::Failure);

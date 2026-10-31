@@ -1,5 +1,6 @@
+#include "io/filesystem.hpp"
 #include "application/internal/repository_ownership.hpp"
-#include "application/internal/configuration.hpp"
+#include <folio/application/ipc.hpp>
 
 #include <utility>
 #include <vector>
@@ -75,7 +76,7 @@ bool contains(const fs::path& parent, const fs::path& child) {
 core::Result<RepositoryOwnership, ProcessError> RepositoryOwnership::acquire(
     const storage::StoragePaths& paths) {
   auto valid = storage::validate_storage_paths(paths);
-  if (auto* error = std::get_if<storage::StorageError>(&valid))
+  if (auto* error = std::get_if<io::FileError>(&valid))
     return ProcessError{ProcessErrorCode::InvalidArgument, error->message,
                         error->system_error};
   std::error_code ec;
@@ -104,8 +105,8 @@ core::Result<RepositoryOwnership, ProcessError> RepositoryOwnership::acquire(
   // Resolve supported aliases first, then use no-follow lifecycle helpers for
   // directory creation. External root renaming/replacement is not supported.
   for (const auto& directory : {state, normal}) {
-    auto created = storage::create_directories_durable(directory);
-    if (auto* error = std::get_if<storage::StorageError>(&created))
+    auto created = io::create_directories_durable(directory);
+    if (auto* error = std::get_if<io::FileError>(&created))
       return io_error(error->message, error->system_error);
   }
   std::vector<fs::path> targets{state / "backend.lock", normal / ".folio-backend.lock"};
@@ -174,10 +175,10 @@ core::Result<RepositoryOwnership, ProcessError> RepositoryOwnership::acquire(
     }
 #endif
   }
-  auto endpoint = ipc_endpoint(paths);
-  if (auto* error = std::get_if<IpcError>(&endpoint))
+  auto settings = connection_settings(paths);
+  if (auto* error = std::get_if<IpcError>(&settings))
     return ProcessError{ProcessErrorCode::IoError, error->message, error->system_error};
-  auto listener = IpcListener::listen(std::get<fs::path>(endpoint));
+  auto listener = IpcListener::listen(std::get<ConnectionSettings>(settings).endpoint);
   if (auto* error = std::get_if<IpcError>(&listener))
     return ProcessError{ProcessErrorCode::IoError, error->message, error->system_error};
   handles->listener.emplace(std::get<IpcListener>(std::move(listener)));

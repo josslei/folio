@@ -1,6 +1,7 @@
 #pragma once
 
 #include <folio/core/result.hpp>
+#include <folio/config/configuration.hpp>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -34,7 +35,10 @@ struct ConnectionSettings {
   std::filesystem::path endpoint;
 };
 
-// Configuration-backed endpoint resolution; does not create or connect a socket.
+// Derives settings from resolved paths; does not create or connect a socket.
+core::Result<ConnectionSettings, IpcError> connection_settings(
+    const config::StoragePaths& paths);
+// Convenience overload: loads configuration, then delegates to the overload above.
 core::Result<ConnectionSettings, IpcError> connection_settings();
 
 inline constexpr std::uint16_t protocol_version = 1;

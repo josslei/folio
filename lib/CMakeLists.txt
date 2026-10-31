@@ -1,5 +1,14 @@
+set(folio_config_template "${PROJECT_SOURCE_DIR}/templates/folio_config.toml")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${folio_config_template}")
+file(READ "${folio_config_template}" folio_config_contents)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/config_template.hpp"
+  "#pragma once\n#include <string_view>\nnamespace folio::config { inline constexpr std::string_view factory_template = R\"folio(${folio_config_contents})folio\"; }\n")
+
 add_library(folio_backend STATIC
-  src/application/internal/configuration.cpp
+  src/config/configuration.cpp
+  src/io/filesystem.cpp
+  src/io/path.cpp
   src/application/ipc.cpp
   src/core/directory.cpp
   src/core/id.cpp
@@ -16,14 +25,14 @@ add_library(folio_backend STATIC
   src/application/internal/repository_ownership.cpp
   src/storage/catalog_coordinator.cpp
   src/storage/codec.cpp
-  src/storage/filesystem.cpp
+  src/storage/common.cpp
   src/storage/index_codec.cpp
   src/storage/metadata_catalog.cpp
   src/storage/normal_repository.cpp
 )
 target_include_directories(folio_backend
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 target_compile_features(folio_backend PUBLIC cxx_std_20)
 set_target_properties(folio_backend PROPERTIES CXX_EXTENSIONS OFF)

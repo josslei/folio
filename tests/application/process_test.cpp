@@ -1,7 +1,7 @@
 #include "application/internal/process.hpp"
 #include "application/internal/repository_ownership.hpp"
 #include <folio/application/backend.hpp>
-#include "application/internal/configuration_test_hooks.hpp"
+#include "application/internal/backend_states.hpp"
 #include "folio/core/types.hpp"
 
 #include <gtest/gtest.h>
@@ -230,8 +230,7 @@ TEST_F(Processes, ProcessOwnershipNeverTouchesMarkerOrIndex) {
   EXPECT_EQ(fs::last_write_time(index), index_time);
   auto owner = app::RepositoryOwnership::acquire(paths);
   ASSERT_TRUE(std::holds_alternative<app::RepositoryOwnership>(owner));
-  app::testing::ScopedConfigurationOverride configuration(paths);
-  EXPECT_EQ(folio::application::run_backend(), 4);
+  EXPECT_EQ(app::run_backend(paths), 4);
 }
 
 TEST_F(Processes, UnsafeTargetsAndCacheLockLocationAreRejected) {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "storage/filesystem.hpp"
+#include "storage/common.hpp"
 
 namespace folio::core::storage::internal {
 
@@ -8,7 +8,7 @@ namespace folio::core::storage::internal {
 // Declared beside the implementation because Repository code invokes these seams.
 // Null hooks use the production implementations. Tests must restore hooks.
 struct RepositoryTestHooks {
-  ::folio::core::Result<std::monostate, StorageError> (*write)(
+  StorageResult<std::monostate> (*write)(
       const std::filesystem::path&, std::string_view, bool create_only) = nullptr;
   bool (*remove_source)(const std::filesystem::path&, std::error_code&) = nullptr;
   bool (*sync_source)(int) = nullptr;

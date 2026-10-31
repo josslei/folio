@@ -368,7 +368,7 @@ std::set<std::string>& MetadataCatalog::members_for(RecordType type,
   const Id id = entry_id(m);
   const auto key = id.to_string();
   const auto existing = find_record(id);
-  if (!existing) return failure(StorageErrorCode::NotFound, entry_path(m), "Entry UUID not found");
+  if (!existing) return failure(StorageErrorCode::MetadataNotFound, entry_path(m), "Entry UUID not found");
   const auto type = record_type(m);
   if (record_type(*existing) != type)
     return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Entry type changed");
@@ -412,7 +412,7 @@ std::set<std::string>& MetadataCatalog::members_for(RecordType type,
 ::folio::core::Result<std::monostate, StorageError> MetadataCatalog::remove_record(const Id& id) {
   const auto key = id.to_string();
   const auto existing = find_record(id);
-  if (!existing) return failure(StorageErrorCode::NotFound, {}, "Entry UUID not found");
+  if (!existing) return failure(StorageErrorCode::MetadataNotFound, {}, "Entry UUID not found");
   const auto type = record_type(*existing);
   members_for(type, entry_directory(*existing)).erase(key);
   switch (type) {
@@ -452,7 +452,7 @@ std::set<std::string>& MetadataCatalog::members_for(RecordType type,
   const auto key = m.id.to_string();
   auto it = directories_.find(key);
   if (it == directories_.end())
-    return failure(StorageErrorCode::NotFound, m.relative_path, "Directory UUID not found");
+    return failure(StorageErrorCode::MetadataNotFound, m.relative_path, "Directory UUID not found");
   if (it->second.kind != m.kind && directory_referenced(it->second))
     return failure(StorageErrorCode::ReferencedDirectory, m.relative_path,
                    "Directory is referenced by entries");
@@ -471,7 +471,7 @@ std::set<std::string>& MetadataCatalog::members_for(RecordType type,
 ::folio::core::Result<std::monostate, StorageError> MetadataCatalog::remove_directory(const Id& id) {
   const auto key = id.to_string();
   auto it = directories_.find(key);
-  if (it == directories_.end()) return failure(StorageErrorCode::NotFound, {}, "Directory UUID not found");
+  if (it == directories_.end()) return failure(StorageErrorCode::MetadataNotFound, {}, "Directory UUID not found");
   if (directory_referenced(it->second))
     return failure(StorageErrorCode::ReferencedDirectory, it->second.relative_path,
                    "Directory is referenced by entries");
@@ -548,7 +548,7 @@ RootListing MetadataCatalog::list_root(RecordType module) const {
 ::folio::core::Result<std::vector<RecordMetadata>, StorageError> MetadataCatalog::list_directory(DirectoryKind kind, const Id& id) const {
   const auto dir = find_directory(id);
   if (!dir || dir->kind != kind)
-    return StorageError{StorageErrorCode::NotFound, {}, "Directory UUID not found in module", {}, false};
+    return StorageError{StorageErrorCode::MetadataNotFound, {}, "Directory UUID not found in module", {}, false};
   std::vector<RecordMetadata> out;
   const auto& members = directory_members_.at(id.to_string());
   if (kind == DirectoryKind::Memo) {

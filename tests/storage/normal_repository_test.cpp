@@ -1,3 +1,4 @@
+#include "error_test_helpers.hpp"
 #include "storage/codec.hpp"
 #include "storage/normal_repository.hpp"
 
@@ -108,32 +109,29 @@ void write_bytes(const fs::path& path, const std::string& bytes) {
   ASSERT_FALSE(output.fail());
 }
 
-const storage::StorageError& diagnostic(const storage::StorageError& error) {
-  return error;
+using folio::testing::diagnostic;
+template<class T, class... Errors>
+void expect_error(const std::variant<T, Errors...>& result) {
+  EXPECT_FALSE(std::holds_alternative<T>(result));
 }
-const storage::StorageError& diagnostic(const storage::RepositoryMutationError& error) {
-  return error.cause;
+template<class T, class... Errors, class Code>
+void expect_error_code(const std::variant<T, Errors...>& result, Code code) {
+  ASSERT_FALSE(std::holds_alternative<T>(result));
+  std::visit([&](const auto& value) {
+    using Value = std::decay_t<decltype(value)>;
+    if constexpr (!std::is_same_v<Value, T>) EXPECT_EQ(diagnostic(value).code, code);
+  }, result);
 }
-
-template <typename T, typename Error>
-void expect_error(const ::folio::core::Result<T, Error>& result) {
-  EXPECT_TRUE(std::holds_alternative<Error>(result));
-}
-
-template <typename T, typename Error>
-void expect_error_code(const ::folio::core::Result<T, Error>& result,
-                       storage::StorageErrorCode code) {
-  ASSERT_TRUE(std::holds_alternative<Error>(result));
-  EXPECT_EQ(diagnostic(std::get<Error>(result)).code, code);
-}
-
-template <typename T, typename Error>
-bool operation_succeeded(const ::folio::core::Result<T, Error>& result) {
+template<class T, class... Errors>
+bool operation_succeeded(const std::variant<T, Errors...>& result) {
   if (std::holds_alternative<T>(result)) return true;
-  const auto& error = diagnostic(std::get<Error>(result));
-  ADD_FAILURE() << "StorageError code=" << static_cast<int>(error.code)
-                << " path=" << error.path << " message=" << error.message
-                << " system_error=" << error.system_error.message();
+  std::visit([](const auto& value) {
+    using Value = std::decay_t<decltype(value)>;
+    if constexpr (!std::is_same_v<Value, T>) {
+      const auto error = diagnostic(value);
+      ADD_FAILURE() << error.path << ": " << error.message;
+    }
+  }, result);
   return false;
 }
 
@@ -366,9 +364,9 @@ TEST_F(NormalRepositoryTest, SuppliedMemoPathRejectsStaleAndUnsafeLocators) {
                              fs::path{"logs/other.md"}, second_path}) {
     SCOPED_TRACE(unsafe.string());
     expect_error_code(repository.load_memo(first.id, unsafe),
-                      storage::StorageErrorCode::InvalidPath);
+                      folio::io::FileErrorCode::InvalidPath);
     expect_error_code(repository.update_memo(first, unsafe),
-                      storage::StorageErrorCode::InvalidPath);
+                      folio::io::FileErrorCode::InvalidPath);
   }
 
   const auto outside = temporary.path() / "outside.md";
@@ -378,9 +376,9 @@ TEST_F(NormalRepositoryTest, SuppliedMemoPathRejectsStaleAndUnsafeLocators) {
   fs::create_symlink(outside, link, ec);
   if (ec) GTEST_SKIP() << "Cannot create a symbolic link: " << ec.message();
   expect_error_code(repository.load_memo(first.id, fs::path{"memos/link.md"}),
-                    storage::StorageErrorCode::InvalidPath);
+                    folio::io::FileErrorCode::InvalidPath);
   expect_error_code(repository.update_memo(first, fs::path{"memos/link.md"}),
-                    storage::StorageErrorCode::InvalidPath);
+                    folio::io::FileErrorCode::InvalidPath);
   EXPECT_EQ(read_bytes(outside), "outside original");
   EXPECT_EQ(read_bytes(first_path), first_bytes);
   EXPECT_EQ(read_bytes(second_path), second_bytes);
@@ -416,13 +414,13 @@ TEST_F(NormalRepositoryTest, SuppliedMemoPathValidatesDirectoryMetadata) {
 
   ASSERT_TRUE(fs::remove(metadata));
   const auto failed_load = repository.load_memo(memo.id, relative);
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(failed_load));
-  EXPECT_NE(std::get<storage::StorageError>(failed_load).code,
-            storage::StorageErrorCode::StaleLocator);
+  ASSERT_TRUE(std::holds_alternative<folio::io::FileError>(failed_load));
+  EXPECT_EQ(std::get<folio::io::FileError>(failed_load).code, folio::io::FileErrorCode::IoError);
+  EXPECT_EQ(std::get<folio::io::FileError>(failed_load).system_error, std::errc::no_such_file_or_directory);
   memo.title = "Must not persist without Directory metadata";
   const auto failed_update = repository.update_memo(memo, relative);
   ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(failed_update));
-  EXPECT_NE(std::get<storage::RepositoryMutationError>(failed_update).cause.code,
+  EXPECT_NE(diagnostic(std::get<storage::RepositoryMutationError>(failed_update)).code,
             storage::StorageErrorCode::StaleLocator);
   EXPECT_EQ(read_bytes(path), bytes_before_metadata_failure);
 }

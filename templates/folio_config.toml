@@ -1,0 +1,12 @@
+# Folio factory configuration. Paths are resolved for the current OS user.
+schema_version = 1
+
+[general.normal_storage]
+use_default_location = true
+# To use a custom location, set the flag to false and provide an absolute path.
+# path = "/absolute/custom/normal"
+
+[general.vault_storage]
+use_default_location = true
+# Resolving this location does not initialize Vault.
+# path = "/absolute/custom/vault"

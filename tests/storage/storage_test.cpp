@@ -1,5 +1,7 @@
-#include "storage/filesystem.hpp"
-#include "storage/atomic_write.hpp"
+#include "storage/normal_repository.hpp"
+#include "io/filesystem.hpp"
+#include "storage/common.hpp"
+#include "io/atomic_write.hpp"
 
 #include <gtest/gtest.h>
 
@@ -90,9 +92,9 @@ void seed_file(const fs::path& path, const std::string& bytes) {
   ASSERT_FALSE(output.fail());
 }
 
-template <typename T>
-void expect_storage_error(const ::folio::core::Result<T, storage::StorageError>& result) {
-  EXPECT_TRUE(std::holds_alternative<storage::StorageError>(result));
+template <typename T, class... Errors>
+void expect_storage_error(const std::variant<T, Errors...>& result) {
+  EXPECT_FALSE(std::holds_alternative<T>(result));
 }
 
 // All paths are injected beneath the fixture; no home/environment lookup occurs.
@@ -159,7 +161,14 @@ TEST_F(StorageFilesystemTest, RejectsAuthoritativeOverlapsAndSupportFileConflict
         const std::array fields{&candidate.application.config, &candidate.application.data,
             &candidate.application.state, &candidate.application.cache, &*candidate.application.runtime};
         *fields[i] = target;
-        expect_storage_error(storage::validate_storage_paths(candidate));
+        if (i == 1 && target == root) {
+          // Data may contain authoritative roots, but may not equal or be
+          // nested inside either root. Other support categories stay disjoint.
+          EXPECT_TRUE(std::holds_alternative<storage::StoragePaths>(
+              storage::validate_storage_paths(candidate)));
+        } else {
+          expect_storage_error(storage::validate_storage_paths(candidate));
+        }
       }
     }
   }
@@ -221,6 +230,11 @@ TEST(StorageFilenameTest, HasNoDependenceOnUnicodeTitles) {
   }
 }
 
+template<class T>
+void expect_file_error(const std::variant<T, folio::io::FileError>& result) {
+  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(result));
+}
+
 TEST_F(StorageFilesystemTest, CreateAndReplaceWriteExactBytes) {
   const auto target = temporary.path() / "entry.md";
   const std::array<std::string, 4> contents{
@@ -228,8 +242,8 @@ TEST_F(StorageFilesystemTest, CreateAndReplaceWriteExactBytes) {
   for (std::size_t index = 0; index < contents.size(); ++index) {
     const auto& bytes = contents[index];
     const auto result = index == 0
-        ? storage::create_file_atomic(target, bytes)
-        : storage::replace_file_atomic(target, bytes);
+        ? folio::io::create_file_atomic(target, bytes)
+        : folio::io::replace_file_atomic(target, bytes);
     ASSERT_TRUE(std::holds_alternative<std::monostate>(result));
     EXPECT_EQ(read_bytes(target), bytes);
     EXPECT_EQ(children(temporary.path()), std::set<fs::path>{target.filename()});
@@ -241,10 +255,10 @@ TEST_F(StorageFilesystemTest, CreatesAndReplacesOpaqueVaultBytes) {
   const std::string first{"\0\x80\xff\0", 4};
   const std::string second{"\xff\0\x7f\x80", 4};
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      storage::create_file_atomic(target, first)));
+      folio::io::create_file_atomic(target, first)));
   EXPECT_EQ(read_bytes(target), first);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      storage::replace_file_atomic(target, second)));
+      folio::io::replace_file_atomic(target, second)));
   EXPECT_EQ(read_bytes(target), second);
   EXPECT_EQ(children(temporary.path()), std::set<fs::path>{target.filename()});
 }
@@ -256,7 +270,7 @@ TEST_F(StorageFilesystemTest, LeavesUnrelatedStaleTemporaryFilesUntouched) {
     ASSERT_NO_FATAL_FAILURE(seed_file(temporary.path() / name, "stale synthetic data"));
   }
   const auto stale = children(temporary.path());
-  const auto result = storage::create_file_atomic(target, "new data");
+  const auto result = folio::io::create_file_atomic(target, "new data");
   ASSERT_TRUE(std::holds_alternative<std::monostate>(result));
   auto expected = stale;
   expected.insert(target.filename());
@@ -273,7 +287,7 @@ TEST_F(StorageFilesystemTest, FailedReplacementPreservesTargetAndCleansTemporary
   ASSERT_NO_FATAL_FAILURE(seed_file(target / "old-content", "preserve me"));
   ASSERT_NO_FATAL_FAILURE(seed_file(temporary.path() / "entry.md.tmp", "stale"));
   const auto before = children(temporary.path());
-  expect_storage_error(storage::replace_file_atomic(target, "replacement"));
+  expect_file_error(folio::io::replace_file_atomic(target, "replacement"));
   EXPECT_TRUE(fs::is_directory(target));
   EXPECT_EQ(read_bytes(target / "old-content"), "preserve me");
   EXPECT_EQ(read_bytes(temporary.path() / "entry.md.tmp"), "stale");
@@ -285,7 +299,7 @@ TEST_F(StorageFilesystemTest, InvalidParentPreservesExistingFileAndLeavesNoTempo
   const auto parent = temporary.path() / "parent-file";
   ASSERT_NO_FATAL_FAILURE(seed_file(parent, "old bytes"));
   const auto before = children(temporary.path());
-  expect_storage_error(storage::create_file_atomic(parent / "entry.md", "new bytes"));
+  expect_file_error(folio::io::create_file_atomic(parent / "entry.md", "new bytes"));
   EXPECT_EQ(read_bytes(parent), "old bytes");
   EXPECT_EQ(children(temporary.path()), before);
 }
@@ -298,14 +312,14 @@ TEST_F(StorageFilesystemTest, RejectsSymbolicLinkDestination) {
   fs::create_symlink(original, link, ec);
   if (ec) GTEST_SKIP() << "Cannot create a symbolic link: " << ec.message();
   const auto before = children(temporary.path());
-  expect_storage_error(storage::replace_file_atomic(link, "replacement"));
+  expect_file_error(folio::io::replace_file_atomic(link, "replacement"));
   EXPECT_TRUE(fs::is_symlink(link));
   EXPECT_EQ(read_bytes(original), "preserve me");
   EXPECT_EQ(children(temporary.path()), before);
 }
 
 TEST_F(StorageFilesystemTest, RejectsEmptyTargetWithoutCreatingFiles) {
-  expect_storage_error(storage::create_file_atomic(fs::path{}, "new bytes"));
+  expect_file_error(folio::io::create_file_atomic(fs::path{}, "new bytes"));
   EXPECT_TRUE(children(temporary.path()).empty());
 }
 
@@ -316,7 +330,7 @@ TEST_F(StorageFilesystemTest, EmbeddedNulTargetCannotOverwriteExistingFile) {
   invalid_name.push_back(fs::path::value_type{});
   invalid_name += fs::path{"suffix"}.native();
   const auto before = children(temporary.path());
-  expect_storage_error(storage::create_file_atomic(fs::path{invalid_name}, "new bytes"));
+  expect_file_error(folio::io::create_file_atomic(fs::path{invalid_name}, "new bytes"));
   EXPECT_EQ(read_bytes(target), "old bytes");
   EXPECT_EQ(children(temporary.path()), before);
 }
@@ -324,12 +338,12 @@ TEST_F(StorageFilesystemTest, EmbeddedNulTargetCannotOverwriteExistingFile) {
 TEST_F(StorageFilesystemTest, CreateDoesNotOverwriteAndReplaceRequiresExistingFile) {
   const auto target = temporary.path() / "entry.md";
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      storage::create_file_atomic(target, "original")));
-  expect_storage_error(storage::create_file_atomic(target, "must not overwrite"));
+      folio::io::create_file_atomic(target, "original")));
+  expect_file_error(folio::io::create_file_atomic(target, "must not overwrite"));
   EXPECT_EQ(read_bytes(target), "original");
 
   const auto missing = temporary.path() / "missing.md";
-  expect_storage_error(storage::replace_file_atomic(missing, "must not create"));
+  expect_file_error(folio::io::replace_file_atomic(missing, "must not create"));
   EXPECT_FALSE(fs::exists(missing));
 }
 
@@ -337,16 +351,16 @@ TEST_F(StorageFilesystemTest, PendingTemporaryFileBlocksNewWritesWithoutChanging
   const auto target = temporary.path() / "entry.md";
   const auto pending = temporary.path() / ".entry.md.tmp-pending";
   ASSERT_NO_FATAL_FAILURE(seed_file(pending, "pending bytes"));
-  auto result = storage::create_file_atomic(target, "new bytes");
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(result));
-  EXPECT_EQ(std::get<storage::StorageError>(result).code,
-            storage::StorageErrorCode::RecoveryRequired);
+  auto result = folio::io::create_file_atomic(target, "new bytes");
+  ASSERT_TRUE(std::holds_alternative<folio::io::FileError>(result));
+  EXPECT_EQ(std::get<folio::io::FileError>(result).code,
+            folio::io::FileErrorCode::RecoveryRequired);
   EXPECT_FALSE(fs::exists(target));
   ASSERT_NO_FATAL_FAILURE(seed_file(target, "original bytes"));
-  result = storage::replace_file_atomic(target, "new bytes");
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(result));
-  EXPECT_EQ(std::get<storage::StorageError>(result).code,
-            storage::StorageErrorCode::RecoveryRequired);
+  result = folio::io::replace_file_atomic(target, "new bytes");
+  ASSERT_TRUE(std::holds_alternative<folio::io::FileError>(result));
+  EXPECT_EQ(std::get<folio::io::FileError>(result).code,
+            folio::io::FileErrorCode::RecoveryRequired);
   EXPECT_EQ(read_bytes(target), "original bytes");
   EXPECT_EQ(read_bytes(pending), "pending bytes");
   EXPECT_EQ(children(temporary.path()), (std::set<fs::path>{target.filename(), pending.filename()}));
@@ -370,8 +384,8 @@ class StorageDurabilityTest : public StorageFilesystemTest {
     active->observations.push_back({S_ISDIR(info.st_mode), children(active->temporary.path())});
     if (active->observations.size() == 2 && active->before_publish) active->before_publish();
     if (active->try_competing_write && active->observations.size() == 1) {
-      const auto competing = storage::create_file_atomic(active->target(), "competing bytes");
-      EXPECT_TRUE(std::holds_alternative<storage::StorageError>(competing));
+      const auto competing = folio::io::create_file_atomic(active->target(), "competing bytes");
+      EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(competing));
       EXPECT_EQ(children(active->temporary.path()), active->observations.back().names);
     }
     if (active->observations.size() == active->fail_at) {
@@ -387,8 +401,8 @@ class StorageDurabilityTest : public StorageFilesystemTest {
 
   fs::path target() const { return temporary.path() / "entry.md"; }
 
-  ::folio::core::Result<std::monostate, storage::StorageError> write(bool create_only) {
-    return storage::internal::write_file_atomic(target(), "new bytes", create_only, observe_sync);
+  ::folio::core::Result<std::monostate, folio::io::FileError> write(bool create_only) {
+    return folio::io::internal::write_file_atomic(target(), std::as_bytes(std::span{std::string_view{"new bytes"}}), create_only, observe_sync);
   }
 
   void expect_single_temporary(const std::set<fs::path>& names) {
@@ -409,6 +423,21 @@ class StorageDurabilityTest : public StorageFilesystemTest {
   std::function<void()> before_publish;
   std::vector<Observation> observations;
 };
+
+TEST_F(StorageDurabilityTest, IoPublicationFailureRetainsOriginalDiagnosticAndPublishedBytes) {
+  ASSERT_NO_FATAL_FAILURE(seed_file(target(), "original bytes"));
+  fail_at = 3;
+  const std::string_view bytes = "new bytes";
+  auto result = folio::io::internal::write_file_atomic(
+      target(), std::as_bytes(std::span{bytes.data(), bytes.size()}), false, observe_sync);
+  ASSERT_TRUE(std::holds_alternative<folio::io::FileError>(result));
+  const auto& failure = std::get<folio::io::FileError>(result);
+  EXPECT_EQ(failure.code, folio::io::FileErrorCode::DurabilityFailure);
+  EXPECT_EQ(failure.system_error, std::error_code(EIO, std::generic_category()));
+  EXPECT_TRUE(failure.replacement_completed);
+  EXPECT_EQ(read_bytes(target()), "new bytes");
+  EXPECT_EQ(children(temporary.path()), std::set<fs::path>{"entry.md"});
+}
 
 TEST_F(StorageDurabilityTest, ReplaceSyncsStagingBeforeRenameAndPublicationAfterward) {
   ASSERT_NO_FATAL_FAILURE(seed_file(target(), "original bytes"));
@@ -441,14 +470,14 @@ TEST_F(StorageDurabilityTest, StagingSyncFailureRemovesTemporaryAndPreservesOrig
   ASSERT_NO_FATAL_FAILURE(seed_file(target(), "original bytes"));
   fail_at = 2;
   const auto result = write(false);
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(result));
-  const auto& failure = std::get<storage::StorageError>(result);
-  EXPECT_EQ(failure.code, storage::StorageErrorCode::DurabilityFailure);
+  ASSERT_TRUE(std::holds_alternative<folio::io::FileError>(result));
+  const auto& failure = std::get<folio::io::FileError>(result);
+  EXPECT_EQ(failure.code, folio::io::FileErrorCode::DurabilityFailure);
   EXPECT_FALSE(failure.replacement_completed);
   EXPECT_EQ(read_bytes(target()), "original bytes");
   EXPECT_EQ(children(temporary.path()), std::set<fs::path>{"entry.md"});
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      storage::replace_file_atomic(target(), "retry bytes")));
+      folio::io::replace_file_atomic(target(), "retry bytes")));
   EXPECT_EQ(read_bytes(target()), "retry bytes");
 }
 
@@ -456,9 +485,9 @@ TEST_F(StorageDurabilityTest, ReplacePublicationSyncFailureDoesNotUndoRename) {
   ASSERT_NO_FATAL_FAILURE(seed_file(target(), "original bytes"));
   fail_at = 3;
   const auto result = write(false);
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(result));
-  const auto& failure = std::get<storage::StorageError>(result);
-  EXPECT_EQ(failure.code, storage::StorageErrorCode::DurabilityFailure);
+  ASSERT_TRUE(std::holds_alternative<folio::io::FileError>(result));
+  const auto& failure = std::get<folio::io::FileError>(result);
+  EXPECT_EQ(failure.code, folio::io::FileErrorCode::DurabilityFailure);
   EXPECT_TRUE(failure.replacement_completed);
   EXPECT_EQ(read_bytes(target()), "new bytes");
   EXPECT_EQ(children(temporary.path()), std::set<fs::path>{"entry.md"});
@@ -467,9 +496,9 @@ TEST_F(StorageDurabilityTest, ReplacePublicationSyncFailureDoesNotUndoRename) {
 TEST_F(StorageDurabilityTest, CreatePublicationSyncFailureRemovesTemporaryLink) {
   fail_at = 3;
   const auto result = write(true);
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(result));
-  const auto& failure = std::get<storage::StorageError>(result);
-  EXPECT_EQ(failure.code, storage::StorageErrorCode::DurabilityFailure);
+  ASSERT_TRUE(std::holds_alternative<folio::io::FileError>(result));
+  const auto& failure = std::get<folio::io::FileError>(result);
+  EXPECT_EQ(failure.code, folio::io::FileErrorCode::DurabilityFailure);
   EXPECT_TRUE(failure.replacement_completed);
   EXPECT_EQ(read_bytes(target()), "new bytes");
   EXPECT_EQ(children(temporary.path()), std::set<fs::path>{"entry.md"});
@@ -481,9 +510,9 @@ TEST_F(StorageDurabilityTest, CreatePublicationSyncFailureRemovesTemporaryLink) 
 TEST_F(StorageDurabilityTest, CleanupSyncFailureReportsPublishedCreation) {
   fail_at = 4;
   const auto result = write(true);
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(result));
-  const auto& failure = std::get<storage::StorageError>(result);
-  EXPECT_EQ(failure.code, storage::StorageErrorCode::DurabilityFailure);
+  ASSERT_TRUE(std::holds_alternative<folio::io::FileError>(result));
+  const auto& failure = std::get<folio::io::FileError>(result);
+  EXPECT_EQ(failure.code, folio::io::FileErrorCode::DurabilityFailure);
   EXPECT_TRUE(failure.replacement_completed);
   EXPECT_EQ(read_bytes(target()), "new bytes");
   EXPECT_EQ(children(temporary.path()), std::set<fs::path>{"entry.md"});
@@ -492,8 +521,8 @@ TEST_F(StorageDurabilityTest, CleanupSyncFailureReportsPublishedCreation) {
 TEST_F(StorageDurabilityTest, CreateCannotOverwriteDestinationThatAppearsDuringStaging) {
   before_publish = [this] { seed_file(target(), "external bytes"); };
   const auto result = write(true);
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(result));
-  EXPECT_FALSE(std::get<storage::StorageError>(result).replacement_completed);
+  ASSERT_TRUE(std::holds_alternative<folio::io::FileError>(result));
+  EXPECT_FALSE(std::get<folio::io::FileError>(result).replacement_completed);
   EXPECT_EQ(read_bytes(target()), "external bytes");
   EXPECT_EQ(children(temporary.path()), std::set<fs::path>{"entry.md"});
 }
@@ -502,8 +531,8 @@ TEST_F(StorageDurabilityTest, FileSyncFailurePreservesOriginalAndRemovesUnpublis
   ASSERT_NO_FATAL_FAILURE(seed_file(target(), "original bytes"));
   fail_at = 1;
   const auto result = write(false);
-  ASSERT_TRUE(std::holds_alternative<storage::StorageError>(result));
-  EXPECT_FALSE(std::get<storage::StorageError>(result).replacement_completed);
+  ASSERT_TRUE(std::holds_alternative<folio::io::FileError>(result));
+  EXPECT_FALSE(std::get<folio::io::FileError>(result).replacement_completed);
   EXPECT_EQ(read_bytes(target()), "original bytes");
   EXPECT_EQ(children(temporary.path()), std::set<fs::path>{"entry.md"});
 }
@@ -513,7 +542,7 @@ TEST_F(StorageDurabilityTest, DirectoryLockPreventsCreationOfAnotherTemporary) {
   ASSERT_NE(descriptor, -1);
   const int locked = flock(descriptor, LOCK_EX | LOCK_NB);
   if (locked == 0) {
-    expect_storage_error(storage::create_file_atomic(target(), "competing bytes"));
+    expect_file_error(folio::io::create_file_atomic(target(), "competing bytes"));
     EXPECT_TRUE(children(temporary.path()).empty());
   }
   EXPECT_EQ(close(descriptor), 0);
