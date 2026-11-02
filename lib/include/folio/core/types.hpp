@@ -12,6 +12,8 @@ namespace folio::core {
 void ensure_sodium_initialized();
 
 enum class Privacy { Normal, Protected, Hidden };
+// Content-bearing Entry kinds, shared across Normal and future Vault storage.
+enum class RecordType { Log, Memo, Todo };
 
 using Timestamp = std::chrono::system_clock::time_point;
 

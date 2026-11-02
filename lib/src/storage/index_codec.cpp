@@ -191,9 +191,9 @@ void pack_tags(Packer& p, const std::vector<Tag>& tags) {
 }
 void pack_directory(Packer& p, const DirectoryMetadata& d) {
   p.pack_map(4);
-  pack_key(p, "id"); pack_string(p, d.id.to_string());
-  pack_key(p, "kind"); pack_string(p, kind_text(d.kind));
-  pack_key(p, "name"); pack_string(p, d.name);
+  pack_key(p, "id"); pack_string(p, d.metadata.id.to_string());
+  pack_key(p, "kind"); pack_string(p, kind_text(d.metadata.kind));
+  pack_key(p, "name"); pack_string(p, d.metadata.name);
   pack_key(p, "relative_path"); pack_path(p, d.relative_path);
 }
 void pack_entry(Packer& p, const RecordMetadata& e) {
@@ -202,32 +202,32 @@ void pack_entry(Packer& p, const RecordMetadata& e) {
     constexpr bool log = std::is_same_v<T, LogMetadata>;
     constexpr bool memo = std::is_same_v<T, MemoMetadata>;
     if constexpr (log) p.pack_map(9);
-    else if constexpr (memo) p.pack_map(value.directory_id ? 9 : 8);
-    else p.pack_map(9 + (value.directory_id ? 1 : 0) + (value.due_date ? 1 : 0));
-    pack_key(p, "created"); pack_timestamp(p, value.created);
-    if constexpr (!log) if (value.directory_id) {
+    else if constexpr (memo) p.pack_map(value.metadata.directory_id ? 9 : 8);
+    else p.pack_map(9 + (value.metadata.directory_id ? 1 : 0) + (value.metadata.due_date ? 1 : 0));
+    pack_key(p, "created"); pack_timestamp(p, value.metadata.created);
+    if constexpr (!log) if (value.metadata.directory_id) {
       pack_key(p, "directory_id");
-      pack_string(p, value.directory_id->to_string());
+      pack_string(p, value.metadata.directory_id->to_string());
     }
     if constexpr (!log && !memo) {
-      if (value.due_date) { pack_key(p, "due_date"); pack_due(p, *value.due_date); }
+      if (value.metadata.due_date) { pack_key(p, "due_date"); pack_due(p, *value.metadata.due_date); }
     }
-    pack_key(p, "id"); pack_string(p, value.id.to_string());
+    pack_key(p, "id"); pack_string(p, value.metadata.id.to_string());
     if constexpr (log) {
-      pack_key(p, "log_date"); pack_date(p, value.log_date);
+      pack_key(p, "log_date"); pack_date(p, value.metadata.log_date);
     }
-    pack_key(p, "modified"); pack_timestamp(p, value.modified);
+    pack_key(p, "modified"); pack_timestamp(p, value.metadata.modified);
     if constexpr (!log && !memo) {
-      pack_key(p, "priority"); pack_string(p, priority_text(value.priority));
+      pack_key(p, "priority"); pack_string(p, priority_text(value.metadata.priority));
     }
-    pack_key(p, "privacy"); pack_string(p, privacy_text(value.privacy));
+    pack_key(p, "privacy"); pack_string(p, privacy_text(value.metadata.privacy));
     pack_key(p, "relative_path"); pack_path(p, value.relative_path);
     if constexpr (log || memo) {
-      pack_key(p, "tags"); pack_tags(p, value.tags);
+      pack_key(p, "tags"); pack_tags(p, value.metadata.tags);
     } else {
-      pack_key(p, "status"); pack_string(p, status_text(value.status));
+      pack_key(p, "status"); pack_string(p, status_text(value.metadata.status));
     }
-    pack_key(p, "title"); pack_string(p, value.title);
+    pack_key(p, "title"); pack_string(p, value.metadata.title);
     pack_key(p, "type"); pack_string(p, log ? "Log" : (memo ? "Memo" : "Todo"));
   }, e);
 }
@@ -509,10 +509,12 @@ void reject_irrelevant(const Object& object, std::initializer_list<std::string_v
 }
 DirectoryMetadata directory_of(const Object& object, std::string_view path) {
   as_map(object, path);
-  return {id_of(field(object, "id", path), std::string(path) + ".id"),
-          kind_of(field(object, "kind", path), std::string(path) + ".kind"),
-          path_of(field(object, "relative_path", path), std::string(path) + ".relative_path"),
-          string_of(field(object, "name", path), std::string(path) + ".name")};
+  const auto id = id_of(field(object, "id", path), std::string(path) + ".id");
+  const auto kind = kind_of(field(object, "kind", path), std::string(path) + ".kind");
+  const auto relative_path = path_of(field(object, "relative_path", path),
+                                     std::string(path) + ".relative_path");
+  const auto name = string_of(field(object, "name", path), std::string(path) + ".name");
+  return {{id, kind, name}, relative_path};
 }
 RecordMetadata entry_of(const Object& object, std::string_view path) {
   as_map(object, path);
@@ -526,18 +528,18 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
   const auto title = string_of(field(object, "title", path), std::string(path) + ".title");
   if (type == "Log") {
     reject_irrelevant(object, {"directory_id", "due_date", "priority", "status"}, path);
-    return LogMetadata{id, relative_path, privacy, created, modified, title,
+    return LogMetadata{{id, privacy, created, modified, title,
                        tags_of(field(object, "tags", path), std::string(path) + ".tags"),
-                       date_context_of(field(object, "log_date", path), std::string(path) + ".log_date")};
+                       date_context_of(field(object, "log_date", path), std::string(path) + ".log_date")}, relative_path};
   }
   if (type == "Memo") {
     reject_irrelevant(object, {"due_date", "log_date", "priority", "status"}, path);
     std::optional<Id> directory_id;
     if (const auto* value = optional_field(object, "directory_id"))
       directory_id = id_of(*value, std::string(path) + ".directory_id");
-    return MemoMetadata{id, relative_path, privacy, created, modified, title,
+    return MemoMetadata{{id, privacy, created, modified, title,
                         tags_of(field(object, "tags", path), std::string(path) + ".tags"),
-                        directory_id};
+                        directory_id}, relative_path};
   }
   if (type == "Todo") {
     reject_irrelevant(object, {"log_date", "tags"}, path);
@@ -547,10 +549,10 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
     std::optional<DueDate> due_date;
     if (const auto* value = optional_field(object, "due_date"))
       due_date = due_of(*value, std::string(path) + ".due_date");
-    return TodoMetadata{id, relative_path, privacy, created, modified, title,
+    return TodoMetadata{{id, privacy, created, modified, title,
                         status_of(field(object, "status", path), std::string(path) + ".status"),
                         priority_of(field(object, "priority", path), std::string(path) + ".priority"),
-                        due_date, directory_id};
+                        due_date, directory_id}, relative_path};
   }
   fail(IndexCodecErrorCode::InvalidMetadata, std::string(path) + ".type", "Invalid Entry type");
 }
@@ -562,7 +564,7 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
     auto todo_directories = catalog.list_directories(DirectoryKind::Todo);
     directories.insert(directories.end(), todo_directories.begin(), todo_directories.end());
     std::sort(directories.begin(), directories.end(), [](const auto& a, const auto& b) {
-      return a.id.to_string() < b.id.to_string();
+      return a.metadata.id.to_string() < b.metadata.id.to_string();
     });
     RecordQuery query;
     query.sort = MetadataSort::Id;

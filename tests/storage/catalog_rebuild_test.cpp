@@ -216,27 +216,27 @@ TEST_F(CatalogRebuildTest, EnumeratesCompleteMetadataAndActualRenamedLocators) {
   ASSERT_TRUE(loaded_log.has_value());
   const auto& log_metadata = std::get<storage::LogMetadata>(*loaded_log);
   EXPECT_EQ(log_metadata.relative_path, renamed_log);
-  EXPECT_EQ(log_metadata.title, l.title);
-  EXPECT_EQ(log_metadata.tags, l.tags);
-  EXPECT_EQ(log_metadata.created.timestamp, l.created.timestamp);
-  EXPECT_EQ(log_metadata.created.timezone, l.created.timezone);
-  EXPECT_EQ(log_metadata.created.location, l.created.location);
-  EXPECT_EQ(log_metadata.log_date.date, l.log_date.date);
+  EXPECT_EQ(log_metadata.metadata.title, l.title);
+  EXPECT_EQ(log_metadata.metadata.tags, l.tags);
+  EXPECT_EQ(log_metadata.metadata.created.timestamp, l.created.timestamp);
+  EXPECT_EQ(log_metadata.metadata.created.timezone, l.created.timezone);
+  EXPECT_EQ(log_metadata.metadata.created.location, l.created.location);
+  EXPECT_EQ(log_metadata.metadata.log_date.date, l.log_date.date);
   const auto loaded_memo = catalog.find_record(m.id);
   ASSERT_TRUE(loaded_memo.has_value());
   const auto& memo_metadata = std::get<storage::MemoMetadata>(*loaded_memo);
   EXPECT_EQ(memo_metadata.relative_path, renamed_memo);
-  EXPECT_EQ(memo_metadata.directory_id, md.id);
-  EXPECT_EQ(memo_metadata.title, m.title);
+  EXPECT_EQ(memo_metadata.metadata.directory_id, md.id);
+  EXPECT_EQ(memo_metadata.metadata.title, m.title);
   const auto loaded_todo = catalog.find_record(t.id);
   ASSERT_TRUE(loaded_todo.has_value());
   const auto& todo_metadata = std::get<storage::TodoMetadata>(*loaded_todo);
   EXPECT_EQ(todo_metadata.relative_path, renamed_todo);
-  EXPECT_EQ(todo_metadata.directory_id, td.id);
-  EXPECT_EQ(todo_metadata.title, t.title);
-  EXPECT_EQ(todo_metadata.status, t.status);
-  EXPECT_EQ(todo_metadata.priority, t.priority);
-  EXPECT_EQ(todo_metadata.due_date.has_value(), t.due_date.has_value());
+  EXPECT_EQ(todo_metadata.metadata.directory_id, td.id);
+  EXPECT_EQ(todo_metadata.metadata.title, t.title);
+  EXPECT_EQ(todo_metadata.metadata.status, t.status);
+  EXPECT_EQ(todo_metadata.metadata.priority, t.priority);
+  EXPECT_EQ(todo_metadata.metadata.due_date.has_value(), t.due_date.has_value());
   EXPECT_EQ(catalog.list_root(storage::RecordType::Log).records.size(), 1U);
   EXPECT_EQ(catalog.list_root(storage::RecordType::Memo).directories.size(), 1U);
   EXPECT_EQ(catalog.list_root(storage::RecordType::Todo).directories.size(), 1U);
@@ -485,7 +485,7 @@ TEST_F(CatalogRebuildTest, CrossCategoryRebuildFailurePreservesActiveCatalog) {
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_record(old)));
   auto m = std::get<storage::MemoMetadata>(storage::metadata_from(memo(), "memos/new.md"));
   auto directory = storage::metadata_from(memo_directory(), "memos/group");
-  directory.id = m.id;
+  directory.metadata.id = m.metadata.id;
   for (bool persisted : {false, true}) {
     if (persisted) catalog.mark_persisted();
     const auto before = storage::index_codec::encode_index(catalog);
@@ -497,8 +497,8 @@ TEST_F(CatalogRebuildTest, CrossCategoryRebuildFailurePreservesActiveCatalog) {
     const auto after = storage::index_codec::encode_index(catalog);
     ASSERT_TRUE(std::holds_alternative<std::string>(after));
     EXPECT_EQ(std::get<std::string>(after), std::get<std::string>(before));
-    EXPECT_TRUE(catalog.find_record(old.id));
-    EXPECT_FALSE(catalog.find_directory(directory.id));
+    EXPECT_TRUE(catalog.find_record(old.metadata.id));
+    EXPECT_FALSE(catalog.find_directory(directory.metadata.id));
   }
 }
 

@@ -139,42 +139,42 @@ TEST(MetadataCatalogTest, ExtractsCompleteTypedSnapshotsWithoutBodies) {
 
   ASSERT_TRUE(std::holds_alternative<storage::LogMetadata>(log_value));
   const auto& log_metadata = std::get<storage::LogMetadata>(log_value);
-  EXPECT_EQ(log_metadata.id, log.id);
+  EXPECT_EQ(log_metadata.metadata.id, log.id);
   EXPECT_EQ(log_metadata.relative_path, fs::path{"logs/renamed.md"});
-  EXPECT_EQ(log_metadata.privacy, log.privacy);
-  expect_context(log_metadata.created, log.created);
-  expect_context(log_metadata.modified, log.modified);
-  EXPECT_EQ(log_metadata.title, log.title);
-  EXPECT_EQ(log_metadata.tags, log.tags);
-  EXPECT_EQ(log_metadata.log_date.date, log.log_date.date);
-  EXPECT_EQ(log_metadata.log_date.timezone, log.log_date.timezone);
-  EXPECT_EQ(log_metadata.log_date.location, log.log_date.location);
+  EXPECT_EQ(log_metadata.metadata.privacy, log.privacy);
+  expect_context(log_metadata.metadata.created, log.created);
+  expect_context(log_metadata.metadata.modified, log.modified);
+  EXPECT_EQ(log_metadata.metadata.title, log.title);
+  EXPECT_EQ(log_metadata.metadata.tags, log.tags);
+  EXPECT_EQ(log_metadata.metadata.log_date.date, log.log_date.date);
+  EXPECT_EQ(log_metadata.metadata.log_date.timezone, log.log_date.timezone);
+  EXPECT_EQ(log_metadata.metadata.log_date.location, log.log_date.location);
 
   ASSERT_TRUE(std::holds_alternative<storage::MemoMetadata>(memo_value));
   const auto& memo_metadata = std::get<storage::MemoMetadata>(memo_value);
-  EXPECT_EQ(memo_metadata.id, memo.id);
+  EXPECT_EQ(memo_metadata.metadata.id, memo.id);
   EXPECT_EQ(memo_metadata.relative_path, fs::path{"memos/note.md"});
-  EXPECT_EQ(memo_metadata.privacy, memo.privacy);
-  expect_context(memo_metadata.created, memo.created);
-  expect_context(memo_metadata.modified, memo.modified);
-  EXPECT_EQ(memo_metadata.title, memo.title);
-  EXPECT_EQ(memo_metadata.tags, memo.tags);
-  EXPECT_EQ(memo_metadata.directory_id, std::nullopt);
+  EXPECT_EQ(memo_metadata.metadata.privacy, memo.privacy);
+  expect_context(memo_metadata.metadata.created, memo.created);
+  expect_context(memo_metadata.metadata.modified, memo.modified);
+  EXPECT_EQ(memo_metadata.metadata.title, memo.title);
+  EXPECT_EQ(memo_metadata.metadata.tags, memo.tags);
+  EXPECT_EQ(memo_metadata.metadata.directory_id, std::nullopt);
 
   ASSERT_TRUE(std::holds_alternative<storage::TodoMetadata>(todo_value));
   const auto& todo_metadata = std::get<storage::TodoMetadata>(todo_value);
-  EXPECT_EQ(todo_metadata.id, todo.id);
+  EXPECT_EQ(todo_metadata.metadata.id, todo.id);
   EXPECT_EQ(todo_metadata.relative_path, fs::path{"todos/task.toml"});
-  EXPECT_EQ(todo_metadata.privacy, todo.privacy);
-  expect_context(todo_metadata.created, todo.created);
-  expect_context(todo_metadata.modified, todo.modified);
-  EXPECT_EQ(todo_metadata.title, todo.title);
-  EXPECT_EQ(todo_metadata.status, todo.status);
-  EXPECT_EQ(todo_metadata.priority, todo.priority);
-  EXPECT_EQ(todo_metadata.directory_id, std::nullopt);
-  ASSERT_TRUE(todo_metadata.due_date.has_value());
-  ASSERT_TRUE(std::holds_alternative<core::TimestampContext>(*todo_metadata.due_date));
-  expect_context(std::get<core::TimestampContext>(*todo_metadata.due_date),
+  EXPECT_EQ(todo_metadata.metadata.privacy, todo.privacy);
+  expect_context(todo_metadata.metadata.created, todo.created);
+  expect_context(todo_metadata.metadata.modified, todo.modified);
+  EXPECT_EQ(todo_metadata.metadata.title, todo.title);
+  EXPECT_EQ(todo_metadata.metadata.status, todo.status);
+  EXPECT_EQ(todo_metadata.metadata.priority, todo.priority);
+  EXPECT_EQ(todo_metadata.metadata.directory_id, std::nullopt);
+  ASSERT_TRUE(todo_metadata.metadata.due_date.has_value());
+  ASSERT_TRUE(std::holds_alternative<core::TimestampContext>(*todo_metadata.metadata.due_date));
+  expect_context(std::get<core::TimestampContext>(*todo_metadata.metadata.due_date),
                  std::get<core::TimestampContext>(*todo.due_date));
 
   auto date_todo = todo;
@@ -183,17 +183,17 @@ TEST(MetadataCatalogTest, ExtractsCompleteTypedSnapshotsWithoutBodies) {
       {std::chrono::year{2027} / 2 / 3}, "UTC", std::nullopt};
   const auto date_value = storage::metadata_from(date_todo, "todos/date.toml");
   const auto& date_metadata = std::get<storage::TodoMetadata>(date_value);
-  ASSERT_TRUE(date_metadata.due_date.has_value());
-  ASSERT_TRUE(std::holds_alternative<core::DateContext>(*date_metadata.due_date));
-  EXPECT_EQ(std::get<core::DateContext>(*date_metadata.due_date).date,
+  ASSERT_TRUE(date_metadata.metadata.due_date.has_value());
+  ASSERT_TRUE(std::holds_alternative<core::DateContext>(*date_metadata.metadata.due_date));
+  EXPECT_EQ(std::get<core::DateContext>(*date_metadata.metadata.due_date).date,
             std::get<core::DateContext>(*date_todo.due_date).date);
-  EXPECT_EQ(std::get<core::DateContext>(*date_metadata.due_date).timezone,
+  EXPECT_EQ(std::get<core::DateContext>(*date_metadata.metadata.due_date).timezone,
             "UTC");
-  EXPECT_EQ(std::get<core::DateContext>(*date_metadata.due_date).location,
+  EXPECT_EQ(std::get<core::DateContext>(*date_metadata.metadata.due_date).location,
             std::nullopt);
   date_todo.due_date.reset();
   const auto absent_due = storage::metadata_from(date_todo, "todos/no-due.toml");
-  EXPECT_FALSE(std::get<storage::TodoMetadata>(absent_due).due_date.has_value());
+  EXPECT_FALSE(std::get<storage::TodoMetadata>(absent_due).metadata.due_date.has_value());
 
   const core::Directory::Snapshot directory{
       id("87183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
@@ -201,11 +201,11 @@ TEST(MetadataCatalogTest, ExtractsCompleteTypedSnapshotsWithoutBodies) {
   guard_directory_snapshot_fields(directory);
   const auto directory_metadata = storage::metadata_from(
       directory, fs::path{"memos"} / directory.id.to_string());
-  EXPECT_EQ(directory_metadata.id, directory.id);
-  EXPECT_EQ(directory_metadata.kind, storage::DirectoryKind::Memo);
+  EXPECT_EQ(directory_metadata.metadata.id, directory.id);
+  EXPECT_EQ(directory_metadata.metadata.kind, storage::DirectoryKind::Memo);
   EXPECT_EQ(directory_metadata.relative_path,
             fs::path{"memos"} / directory.id.to_string());
-  EXPECT_EQ(directory_metadata.name, directory.name);
+  EXPECT_EQ(directory_metadata.metadata.name, directory.name);
 }
 
 TEST(MetadataCatalogTest, MutationsTrackUnpersistedAndLookupsReturnIndependentCopies) {
@@ -229,14 +229,14 @@ TEST(MetadataCatalogTest, MutationsTrackUnpersistedAndLookupsReturnIndependentCo
   catalog.mark_persisted();
   auto looked_up = catalog.find_record(memo.id);
   ASSERT_TRUE(looked_up.has_value());
-  std::get<storage::MemoMetadata>(*looked_up).title = "Changed copy";
+  std::get<storage::MemoMetadata>(*looked_up).metadata.title = "Changed copy";
   ASSERT_TRUE(catalog.find_record(memo.id).has_value());
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(memo.id)).title,
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(memo.id)).metadata.title,
             memo.title);
   auto directory_copy = catalog.find_directory(directory.id);
   ASSERT_TRUE(directory_copy.has_value());
-  directory_copy->name = "Changed copy";
-  EXPECT_EQ(catalog.find_directory(directory.id)->name, directory.name);
+  directory_copy->metadata.name = "Changed copy";
+  EXPECT_EQ(catalog.find_directory(directory.id)->metadata.name, directory.name);
   EXPECT_FALSE(catalog.unpersisted());
 
   auto edited = memo;
@@ -245,7 +245,7 @@ TEST(MetadataCatalogTest, MutationsTrackUnpersistedAndLookupsReturnIndependentCo
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.update_record(
       storage::metadata_from(edited, memo_path))));
   EXPECT_TRUE(catalog.unpersisted());
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(memo.id)).title,
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(memo.id)).metadata.title,
             edited.title);
   catalog.mark_persisted();
 
@@ -254,7 +254,7 @@ TEST(MetadataCatalogTest, MutationsTrackUnpersistedAndLookupsReturnIndependentCo
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.update_directory(
       storage::metadata_from(renamed_directory, folder))));
   EXPECT_TRUE(catalog.unpersisted());
-  EXPECT_EQ(catalog.find_directory(directory.id)->name, renamed_directory.name);
+  EXPECT_EQ(catalog.find_directory(directory.id)->metadata.name, renamed_directory.name);
   catalog.mark_persisted();
 
   expect_error(catalog.remove_directory(directory.id),
@@ -380,19 +380,19 @@ TEST(MetadataCatalogTest, ListsModuleRootsAndDirectoryChildrenNonrecursively) {
   const auto memo_root = catalog.list_root(storage::RecordType::Memo);
   ASSERT_EQ(memo_root.records.size(), 1U);
   ASSERT_EQ(memo_root.directories.size(), 1U);
-  EXPECT_EQ(std::get<storage::MemoMetadata>(memo_root.records.front()).id,
+  EXPECT_EQ(std::get<storage::MemoMetadata>(memo_root.records.front()).metadata.id,
             root_memo.id);
-  EXPECT_EQ(memo_root.directories.front().id, memo_directory.id);
+  EXPECT_EQ(memo_root.directories.front().metadata.id, memo_directory.id);
   const auto todo_root = catalog.list_root(storage::RecordType::Todo);
   EXPECT_TRUE(todo_root.records.empty());
   ASSERT_EQ(todo_root.directories.size(), 1U);
-  EXPECT_EQ(todo_root.directories.front().id, todo_directory.id);
+  EXPECT_EQ(todo_root.directories.front().metadata.id, todo_directory.id);
   const auto children = catalog.list_directory(storage::DirectoryKind::Memo,
                                                 memo_directory.id);
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::RecordMetadata>>(children));
   ASSERT_EQ(std::get<std::vector<storage::RecordMetadata>>(children).size(), 1U);
   EXPECT_EQ(std::get<storage::MemoMetadata>(
-                std::get<std::vector<storage::RecordMetadata>>(children).front()).id,
+                std::get<std::vector<storage::RecordMetadata>>(children).front()).metadata.id,
             grouped_memo.id);
   EXPECT_EQ(catalog.list_directories(storage::DirectoryKind::Memo).size(), 1U);
   EXPECT_EQ(catalog.list_directories(storage::DirectoryKind::Todo).size(), 1U);
@@ -457,7 +457,7 @@ TEST(MetadataCatalogTest, QueriesAcrossModulesWithIndependentFilters) {
   EXPECT_EQ(catalog.query(query).size(), 5U);
   query.directory = std::optional<core::Id>{memo_directory.id};
   ASSERT_EQ(catalog.query(query).size(), 1U);
-  EXPECT_EQ(std::get<storage::MemoMetadata>(catalog.query(query).front()).id, memo.id);
+  EXPECT_EQ(std::get<storage::MemoMetadata>(catalog.query(query).front()).metadata.id, memo.id);
   query.directory.reset();
   query.privacy = core::Privacy::Hidden;
   EXPECT_EQ(catalog.query(query).size(), 3U);
@@ -466,18 +466,18 @@ TEST(MetadataCatalogTest, QueriesAcrossModulesWithIndependentFilters) {
   EXPECT_EQ(catalog.query(query).size(), 2U);
   query.text = "旅行";
   ASSERT_EQ(catalog.query(query).size(), 1U);
-  EXPECT_EQ(std::get<storage::LogMetadata>(catalog.query(query).front()).id, log.id);
+  EXPECT_EQ(std::get<storage::LogMetadata>(catalog.query(query).front()).metadata.id, log.id);
   query.text = "CAFÉ";
   EXPECT_TRUE(catalog.query(query).empty());
   query.text = "Café";
   ASSERT_EQ(catalog.query(query).size(), 1U);
-  EXPECT_EQ(std::get<storage::MemoMetadata>(catalog.query(query).front()).id, memo.id);
+  EXPECT_EQ(std::get<storage::MemoMetadata>(catalog.query(query).front()).metadata.id, memo.id);
   query.text = "Private notes";
   EXPECT_TRUE(catalog.query(query).empty());
   query.text = "";
   query.tag = core::Tag{"TRAV"};
   ASSERT_EQ(catalog.query(query).size(), 1U);
-  EXPECT_EQ(std::get<storage::LogMetadata>(catalog.query(query).front()).id, log.id);
+  EXPECT_EQ(std::get<storage::LogMetadata>(catalog.query(query).front()).metadata.id, log.id);
   query.tag = core::Tag{"旅行"};
   EXPECT_EQ(catalog.query(query).size(), 3U);
   query.tag.reset();
@@ -491,7 +491,7 @@ TEST(MetadataCatalogTest, QueriesAcrossModulesWithIndependentFilters) {
   query.log_date.from = std::chrono::year{2027} / 1 / 15;
   query.log_date.through = std::chrono::year{2027} / 1 / 15;
   ASSERT_EQ(catalog.query(query).size(), 1U);
-  EXPECT_EQ(std::get<storage::LogMetadata>(catalog.query(query).front()).id, log.id);
+  EXPECT_EQ(std::get<storage::LogMetadata>(catalog.query(query).front()).metadata.id, log.id);
   query.log_date = {};
   query.todo_status = core::TodoStatus::Completed;
   query.todo_priority = core::TodoPriority::High;
@@ -538,14 +538,14 @@ TEST(MetadataCatalogTest, SortingIsStableByUuidAndKeepsMissingKeysLast) {
   query.sort = storage::MetadataSort::Title;
   auto sorted = catalog.query(query);
   ASSERT_EQ(sorted.size(), 4U);
-  EXPECT_EQ(std::get<storage::MemoMetadata>(sorted[0]).id, memo.id);
-  EXPECT_EQ(std::get<storage::LogMetadata>(sorted[1]).id, second.id);
-  EXPECT_EQ(std::get<storage::LogMetadata>(sorted[2]).id, first.id);
+  EXPECT_EQ(std::get<storage::MemoMetadata>(sorted[0]).metadata.id, memo.id);
+  EXPECT_EQ(std::get<storage::LogMetadata>(sorted[1]).metadata.id, second.id);
+  EXPECT_EQ(std::get<storage::LogMetadata>(sorted[2]).metadata.id, first.id);
   query.descending = true;
   sorted = catalog.query(query);
   ASSERT_EQ(sorted.size(), 4U);
-  EXPECT_EQ(std::get<storage::LogMetadata>(sorted[1]).id, second.id);
-  EXPECT_EQ(std::get<storage::LogMetadata>(sorted[2]).id, first.id);
+  EXPECT_EQ(std::get<storage::LogMetadata>(sorted[1]).metadata.id, second.id);
+  EXPECT_EQ(std::get<storage::LogMetadata>(sorted[2]).metadata.id, first.id);
   query.sort = storage::MetadataSort::LogDate;
   sorted = catalog.query(query);
   ASSERT_EQ(sorted.size(), 4U);
@@ -555,11 +555,11 @@ TEST(MetadataCatalogTest, SortingIsStableByUuidAndKeepsMissingKeysLast) {
   query.descending = false;
   sorted = catalog.query(query);
   ASSERT_EQ(sorted.size(), 4U);
-  EXPECT_EQ(std::get<storage::TodoMetadata>(sorted[0]).id, todo.id);
+  EXPECT_EQ(std::get<storage::TodoMetadata>(sorted[0]).metadata.id, todo.id);
   query.descending = true;
   sorted = catalog.query(query);
   ASSERT_EQ(sorted.size(), 4U);
-  EXPECT_EQ(std::get<storage::TodoMetadata>(sorted[0]).id, todo.id);
+  EXPECT_EQ(std::get<storage::TodoMetadata>(sorted[0]).metadata.id, todo.id);
 }
 
 TEST(MetadataCatalogTest, EmptyTitleMatchesUnfilteredQuery) {
@@ -571,7 +571,7 @@ TEST(MetadataCatalogTest, EmptyTitleMatchesUnfilteredQuery) {
   catalog.mark_persisted();
   const auto all = catalog.query();
   ASSERT_EQ(all.size(), 1U);
-  EXPECT_EQ(std::get<storage::MemoMetadata>(all.front()).id, memo.id);
+  EXPECT_EQ(std::get<storage::MemoMetadata>(all.front()).metadata.id, memo.id);
   EXPECT_FALSE(catalog.unpersisted());
 }
 
@@ -631,13 +631,13 @@ TEST(MetadataCatalogTest, MovesAndRefreshesMetadataWithoutChangingIdentity) {
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::RecordMetadata>>(todo_children));
   EXPECT_TRUE(std::get<std::vector<storage::RecordMetadata>>(todo_children).empty());
   const auto saved = std::get<storage::MemoMetadata>(*catalog.find_record(memo.id));
-  EXPECT_EQ(saved.privacy, core::Privacy::Hidden);
-  expect_context(saved.created, memo.created);
+  EXPECT_EQ(saved.metadata.privacy, core::Privacy::Hidden);
+  expect_context(saved.metadata.created, memo.created);
   EXPECT_EQ(saved.relative_path, memo_folder / "moved.md");
 
   catalog.mark_persisted();
   auto wrong_type = storage::metadata_from(log_snapshot(), "logs/wrong.md");
-  std::get<storage::LogMetadata>(wrong_type).id = memo.id;
+  std::get<storage::LogMetadata>(wrong_type).metadata.id = memo.id;
   expect_error(catalog.update_record(wrong_type), storage::StorageErrorCode::InvalidMetadata);
   expect_error(catalog.remove_record(id("a7183823-2574-4bfd-b411-99ed177d3e43")),
                storage::StorageErrorCode::MetadataNotFound);
@@ -699,7 +699,7 @@ TEST(MetadataCatalogTest, ReverseMembershipFollowsMovesAndGuardsKindChanges) {
   EXPECT_TRUE(std::get<std::vector<storage::RecordMetadata>>(old_members).empty());
   ASSERT_EQ(std::get<std::vector<storage::RecordMetadata>>(new_members).size(), 1U);
   EXPECT_EQ(std::get<storage::MemoMetadata>(
-                std::get<std::vector<storage::RecordMetadata>>(new_members).front()).id,
+                std::get<std::vector<storage::RecordMetadata>>(new_members).front()).metadata.id,
             memo.id);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       catalog.remove_directory(first.id)));
@@ -721,7 +721,7 @@ TEST(MetadataCatalogTest, ReverseMembershipFollowsMovesAndGuardsKindChanges) {
       storage::metadata_from(retagged, second_path))));
   EXPECT_TRUE(catalog.list_directories(storage::DirectoryKind::Memo).empty());
   ASSERT_EQ(catalog.list_directories(storage::DirectoryKind::Todo).size(), 1U);
-  EXPECT_EQ(catalog.list_directories(storage::DirectoryKind::Todo).front().id,
+  EXPECT_EQ(catalog.list_directories(storage::DirectoryKind::Todo).front().metadata.id,
             second.id);
   EXPECT_TRUE(catalog.list_root(storage::RecordType::Memo).directories.empty());
   EXPECT_EQ(catalog.list_root(storage::RecordType::Todo).directories.size(), 1U);
@@ -759,30 +759,30 @@ TEST(MetadataCatalogTest, SortsTypedFieldsAndDueVariants) {
   EXPECT_EQ(storage::record_type(ordered[1]), storage::RecordType::Memo);
   query.sort = storage::MetadataSort::Created;
   ordered = catalog.query(query);
-  EXPECT_EQ(std::get<storage::LogMetadata>(ordered[0]).id, log.id);
-  EXPECT_EQ(std::get<storage::MemoMetadata>(ordered[1]).id, memo.id);
+  EXPECT_EQ(std::get<storage::LogMetadata>(ordered[0]).metadata.id, log.id);
+  EXPECT_EQ(std::get<storage::MemoMetadata>(ordered[1]).metadata.id, memo.id);
   query.sort = storage::MetadataSort::Modified;
   ordered = catalog.query(query);
-  EXPECT_EQ(std::get<storage::LogMetadata>(ordered[0]).id, log.id);
-  EXPECT_EQ(std::get<storage::TodoMetadata>(ordered.back()).id, timed.id);
+  EXPECT_EQ(std::get<storage::LogMetadata>(ordered[0]).metadata.id, log.id);
+  EXPECT_EQ(std::get<storage::TodoMetadata>(ordered.back()).metadata.id, timed.id);
   query.sort = storage::MetadataSort::DueDate;
   ordered = catalog.query(query);
   ASSERT_EQ(ordered.size(), 5U);
-  EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[0]).id, dated.id);
-  EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[1]).id, timed.id);
-  EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[2]).id, undated.id);
+  EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[0]).metadata.id, dated.id);
+  EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[1]).metadata.id, timed.id);
+  EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[2]).metadata.id, undated.id);
   query.sort = storage::MetadataSort::Status;
   ordered = catalog.query(query);
-  EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[0]).id, timed.id);
+  EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[0]).metadata.id, timed.id);
   query.sort = storage::MetadataSort::Priority;
   ordered = catalog.query(query);
-  EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[0]).id, timed.id);
+  EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[0]).metadata.id, timed.id);
   query.due_from = timed.due_date;
   query.due_through = timed.due_date;
   query.sort = storage::MetadataSort::Id;
   ordered = catalog.query(query);
   ASSERT_EQ(ordered.size(), 1U);
-  EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[0]).id, timed.id);
+  EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[0]).metadata.id, timed.id);
 }
 
 TEST(MetadataCatalogTest, RejectsIdentityAndLocatorCollisionsAcrossEntryTypes) {
@@ -873,11 +873,11 @@ TEST(MetadataCatalogTest, CrossTypeQueriesAndMutationsKeepOtherEntriesIntact) {
     EXPECT_TRUE(catalog.unpersisted());
     catalog.mark_persisted();
   }
-  EXPECT_EQ(std::get<storage::LogMetadata>(*catalog.find_record(log.id)).title,
+  EXPECT_EQ(std::get<storage::LogMetadata>(*catalog.find_record(log.id)).metadata.title,
             "Updated Log");
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(memo.id)).title,
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(memo.id)).metadata.title,
             "Updated Memo");
-  EXPECT_EQ(std::get<storage::TodoMetadata>(*catalog.find_record(todo.id)).title,
+  EXPECT_EQ(std::get<storage::TodoMetadata>(*catalog.find_record(todo.id)).metadata.title,
             "Updated Todo");
 
   expect_error(catalog.update_record(storage::metadata_from(
@@ -887,7 +887,7 @@ TEST(MetadataCatalogTest, CrossTypeQueriesAndMutationsKeepOtherEntriesIntact) {
   EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(memo.id)).relative_path,
             fs::path{"entries/memo.enc"});
   auto wrong_type = storage::metadata_from(memo, "entries/memo.enc");
-  std::get<storage::MemoMetadata>(wrong_type).id = log.id;
+  std::get<storage::MemoMetadata>(wrong_type).metadata.id = log.id;
   expect_error(catalog.update_record(wrong_type), storage::StorageErrorCode::InvalidMetadata);
   EXPECT_FALSE(catalog.unpersisted());
   const std::vector<core::Id> removal_order{memo.id, log.id, todo.id};
@@ -914,9 +914,9 @@ TEST(MetadataCatalogTest, AllEntryTypesShareOneIdentityNamespace) {
       storage::metadata_from(memo_snapshot(), "memos/memo.md"),
       storage::metadata_from(todo_snapshot(), "todos/todo.toml")};
   for (const auto& record : records) {
-    const auto uuid = std::visit([](const auto& value) { return value.id; }, record);
+    const auto uuid = std::visit([](const auto& value) { return value.metadata.id; }, record);
     const storage::DirectoryMetadata directory{
-        uuid, core::DirectoryKind::Memo, "memos/group", "Group"};
+        {uuid, core::DirectoryKind::Memo, "Group"}, "memos/group"};
     for (bool directory_first : {false, true}) {
       storage::MetadataCatalog catalog;
       if (directory_first) {

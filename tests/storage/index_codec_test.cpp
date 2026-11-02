@@ -162,9 +162,9 @@ storage::MetadataCatalog make_catalog() {
   const auto memo_path = fs::path{"vault/memo"} / memo_dir.to_string();
   const auto todo_path = fs::path{"vault/todo"} / todo_dir.to_string();
   if (!std::holds_alternative<std::monostate>(catalog.insert_directory(
-          {memo_dir, core::DirectoryKind::Memo, memo_path, "研究 / Café"})) ||
+          {{memo_dir, core::DirectoryKind::Memo, "研究 / Café"}, memo_path})) ||
       !std::holds_alternative<std::monostate>(catalog.insert_directory(
-          {todo_dir, core::DirectoryKind::Todo, todo_path, "任务"})))
+          {{todo_dir, core::DirectoryKind::Todo, "任务"}, todo_path})))
     throw std::runtime_error("Invalid Directory fixture");
 
   const auto created = context(timestamp_at(std::chrono::seconds{1800000000},
@@ -172,27 +172,27 @@ storage::MetadataCatalog make_catalog() {
   const auto modified = context(timestamp_at(std::chrono::seconds{1800000090},
                         std::chrono::nanoseconds{987654000}), "Europe/Paris", std::nullopt);
   const std::string long_title(4096, 'a');
-  const storage::LogMetadata log{
-      id("17183823-2574-4bfd-b411-99ed177d3e43"), "vault/log.enc",
+  const storage::LogMetadata log{{
+      id("17183823-2574-4bfd-b411-99ed177d3e43"),
       core::Privacy::Protected, created, modified, long_title + " 旅行",
       {{"travel"}, {"旅行"}},
-      {{std::chrono::year{2027} / 1 / 15}, "Asia/Tokyo", "東京"}};
-  const storage::MemoMetadata memo{
-      id("27183823-2574-4bfd-b411-99ed177d3e43"), memo_path / "memo.enc",
-      core::Privacy::Normal, created, modified, "Memo Café", {{"notes"}}, memo_dir};
-  const storage::TodoMetadata todo_date{
-      id("37183823-2574-4bfd-b411-99ed177d3e43"), todo_path / "date.enc",
+      {{std::chrono::year{2027} / 1 / 15}, "Asia/Tokyo", "東京"}}, "vault/log.enc"};
+  const storage::MemoMetadata memo{{
+      id("27183823-2574-4bfd-b411-99ed177d3e43"),
+      core::Privacy::Normal, created, modified, "Memo Café", {{"notes"}}, memo_dir}, memo_path / "memo.enc"};
+  const storage::TodoMetadata todo_date{{
+      id("37183823-2574-4bfd-b411-99ed177d3e43"),
       core::Privacy::Hidden, created, modified, "Todo 日付",
       core::TodoStatus::Completed, core::TodoPriority::High,
       core::DueDate{core::DateContext{{std::chrono::year{2028} / 2 / 3},
-                                      "Asia/Tokyo", "東京"}}, todo_dir};
-  const storage::TodoMetadata todo_time{
-      id("47183823-2574-4bfd-b411-99ed177d3e43"), "vault/todo-root.enc",
+                                      "Asia/Tokyo", "東京"}}, todo_dir}, todo_path / "date.enc"};
+  const storage::TodoMetadata todo_time{{
+      id("47183823-2574-4bfd-b411-99ed177d3e43"),
       core::Privacy::Normal, created, modified, "Todo time",
       core::TodoStatus::Pending, core::TodoPriority::Low,
       core::DueDate{context(timestamp_at(std::chrono::seconds{1900000000},
                              std::chrono::nanoseconds{654321000}),
-                            "UTC", std::nullopt)}, std::nullopt};
+                            "UTC", std::nullopt)}, std::nullopt}, "vault/todo-root.enc"};
   for (const storage::RecordMetadata& metadata : {
            storage::RecordMetadata{log}, storage::RecordMetadata{memo},
            storage::RecordMetadata{todo_date}, storage::RecordMetadata{todo_time}}) {
@@ -207,6 +207,42 @@ std::string encoded_catalog() {
   if (!std::holds_alternative<std::string>(encoded))
     throw std::runtime_error("Could not encode fixture catalog");
   return value_of(encoded);
+}
+
+TEST(IndexCodecTest, LocatedMetadataPreservesExactSchemaOneWireEncoding) {
+  const auto record_id = id("27183823-2574-4bfd-b411-99ed177d3e43");
+  const auto created = context(timestamp_at(std::chrono::seconds{1}), "UTC", std::nullopt);
+  storage::MetadataCatalog catalog;
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_record(
+      storage::MemoMetadata{{record_id, core::Privacy::Normal, created, created,
+                             "Memo", {}, std::nullopt}, "memos/actual.md"})));
+  // Independent schema-v1 fixture: Located<T> is only an in-memory wrapper;
+  // it must not introduce a metadata envelope or reorder persisted map fields.
+  const WireValue timestamp{WireValue::Map{
+      {"nanoseconds", WireValue{std::uint64_t{0}}},
+      {"seconds", WireValue{std::int64_t{1}}},
+      {"timezone", WireValue{std::string{"UTC"}}}}};
+  const WireValue record{WireValue::Map{
+      {"created", timestamp}, {"id", WireValue{record_id.to_string()}},
+      {"modified", timestamp}, {"privacy", WireValue{std::string{"Normal"}}},
+      {"relative_path", WireValue{std::string{"memos/actual.md"}}},
+      {"tags", WireValue{WireValue::Array{}}},
+      {"title", WireValue{std::string{"Memo"}}},
+      {"type", WireValue{std::string{"Memo"}}}}};
+  const auto expected = pack_wire(WireValue{WireValue::Map{
+      {"directories", WireValue{WireValue::Array{}}},
+      {"entries", WireValue{WireValue::Array{record}}},
+      {"schema_version", WireValue{std::uint64_t{1}}}}});
+  const auto encoded = codec::encode_index(catalog);
+  ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
+  EXPECT_EQ(value_of(encoded), expected);
+  const auto decoded = codec::decode_index(expected);
+  ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
+  const auto restored = value_of(decoded).find_record(record_id);
+  ASSERT_TRUE(restored);
+  const auto& located = std::get<storage::MemoMetadata>(*restored);
+  EXPECT_EQ(located.metadata.title, "Memo");
+  EXPECT_EQ(located.relative_path, fs::path{"memos/actual.md"});
 }
 
 TEST(IndexCodecTest, RoundTripsAllMetadataFieldsAndRestoresPersistedMembership) {
@@ -230,12 +266,12 @@ TEST(IndexCodecTest, RoundTripsAllMetadataFieldsAndRestoresPersistedMembership) 
   const auto todo_directory = restored.find_directory(todo_dir);
   ASSERT_TRUE(memo_directory.has_value());
   ASSERT_TRUE(todo_directory.has_value());
-  EXPECT_EQ(memo_directory->kind, core::DirectoryKind::Memo);
-  EXPECT_EQ(memo_directory->name, "研究 / Café");
+  EXPECT_EQ(memo_directory->metadata.kind, core::DirectoryKind::Memo);
+  EXPECT_EQ(memo_directory->metadata.name, "研究 / Café");
   EXPECT_EQ(memo_directory->relative_path,
             fs::path{"vault/memo"} / memo_dir.to_string());
-  EXPECT_EQ(todo_directory->kind, core::DirectoryKind::Todo);
-  EXPECT_EQ(todo_directory->name, "任务");
+  EXPECT_EQ(todo_directory->metadata.kind, core::DirectoryKind::Todo);
+  EXPECT_EQ(todo_directory->metadata.name, "任务");
   const auto memo_children = restored.list_directory(core::DirectoryKind::Memo, memo_dir);
   const auto todo_children = restored.list_directory(core::DirectoryKind::Todo, todo_dir);
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::RecordMetadata>>(memo_children));
@@ -254,52 +290,52 @@ TEST(IndexCodecTest, RoundTripsAllMetadataFieldsAndRestoresPersistedMembership) 
   ASSERT_TRUE(std::holds_alternative<storage::TodoMetadata>(*timed));
   const auto& log_data = std::get<storage::LogMetadata>(*log);
   EXPECT_EQ(log_data.relative_path, fs::path{"vault/log.enc"});
-  EXPECT_EQ(log_data.privacy, core::Privacy::Protected);
-  EXPECT_EQ(log_data.title, std::string(4096, 'a') + " 旅行");
-  EXPECT_EQ(log_data.tags, (std::vector<core::Tag>{{"travel"}, {"旅行"}}));
-  EXPECT_EQ(log_data.created.timestamp,
+  EXPECT_EQ(log_data.metadata.privacy, core::Privacy::Protected);
+  EXPECT_EQ(log_data.metadata.title, std::string(4096, 'a') + " 旅行");
+  EXPECT_EQ(log_data.metadata.tags, (std::vector<core::Tag>{{"travel"}, {"旅行"}}));
+  EXPECT_EQ(log_data.metadata.created.timestamp,
             timestamp_at(std::chrono::seconds{1800000000},
                          std::chrono::nanoseconds{123456000}));
-  EXPECT_EQ(log_data.created.timezone, "Asia/Shanghai");
-  EXPECT_EQ(log_data.created.location, std::optional<std::string>{"上海"});
-  EXPECT_EQ(log_data.modified.timestamp,
+  EXPECT_EQ(log_data.metadata.created.timezone, "Asia/Shanghai");
+  EXPECT_EQ(log_data.metadata.created.location, std::optional<std::string>{"上海"});
+  EXPECT_EQ(log_data.metadata.modified.timestamp,
             timestamp_at(std::chrono::seconds{1800000090},
                          std::chrono::nanoseconds{987654000}));
-  EXPECT_EQ(log_data.modified.timezone, "Europe/Paris");
-  EXPECT_EQ(log_data.modified.location, std::nullopt);
-  EXPECT_EQ(log_data.log_date.date, std::chrono::year{2027} / 1 / 15);
-  EXPECT_EQ(log_data.log_date.timezone, "Asia/Tokyo");
-  EXPECT_EQ(log_data.log_date.location, std::optional<std::string>{"東京"});
+  EXPECT_EQ(log_data.metadata.modified.timezone, "Europe/Paris");
+  EXPECT_EQ(log_data.metadata.modified.location, std::nullopt);
+  EXPECT_EQ(log_data.metadata.log_date.date, std::chrono::year{2027} / 1 / 15);
+  EXPECT_EQ(log_data.metadata.log_date.timezone, "Asia/Tokyo");
+  EXPECT_EQ(log_data.metadata.log_date.location, std::optional<std::string>{"東京"});
 
   const auto& memo_data = std::get<storage::MemoMetadata>(*memo);
-  EXPECT_EQ(memo_data.title, "Memo Café");
-  EXPECT_EQ(memo_data.tags, (std::vector<core::Tag>{{"notes"}}));
-  EXPECT_EQ(memo_data.directory_id, memo_dir);
-  EXPECT_EQ(memo_data.privacy, core::Privacy::Normal);
-  EXPECT_EQ(memo_data.created.timestamp, log_data.created.timestamp);
-  EXPECT_EQ(memo_data.modified.location, std::nullopt);
+  EXPECT_EQ(memo_data.metadata.title, "Memo Café");
+  EXPECT_EQ(memo_data.metadata.tags, (std::vector<core::Tag>{{"notes"}}));
+  EXPECT_EQ(memo_data.metadata.directory_id, memo_dir);
+  EXPECT_EQ(memo_data.metadata.privacy, core::Privacy::Normal);
+  EXPECT_EQ(memo_data.metadata.created.timestamp, log_data.metadata.created.timestamp);
+  EXPECT_EQ(memo_data.metadata.modified.location, std::nullopt);
 
   const auto& date_data = std::get<storage::TodoMetadata>(*dated);
-  EXPECT_EQ(date_data.title, "Todo 日付");
-  EXPECT_EQ(date_data.status, core::TodoStatus::Completed);
-  EXPECT_EQ(date_data.priority, core::TodoPriority::High);
-  EXPECT_EQ(date_data.directory_id, todo_dir);
-  EXPECT_EQ(date_data.privacy, core::Privacy::Hidden);
-  ASSERT_TRUE(date_data.due_date.has_value());
-  ASSERT_TRUE(std::holds_alternative<core::DateContext>(*date_data.due_date));
-  const auto& date_due = std::get<core::DateContext>(*date_data.due_date);
+  EXPECT_EQ(date_data.metadata.title, "Todo 日付");
+  EXPECT_EQ(date_data.metadata.status, core::TodoStatus::Completed);
+  EXPECT_EQ(date_data.metadata.priority, core::TodoPriority::High);
+  EXPECT_EQ(date_data.metadata.directory_id, todo_dir);
+  EXPECT_EQ(date_data.metadata.privacy, core::Privacy::Hidden);
+  ASSERT_TRUE(date_data.metadata.due_date.has_value());
+  ASSERT_TRUE(std::holds_alternative<core::DateContext>(*date_data.metadata.due_date));
+  const auto& date_due = std::get<core::DateContext>(*date_data.metadata.due_date);
   EXPECT_EQ(date_due.date, std::chrono::year{2028} / 2 / 3);
   EXPECT_EQ(date_due.timezone, "Asia/Tokyo");
   EXPECT_EQ(date_due.location, std::optional<std::string>{"東京"});
 
   const auto& time_data = std::get<storage::TodoMetadata>(*timed);
-  EXPECT_EQ(time_data.title, "Todo time");
-  EXPECT_EQ(time_data.status, core::TodoStatus::Pending);
-  EXPECT_EQ(time_data.priority, core::TodoPriority::Low);
-  EXPECT_EQ(time_data.directory_id, std::nullopt);
-  ASSERT_TRUE(time_data.due_date.has_value());
-  ASSERT_TRUE(std::holds_alternative<core::TimestampContext>(*time_data.due_date));
-  const auto& time_due = std::get<core::TimestampContext>(*time_data.due_date);
+  EXPECT_EQ(time_data.metadata.title, "Todo time");
+  EXPECT_EQ(time_data.metadata.status, core::TodoStatus::Pending);
+  EXPECT_EQ(time_data.metadata.priority, core::TodoPriority::Low);
+  EXPECT_EQ(time_data.metadata.directory_id, std::nullopt);
+  ASSERT_TRUE(time_data.metadata.due_date.has_value());
+  ASSERT_TRUE(std::holds_alternative<core::TimestampContext>(*time_data.metadata.due_date));
+  const auto& time_due = std::get<core::TimestampContext>(*time_data.metadata.due_date);
   EXPECT_EQ(time_due.timestamp,
             timestamp_at(std::chrono::seconds{1900000000},
                          std::chrono::nanoseconds{654321000}));
@@ -330,14 +366,14 @@ TEST(IndexCodecTest, RoundTripsEmptyAndEachEntryTypeAlone) {
     SCOPED_TRACE(static_cast<int>(storage::record_type(item)));
     storage::MetadataCatalog one;
     if (const auto* memo = std::get_if<storage::MemoMetadata>(&item)) {
-      ASSERT_TRUE(memo->directory_id.has_value());
+      ASSERT_TRUE(memo->metadata.directory_id.has_value());
       ASSERT_TRUE(std::holds_alternative<std::monostate>(one.insert_directory(
-          *fixture.find_directory(*memo->directory_id))));
+          *fixture.find_directory(*memo->metadata.directory_id))));
     }
     if (const auto* todo = std::get_if<storage::TodoMetadata>(&item)) {
-      if (todo->directory_id) {
+      if (todo->metadata.directory_id) {
         ASSERT_TRUE(std::holds_alternative<std::monostate>(one.insert_directory(
-            *fixture.find_directory(*todo->directory_id))));
+            *fixture.find_directory(*todo->metadata.directory_id))));
       }
     }
     ASSERT_TRUE(std::holds_alternative<std::monostate>(one.insert_record(item)));
@@ -346,7 +382,7 @@ TEST(IndexCodecTest, RoundTripsEmptyAndEachEntryTypeAlone) {
     const auto decoded = codec::decode_index(value_of(bytes));
     ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
     const auto found = value_of(decoded).find_record(
-        std::visit([](const auto& value) { return value.id; }, item));
+        std::visit([](const auto& value) { return value.metadata.id; }, item));
     ASSERT_TRUE(found.has_value());
     EXPECT_EQ(storage::record_type(*found), storage::record_type(item));
     EXPECT_EQ(value_of(decoded).query().size(), 1U);
@@ -359,12 +395,12 @@ TEST(IndexCodecTest, PreservesLongTodoTitleAndNegativeFractionalTimestamp) {
       timestamp_at(std::chrono::seconds{-1},
                    std::chrono::nanoseconds{500000000}),
       "UTC", std::string{});
-  const storage::TodoMetadata todo{
-      id("58183823-2574-4bfd-b411-99ed177d3e43"), "long-todo.enc",
+  const storage::TodoMetadata todo{{
+      id("58183823-2574-4bfd-b411-99ed177d3e43"),
       core::Privacy::Normal, before_epoch, before_epoch,
       std::string(1u << 20, 'x') + "旅行",
       core::TodoStatus::Pending, core::TodoPriority::None,
-      std::nullopt, std::nullopt};
+      std::nullopt, std::nullopt}, "long-todo.enc"};
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       catalog.insert_record(storage::RecordMetadata{todo})));
   const auto encoded = codec::encode_index(catalog);
@@ -380,12 +416,12 @@ TEST(IndexCodecTest, PreservesLongTodoTitleAndNegativeFractionalTimestamp) {
                 field(field(entry(wire), "created"), "location").value), "");
   const auto decoded = codec::decode_index(value_of(encoded));
   ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
-  const auto saved = value_of(decoded).find_record(todo.id);
+  const auto saved = value_of(decoded).find_record(todo.metadata.id);
   ASSERT_TRUE(saved.has_value());
   const auto& restored = std::get<storage::TodoMetadata>(*saved);
-  EXPECT_EQ(restored.title, todo.title);
-  EXPECT_EQ(restored.created.timestamp, before_epoch.timestamp);
-  EXPECT_EQ(restored.created.location, std::optional<std::string>{""});
+  EXPECT_EQ(restored.metadata.title, todo.metadata.title);
+  EXPECT_EQ(restored.metadata.created.timestamp, before_epoch.timestamp);
+  EXPECT_EQ(restored.metadata.created.location, std::optional<std::string>{""});
 }
 
 TEST(IndexCodecTest, EncodingIsIndependentOfCatalogInsertionOrder) {
@@ -423,11 +459,11 @@ TEST(IndexCodecTest, OmitsAbsentOptionalFieldsAndRejectsExplicitNil) {
   storage::MetadataCatalog catalog;
   const auto created = context(timestamp_at(std::chrono::seconds{1}),
                                "UTC", std::nullopt);
-  const storage::TodoMetadata todo{
-      id("57183823-2574-4bfd-b411-99ed177d3e43"), "todo.enc",
+  const storage::TodoMetadata todo{{
+      id("57183823-2574-4bfd-b411-99ed177d3e43"),
       core::Privacy::Normal, created, created, "No due",
       core::TodoStatus::Pending, core::TodoPriority::None,
-      std::nullopt, std::nullopt};
+      std::nullopt, std::nullopt}, "todo.enc"};
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       catalog.insert_record(storage::RecordMetadata{todo})));
   const auto encoded = codec::encode_index(catalog);
@@ -444,24 +480,24 @@ TEST(IndexCodecTest, OmitsAbsentOptionalFieldsAndRejectsExplicitNil) {
 
 TEST(IndexCodecTest, PreservesNativeTimestampPrecisionAtMinAndMax) {
   storage::MetadataCatalog catalog;
-  const storage::LogMetadata log{
-      id("67183823-2574-4bfd-b411-99ed177d3e43"), "extreme.enc",
+  const storage::LogMetadata log{{
+      id("67183823-2574-4bfd-b411-99ed177d3e43"),
       core::Privacy::Normal,
       context(core::Timestamp::min(), "UTC", std::nullopt),
       context(core::Timestamp::max(), "UTC", std::nullopt),
-      "Extreme", {}, {{std::chrono::year{9999} / 12 / 31}, "UTC", std::nullopt}};
+      "Extreme", {}, {{std::chrono::year{9999} / 12 / 31}, "UTC", std::nullopt}}, "extreme.enc"};
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       catalog.insert_record(storage::RecordMetadata{log})));
   const auto encoded = codec::encode_index(catalog);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
   const auto decoded = codec::decode_index(value_of(encoded));
   ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
-  const auto restored = value_of(decoded).find_record(log.id);
+  const auto restored = value_of(decoded).find_record(log.metadata.id);
   ASSERT_TRUE(restored.has_value());
   const auto& saved = std::get<storage::LogMetadata>(*restored);
-  EXPECT_EQ(saved.created.timestamp, core::Timestamp::min());
-  EXPECT_EQ(saved.modified.timestamp, core::Timestamp::max());
-  EXPECT_EQ(saved.log_date.date, std::chrono::year{9999} / 12 / 31);
+  EXPECT_EQ(saved.metadata.created.timestamp, core::Timestamp::min());
+  EXPECT_EQ(saved.metadata.modified.timestamp, core::Timestamp::max());
+  EXPECT_EQ(saved.metadata.log_date.date, std::chrono::year{9999} / 12 / 31);
 }
 
 TEST(IndexCodecTest, RejectsBrokenEnvelopeAndDuplicateKeys) {

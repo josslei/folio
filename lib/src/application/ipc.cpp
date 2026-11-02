@@ -237,7 +237,7 @@ core::Result<std::optional<Message>, IpcError> decode_message(
   if (version != protocol_version)
     return error(IpcErrorCode::Incompatible, "Unsupported IPC protocol version");
   const auto kind = number(std::string_view(buffer).substr(6, 2));
-  if (kind < 1 || kind > 5)
+  if (kind < 1 || kind > static_cast<unsigned>(MessageKind::ResponseEnd))
     return error(IpcErrorCode::Protocol, "Unknown IPC message kind");
   if (buffer.size() < size + 4)
     return std::optional<Message>{};

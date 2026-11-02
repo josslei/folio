@@ -22,6 +22,8 @@ add_library(folio_backend STATIC
   src/application/backend_connection_handle.cpp
   src/application/internal/backend_state_machine.cpp
   src/application/internal/backend_states.cpp
+  src/application/internal/metadata_access.cpp
+  src/application/internal/access_codec.cpp
   src/application/internal/process.cpp
   src/application/internal/repository_ownership.cpp
   src/storage/catalog_coordinator.cpp

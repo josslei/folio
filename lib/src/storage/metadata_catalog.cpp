@@ -28,28 +28,28 @@ bool equal(const std::optional<core::DueDate>& a, const std::optional<core::DueD
 }
 template <class T>
 bool common_equal(const T& a, const T& b) {
-  return a.id == b.id && a.relative_path == b.relative_path &&
-         a.privacy == b.privacy && equal(a.created, b.created) &&
-         equal(a.modified, b.modified) && a.title == b.title;
+  return a.metadata.id == b.metadata.id && a.relative_path == b.relative_path &&
+         a.metadata.privacy == b.metadata.privacy && equal(a.metadata.created, b.metadata.created) &&
+         equal(a.metadata.modified, b.metadata.modified) && a.metadata.title == b.metadata.title;
 }
 bool equal(const RecordMetadata& a, const RecordMetadata& b) {
   if (a.index() != b.index()) return false;
   if (const auto* x = std::get_if<LogMetadata>(&a)) {
     const auto& y = std::get<LogMetadata>(b);
-    return common_equal(*x, y) && x->tags == y.tags && equal(x->log_date, y.log_date);
+    return common_equal(*x, y) && x->metadata.tags == y.metadata.tags && equal(x->metadata.log_date, y.metadata.log_date);
   }
   if (const auto* x = std::get_if<MemoMetadata>(&a)) {
     const auto& y = std::get<MemoMetadata>(b);
-    return common_equal(*x, y) && x->tags == y.tags && x->directory_id == y.directory_id;
+    return common_equal(*x, y) && x->metadata.tags == y.metadata.tags && x->metadata.directory_id == y.metadata.directory_id;
   }
   const auto& x = std::get<TodoMetadata>(a);
   const auto& y = std::get<TodoMetadata>(b);
-  return common_equal(x, y) && x.status == y.status && x.priority == y.priority &&
-         equal(x.due_date, y.due_date) && x.directory_id == y.directory_id;
+  return common_equal(x, y) && x.metadata.status == y.metadata.status && x.metadata.priority == y.metadata.priority &&
+         equal(x.metadata.due_date, y.metadata.due_date) && x.metadata.directory_id == y.metadata.directory_id;
 }
 bool equal(const DirectoryMetadata& a, const DirectoryMetadata& b) {
-  return a.id == b.id && a.kind == b.kind &&
-         a.relative_path == b.relative_path && a.name == b.name;
+  return a.metadata.id == b.metadata.id && a.metadata.kind == b.metadata.kind &&
+         a.relative_path == b.relative_path && a.metadata.name == b.metadata.name;
 }
 
 bool valid_utf8(std::string_view text) {
@@ -104,7 +104,7 @@ bool valid_context(const DateContext& c) {
          (!c.location || valid_utf8(*c.location));
 }
 const Id& entry_id(const RecordMetadata& e) {
-  return std::visit([](const auto& value) -> const Id& { return value.id; }, e);
+  return std::visit([](const auto& value) -> const Id& { return value.metadata.id; }, e);
 }
 const std::filesystem::path& entry_path(const RecordMetadata& e) {
   return std::visit([](const auto& value) -> const std::filesystem::path& {
@@ -114,21 +114,21 @@ const std::filesystem::path& entry_path(const RecordMetadata& e) {
 std::optional<Id> entry_directory(const RecordMetadata& e) {
   return std::visit([](const auto& value) -> std::optional<Id> {
     if constexpr (std::is_same_v<std::decay_t<decltype(value)>, LogMetadata>) return std::nullopt;
-    else return value.directory_id;
+    else return value.metadata.directory_id;
   }, e);
 }
 Privacy entry_privacy(const RecordMetadata& e) {
-  return std::visit([](const auto& value) { return value.privacy; }, e);
+  return std::visit([](const auto& value) { return value.metadata.privacy; }, e);
 }
 const TimestampContext& entry_created(const RecordMetadata& e) {
-  return std::visit([](const auto& value) -> const TimestampContext& { return value.created; }, e);
+  return std::visit([](const auto& value) -> const TimestampContext& { return value.metadata.created; }, e);
 }
 const TimestampContext& entry_modified(const RecordMetadata& e) {
-  return std::visit([](const auto& value) -> const TimestampContext& { return value.modified; }, e);
+  return std::visit([](const auto& value) -> const TimestampContext& { return value.metadata.modified; }, e);
 }
 const std::string& entry_title(const RecordMetadata& e) {
   return std::visit([](const auto& value) -> const std::string& {
-    return value.title;
+    return value.metadata.title;
   }, e);
 }
 
@@ -139,13 +139,13 @@ bool valid_entry(const RecordMetadata& e) {
   return std::visit([](const auto& value) {
     using T = std::decay_t<decltype(value)>;
     if constexpr (std::is_same_v<T, TodoMetadata>) {
-      if (!valid_status(value.status) || !valid_priority(value.priority)) return false;
-      if (value.due_date && !std::visit([](const auto& due) { return valid_context(due); },
-                                         *value.due_date)) return false;
+      if (!valid_status(value.metadata.status) || !valid_priority(value.metadata.priority)) return false;
+      if (value.metadata.due_date && !std::visit([](const auto& due) { return valid_context(due); },
+                                         *value.metadata.due_date)) return false;
     } else {
-      for (const auto& tag : value.tags) if (!valid_utf8(tag.value)) return false;
+      for (const auto& tag : value.metadata.tags) if (!valid_utf8(tag.value)) return false;
       if constexpr (std::is_same_v<T, LogMetadata>)
-        if (!valid_context(value.log_date)) return false;
+        if (!valid_context(value.metadata.log_date)) return false;
     }
     return true;
   }, e);
@@ -199,28 +199,28 @@ int compare_key(const RecordMetadata& a, const RecordMetadata& b, MetadataSort s
       const auto* x = std::get_if<LogMetadata>(&a);
       const auto* y = std::get_if<LogMetadata>(&b);
       if (!x || !y) return !x && !y ? 0 : (!x ? -2 : 2);
-      return cmp_scalar(std::chrono::sys_days{x->log_date.date},
-                        std::chrono::sys_days{y->log_date.date});
+      return cmp_scalar(std::chrono::sys_days{x->metadata.log_date.date},
+                        std::chrono::sys_days{y->metadata.log_date.date});
     }
     case MetadataSort::DueDate: {
       const auto* x = std::get_if<TodoMetadata>(&a);
       const auto* y = std::get_if<TodoMetadata>(&b);
-      const bool px = x && x->due_date;
-      const bool py = y && y->due_date;
+      const bool px = x && x->metadata.due_date;
+      const bool py = y && y->metadata.due_date;
       if (!px || !py) return !px && !py ? 0 : (!px ? -2 : 2);
-      return cmp_due(*x->due_date, *y->due_date);
+      return cmp_due(*x->metadata.due_date, *y->metadata.due_date);
     }
     case MetadataSort::Status: {
       const auto* x = std::get_if<TodoMetadata>(&a);
       const auto* y = std::get_if<TodoMetadata>(&b);
       if (!x || !y) return !x && !y ? 0 : (!x ? -2 : 2);
-      return cmp_scalar(static_cast<int>(x->status), static_cast<int>(y->status));
+      return cmp_scalar(static_cast<int>(x->metadata.status), static_cast<int>(y->metadata.status));
     }
     case MetadataSort::Priority: {
       const auto* x = std::get_if<TodoMetadata>(&a);
       const auto* y = std::get_if<TodoMetadata>(&b);
       if (!x || !y) return !x && !y ? 0 : (!x ? -2 : 2);
-      return cmp_scalar(static_cast<int>(x->priority), static_cast<int>(y->priority));
+      return cmp_scalar(static_cast<int>(x->metadata.priority), static_cast<int>(y->metadata.priority));
     }
   }
   return 0;
@@ -236,38 +236,38 @@ bool matches(const T& e, const RecordQuery& q) {
   if (q.directory) {
     if constexpr (log) {
       if (*q.directory) return false;
-    } else if (*q.directory != e.directory_id) return false;
+    } else if (*q.directory != e.metadata.directory_id) return false;
   }
-  if (q.privacy && *q.privacy != e.privacy) return false;
-  if (!contains_ascii_folded(e.title, q.text)) return false;
-  if (!in_range(e.created.timestamp, q.created) ||
-      !in_range(e.modified.timestamp, q.modified)) return false;
+  if (q.privacy && *q.privacy != e.metadata.privacy) return false;
+  if (!contains_ascii_folded(e.metadata.title, q.text)) return false;
+  if (!in_range(e.metadata.created.timestamp, q.created) ||
+      !in_range(e.metadata.modified.timestamp, q.modified)) return false;
   if (q.tag) {
     if constexpr (todo) return false;
-    else if (!std::any_of(e.tags.begin(), e.tags.end(), [&](const Tag& tag) {
+    else if (!std::any_of(e.metadata.tags.begin(), e.metadata.tags.end(), [&](const Tag& tag) {
       return contains_ascii_folded(tag.value, q.tag->value);
     })) return false;
   }
   if (q.log_date.from || q.log_date.through) {
     if constexpr (log) {
-      if (!in_date_range(e.log_date.date, q.log_date)) return false;
+      if (!in_date_range(e.metadata.log_date.date, q.log_date)) return false;
     } else return false;
   }
   if (q.todo_status || q.todo_priority || q.has_due_date || q.due_kind ||
       q.due_from || q.due_through) {
     if constexpr (!todo) return false;
     else {
-      if (q.todo_status && *q.todo_status != e.status) return false;
-      if (q.todo_priority && *q.todo_priority != e.priority) return false;
-      if (q.has_due_date && *q.has_due_date != e.due_date.has_value()) return false;
-      if (q.due_kind && (!e.due_date ||
-          static_cast<std::size_t>(*q.due_kind) != e.due_date->index())) return false;
+      if (q.todo_status && *q.todo_status != e.metadata.status) return false;
+      if (q.todo_priority && *q.todo_priority != e.metadata.priority) return false;
+      if (q.has_due_date && *q.has_due_date != e.metadata.due_date.has_value()) return false;
+      if (q.due_kind && (!e.metadata.due_date ||
+          static_cast<std::size_t>(*q.due_kind) != e.metadata.due_date->index())) return false;
       if (q.due_from || q.due_through) {
-        if (!e.due_date) return false;
-        if (q.due_from && (q.due_from->index() != e.due_date->index() ||
-                           cmp_due(*e.due_date, *q.due_from) < 0)) return false;
-        if (q.due_through && (q.due_through->index() != e.due_date->index() ||
-                              cmp_due(*e.due_date, *q.due_through) > 0)) return false;
+        if (!e.metadata.due_date) return false;
+        if (q.due_from && (q.due_from->index() != e.metadata.due_date->index() ||
+                           cmp_due(*e.metadata.due_date, *q.due_from) < 0)) return false;
+        if (q.due_through && (q.due_through->index() != e.metadata.due_date->index() ||
+                              cmp_due(*e.metadata.due_date, *q.due_through) > 0)) return false;
       }
     }
   }
@@ -285,20 +285,20 @@ RecordType record_type(const RecordMetadata& metadata) noexcept {
 }
 
 RecordMetadata metadata_from(const Log::Snapshot& s, std::filesystem::path path) {
-  return LogMetadata{s.id, std::move(path), s.privacy, s.created, s.modified,
-                     s.title, s.tags, s.log_date};
+  return LogMetadata{core::LogMetadata{s.id, s.privacy, s.created, s.modified,
+                     s.title, s.tags, s.log_date}, std::move(path)};
 }
 RecordMetadata metadata_from(const Memo::Snapshot& s, std::filesystem::path path) {
-  return MemoMetadata{s.id, std::move(path), s.privacy, s.created, s.modified,
-                      s.title, s.tags, s.directory_id};
+  return MemoMetadata{core::MemoMetadata{s.id, s.privacy, s.created, s.modified,
+                      s.title, s.tags, s.directory_id}, std::move(path)};
 }
 RecordMetadata metadata_from(const Todo::Snapshot& s, std::filesystem::path path) {
-  return TodoMetadata{s.id, std::move(path), s.privacy, s.created, s.modified,
-                      s.title, s.status, s.priority, s.due_date, s.directory_id};
+  return TodoMetadata{core::TodoMetadata{s.id, s.privacy, s.created, s.modified,
+                      s.title, s.status, s.priority, s.due_date, s.directory_id}, std::move(path)};
 }
 DirectoryMetadata metadata_from(const Directory::Snapshot& s,
                                 std::filesystem::path path) {
-  return DirectoryMetadata{s.id, s.kind, std::move(path), s.name};
+  return DirectoryMetadata{core::DirectoryMetadata{s.id, s.kind, s.name}, std::move(path)};
 }
 
 bool MetadataCatalog::record_path_occupied(const std::filesystem::path& path,
@@ -306,14 +306,14 @@ bool MetadataCatalog::record_path_occupied(const std::filesystem::path& path,
   auto occupied = [&](const auto& collection) {
     return std::any_of(collection.begin(), collection.end(), [&](const auto& pair) {
       const auto& e = pair.second;
-      return e.relative_path == path && (!except || e.id != *except);
+      return e.relative_path == path && (!except || e.metadata.id != *except);
     });
   };
   return occupied(logs_) || occupied(memos_) || occupied(todos_);
 }
 
 bool MetadataCatalog::directory_referenced(const DirectoryMetadata& directory) const {
-  const auto it = directory_members_.find(directory.id.to_string());
+  const auto it = directory_members_.find(directory.metadata.id.to_string());
   return it != directory_members_.end() && !it->second.empty();
 }
 
@@ -343,7 +343,7 @@ std::set<std::string>& MetadataCatalog::members_for(RecordType type,
   if (directory_id) {
     const auto found = find_directory(*directory_id);
     const auto kind = type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo;
-    if (!found || found->kind != kind)
+    if (!found || found->metadata.kind != kind)
       return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Missing or wrong-kind Directory");
   }
   auto& members = members_for(type, directory_id);
@@ -382,7 +382,7 @@ std::set<std::string>& MetadataCatalog::members_for(RecordType type,
   if (new_directory) {
     const auto found = find_directory(*new_directory);
     const auto kind = type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo;
-    if (!found || found->kind != kind)
+    if (!found || found->metadata.kind != kind)
       return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Missing or wrong-kind Directory");
   }
   if (equal(*existing, m)) return std::monostate{};
@@ -425,10 +425,10 @@ std::set<std::string>& MetadataCatalog::members_for(RecordType type,
 }
 
 ::folio::core::Result<std::monostate, StorageError> MetadataCatalog::insert_directory(DirectoryMetadata m) {
-  if (!valid_kind(m.kind) || !valid_path(m.relative_path) || !valid_utf8(m.name))
+  if (!valid_kind(m.metadata.kind) || !valid_path(m.relative_path) || !valid_utf8(m.metadata.name))
     return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Invalid Directory metadata");
-  const auto key = m.id.to_string();
-  if (directories_.contains(key) || find_record(m.id))
+  const auto key = m.metadata.id.to_string();
+  if (directories_.contains(key) || find_record(m.metadata.id))
     return failure(StorageErrorCode::DuplicateId, m.relative_path, "Entry UUID already exists");
   for (const auto& [directory_key, d] : directories_)
     if (d.relative_path == m.relative_path)
@@ -447,13 +447,13 @@ std::set<std::string>& MetadataCatalog::members_for(RecordType type,
 }
 
 ::folio::core::Result<std::monostate, StorageError> MetadataCatalog::update_directory(DirectoryMetadata m) {
-  if (!valid_kind(m.kind) || !valid_path(m.relative_path) || !valid_utf8(m.name))
+  if (!valid_kind(m.metadata.kind) || !valid_path(m.relative_path) || !valid_utf8(m.metadata.name))
     return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Invalid Directory metadata");
-  const auto key = m.id.to_string();
+  const auto key = m.metadata.id.to_string();
   auto it = directories_.find(key);
   if (it == directories_.end())
     return failure(StorageErrorCode::MetadataNotFound, m.relative_path, "Directory UUID not found");
-  if (it->second.kind != m.kind && directory_referenced(it->second))
+  if (it->second.metadata.kind != m.metadata.kind && directory_referenced(it->second))
     return failure(StorageErrorCode::ReferencedDirectory, m.relative_path,
                    "Directory is referenced by entries");
   for (const auto& [directory_key, d] : directories_)
@@ -541,13 +541,13 @@ RootListing MetadataCatalog::list_root(RecordType module) const {
       break;
   }
   for (const auto& [key, d] : directories_)
-    if ((module == RecordType::Memo && d.kind == DirectoryKind::Memo) ||
-        (module == RecordType::Todo && d.kind == DirectoryKind::Todo)) out.directories.push_back(d);
+    if ((module == RecordType::Memo && d.metadata.kind == DirectoryKind::Memo) ||
+        (module == RecordType::Todo && d.metadata.kind == DirectoryKind::Todo)) out.directories.push_back(d);
   return out;
 }
 ::folio::core::Result<std::vector<RecordMetadata>, StorageError> MetadataCatalog::list_directory(DirectoryKind kind, const Id& id) const {
   const auto dir = find_directory(id);
-  if (!dir || dir->kind != kind)
+  if (!dir || dir->metadata.kind != kind)
     return StorageError{StorageErrorCode::MetadataNotFound, {}, "Directory UUID not found in module", {}, false};
   std::vector<RecordMetadata> out;
   const auto& members = directory_members_.at(id.to_string());
@@ -560,7 +560,7 @@ RootListing MetadataCatalog::list_root(RecordType module) const {
 }
 std::vector<DirectoryMetadata> MetadataCatalog::list_directories(DirectoryKind kind) const {
   std::vector<DirectoryMetadata> out;
-  for (const auto& [key, d] : directories_) if (d.kind == kind) out.push_back(d);
+  for (const auto& [key, d] : directories_) if (d.metadata.kind == kind) out.push_back(d);
   return out;
 }
 std::vector<RecordMetadata> MetadataCatalog::query(const RecordQuery& q) const {
@@ -575,8 +575,8 @@ std::vector<RecordMetadata> MetadataCatalog::query(const RecordQuery& q) const {
     if (*q.directory) {
       const auto d = find_directory(**q.directory);
       if (!d) return out;
-      constrained_type = d->kind == DirectoryKind::Memo ? RecordType::Memo : RecordType::Todo;
-      members = &directory_members_.at(d->id.to_string());
+      constrained_type = d->metadata.kind == DirectoryKind::Memo ? RecordType::Memo : RecordType::Todo;
+      members = &directory_members_.at(d->metadata.id.to_string());
     }
     if (!constrained_type && (!q.type || *q.type == RecordType::Log)) {
       for (const auto& key : log_roots_) {

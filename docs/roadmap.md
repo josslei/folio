@@ -108,3 +108,11 @@ and never automatically rotated/deleted. The factory template supplies Warn-leve
 configuration; initialization precedes TOML loading. Lifecycle error retention and
 IPC behavior remain separate from logging. See [Logging](logging.md). Public
 operations, mutation queue, Edit Locks and Push Events remain deferred.
+
+## Phase 4.2a — Public Normal read access implemented
+
+BackendConnectionHandle provides Root/Directory browsing, scoped Record metadata
+queries, Directory listing, and typed content loads through IPC. Public errors
+and metadata warnings preserve meaningful causes without exposing locators.
+See [read-access contracts](application-access.md). Phase 4.2b operation outcomes
+and later mutation, Recovery, Vault, and event work remain deferred.

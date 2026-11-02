@@ -48,7 +48,12 @@ enum class MessageKind : std::uint16_t {
   Ready = 2,
   Ping = 3,
   Pong = 4,
-  Reject = 5
+  Reject = 5,
+  // Internal read protocol. Requests fit one bounded frame; responses may span
+  // several frames, with exactly one final ResponseEnd frame.
+  AccessRequest = 6,
+  ResponseChunk = 7,
+  ResponseEnd = 8
 };
 
 struct Message {

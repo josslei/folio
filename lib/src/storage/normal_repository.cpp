@@ -1114,30 +1114,30 @@ StorageResult<NormalRepositoryScanResult> NormalRepository::scan() const {
             auto value = std::get<core::Log::Snapshot>(std::move(loaded));
             if (!entry_ids.insert(value.id.to_string()).second)
               return fail(StorageErrorCode::DuplicateId, path, "Duplicate stored Entry UUID");
-            inventory.logs.push_back({value.id, relative, value.privacy,
+            inventory.logs.push_back({{value.id, value.privacy,
                                       std::move(value.created), std::move(value.modified),
                                       std::move(value.title), std::move(value.tags),
-                                      std::move(value.log_date)});
+                                      std::move(value.log_date)}, relative});
           } else if (type == RecordType::Memo) {
             auto loaded = load_at<core::Memo::Snapshot>(root_, type, path);
             if (failure(loaded)) return *failure(loaded);
             auto value = std::get<core::Memo::Snapshot>(std::move(loaded));
             if (!entry_ids.insert(value.id.to_string()).second)
               return fail(StorageErrorCode::DuplicateId, path, "Duplicate stored Entry UUID");
-            inventory.memos.push_back({value.id, relative, value.privacy,
+            inventory.memos.push_back({{value.id, value.privacy,
                                        std::move(value.created), std::move(value.modified),
                                        std::move(value.title), std::move(value.tags),
-                                       std::move(value.directory_id)});
+                                       std::move(value.directory_id)}, relative});
           } else {
             auto loaded = load_at<core::Todo::Snapshot>(root_, type, path);
             if (failure(loaded)) return *failure(loaded);
             auto value = std::get<core::Todo::Snapshot>(std::move(loaded));
             if (!entry_ids.insert(value.id.to_string()).second)
               return fail(StorageErrorCode::DuplicateId, path, "Duplicate stored Entry UUID");
-            inventory.todos.push_back({value.id, relative, value.privacy,
+            inventory.todos.push_back({{value.id, value.privacy,
                                        std::move(value.created), std::move(value.modified),
                                        std::move(value.title), value.status, value.priority,
-                                       std::move(value.due_date), std::move(value.directory_id)});
+                                       std::move(value.due_date), std::move(value.directory_id)}, relative});
           }
         } else {
           note(path, "Unrelated object was not parsed");

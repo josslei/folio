@@ -1,4 +1,5 @@
 #include <folio/application/backend_connection_handle.hpp>
+#include "application/internal/access_codec.hpp"
 #include <folio/logging/logging.hpp>
 #include <array>
 #include <thread>
@@ -39,6 +40,63 @@ core::Result<Message, IpcError> exchange(IpcStream& stream, Message message,
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
   return IpcError{IpcErrorCode::Timeout, "Backend handshake/response timed out"};
+}
+// Public reads are serial on a connection. Only transport/protocol failures
+// invalidate it; confirmed Application failures leave the connection usable.
+template<class Value>
+ApplicationResult<Value> access(IpcStream& stream, AccessRequest request) {
+  auto encoded = encode_access_request(request);
+  if (std::holds_alternative<IpcError>(encoded))
+    return ApplicationError{ErrorCategory::InvalidRequest, ErrorReason::ResourceLimit,
+                            "The query exceeds the request resource limit.", {ErrorAction::Dismiss}};
+  const auto& payload = std::get<std::string>(encoded);
+  if (payload.size() > max_message_bytes - 4)
+    return ApplicationError{ErrorCategory::InvalidRequest, ErrorReason::ResourceLimit,
+                            "The query exceeds the request resource limit.", {ErrorAction::Dismiss}};
+  auto fail = [&](IpcError error) -> ApplicationResult<Value> {
+    stream = IpcStream{};
+    return access_connection_error(error);
+  };
+  const auto outgoing = encode_message({MessageKind::AccessRequest, payload_bytes(payload)});
+  std::size_t offset = 0;
+  std::string input, response;
+  std::array<std::byte, 16384> bytes{};
+  const auto deadline = Clock::now() + std::chrono::seconds(30);
+  while (Clock::now() < deadline) {
+    if (offset < outgoing.size()) {
+      auto sent = stream.write(std::as_bytes(std::span(outgoing.data(), outgoing.size())).subspan(offset));
+      if (auto* error = std::get_if<IpcError>(&sent)) return fail(*error);
+      offset += std::get<std::size_t>(sent);
+    } else {
+      auto received = stream.read(bytes);
+      if (auto* error = std::get_if<IpcError>(&received)) return fail(*error);
+      input += payload_text(std::span(bytes).first(std::get<std::size_t>(received)));
+      for (;;) {
+        auto decoded = decode_message(input);
+        if (auto* error = std::get_if<IpcError>(&decoded)) return fail(*error);
+        auto& message = std::get<std::optional<Message>>(decoded);
+        if (!message) break;
+        if (message->kind != MessageKind::ResponseChunk && message->kind != MessageKind::ResponseEnd)
+          return fail({IpcErrorCode::Protocol, "Unexpected Application response frame"});
+        if (message->payload.size() > max_access_bytes - response.size())
+          return fail({IpcErrorCode::Protocol, "Application response exceeds resource limit"});
+        if (message->kind == MessageKind::ResponseChunk && message->payload.empty())
+          return fail({IpcErrorCode::Protocol, "Empty Application continuation frame"});
+        response += payload_text(message->payload);
+        if (message->kind == MessageKind::ResponseEnd) {
+          if (!input.empty()) return fail({IpcErrorCode::Protocol, "Trailing Application response bytes"});
+          auto result = decode_access_response(response);
+          if (auto* error = std::get_if<IpcError>(&result)) return fail(*error);
+          auto& value = std::get<AccessResponse>(result);
+          if (auto* error = std::get_if<ApplicationError>(&value)) return std::move(*error);
+          if (auto* expected = std::get_if<Value>(&value)) return std::move(*expected);
+          return fail({IpcErrorCode::Protocol, "Wrong Application response type"});
+        }
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return fail({IpcErrorCode::Timeout, "Application read timed out"});
 }
 }  // namespace
 
@@ -137,4 +195,31 @@ core::Result<BackendConnectionHandle, IpcError> connect_or_start_backend() {
   return connect_or_start_backend(std::get<ConnectionSettings>(configured),
                                   launch_backend);
 }
+ApplicationResult<ApplicationResponse<BrowseResult>> BackendConnectionHandle::browse(
+    DirectoryRef dir, RecordOrder order) {
+  return access<ApplicationResponse<BrowseResult>>(stream_, BrowseRequest{std::move(dir), order});
+}
+
+ApplicationResult<ApplicationResponse<std::vector<core::RecordMetadata>>> BackendConnectionHandle::query_records(
+    const RecordQuery& query) {
+  return access<ApplicationResponse<std::vector<core::RecordMetadata>>>(stream_, QueryRecordsRequest{query});
+}
+
+ApplicationResult<ApplicationResponse<std::vector<core::DirectoryMetadata>>> BackendConnectionHandle::list_directories(
+    core::DirectoryKind kind) {
+  return access<ApplicationResponse<std::vector<core::DirectoryMetadata>>>(stream_, ListDirectoriesRequest{kind});
+}
+
+ApplicationResult<core::Log::Snapshot> BackendConnectionHandle::load_log(const core::Id& id) {
+  return access<core::Log::Snapshot>(stream_, LoadLogRequest{id});
+}
+
+ApplicationResult<core::Memo::Snapshot> BackendConnectionHandle::load_memo(const core::Id& id) {
+  return access<core::Memo::Snapshot>(stream_, LoadMemoRequest{id});
+}
+
+ApplicationResult<core::Todo::Snapshot> BackendConnectionHandle::load_todo(const core::Id& id) {
+  return access<core::Todo::Snapshot>(stream_, LoadTodoRequest{id});
+}
+
 }  // namespace folio::application

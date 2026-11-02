@@ -100,31 +100,31 @@ storage::MetadataCatalog make_catalog() {
       core::Timestamp{std::chrono::duration_cast<core::Timestamp::duration>(
           std::chrono::seconds{1800000010} + std::chrono::nanoseconds{987654000})},
       "Europe/Paris", std::nullopt};
-  const storage::LogMetadata log{
-      id("17183823-2574-4bfd-b411-99ed177d3e43"), "logs/one.md",
+  const storage::LogMetadata log{{
+      id("17183823-2574-4bfd-b411-99ed177d3e43"),
       core::Privacy::Protected, created, modified, "Log 旅行", {{"daily"}, {"旅行"}},
-      {{std::chrono::year{2027} / 1 / 15}, "Asia/Tokyo", "東京"}};
-  const storage::MemoMetadata memo{
-      id("27183823-2574-4bfd-b411-99ed177d3e43"), "memos/group/one.md",
-      core::Privacy::Normal, created, modified, "Memo Café", {{"research"}}, memo_dir};
-  const storage::TodoMetadata todo{
-      id("37183823-2574-4bfd-b411-99ed177d3e43"), "todos/group/one.toml",
+      {{std::chrono::year{2027} / 1 / 15}, "Asia/Tokyo", "東京"}}, "logs/one.md"};
+  const storage::MemoMetadata memo{{
+      id("27183823-2574-4bfd-b411-99ed177d3e43"),
+      core::Privacy::Normal, created, modified, "Memo Café", {{"research"}}, memo_dir}, "memos/group/one.md"};
+  const storage::TodoMetadata todo{{
+      id("37183823-2574-4bfd-b411-99ed177d3e43"),
       core::Privacy::Hidden, created, modified, "Todo 日付",
       core::TodoStatus::Completed, core::TodoPriority::High,
       core::DueDate{core::DateContext{{std::chrono::year{2028} / 2 / 3},
-                                      "Asia/Tokyo", "東京"}}, todo_dir};
-  const storage::TodoMetadata root_todo{
-      id("47183823-2574-4bfd-b411-99ed177d3e43"), "todos/root.toml",
+                                      "Asia/Tokyo", "東京"}}, todo_dir}, "todos/group/one.toml"};
+  const storage::TodoMetadata root_todo{{
+      id("47183823-2574-4bfd-b411-99ed177d3e43"),
       core::Privacy::Normal, created, modified, "Root Todo",
       core::TodoStatus::Pending, core::TodoPriority::None,
-      std::nullopt, std::nullopt};
-  const storage::TodoMetadata timed_todo{
-      id("58183823-2574-4bfd-b411-99ed177d3e43"), "todos/timed.toml",
+      std::nullopt, std::nullopt}, "todos/root.toml"};
+  const storage::TodoMetadata timed_todo{{
+      id("58183823-2574-4bfd-b411-99ed177d3e43"),
       core::Privacy::Normal, created, modified, "Timed Todo",
       core::TodoStatus::Pending, core::TodoPriority::Medium,
       core::DueDate{core::TimestampContext{
           core::Timestamp{std::chrono::seconds{1900000000}}, "UTC", std::nullopt}},
-      std::nullopt};
+      std::nullopt}, "todos/timed.toml"};
   for (const storage::RecordMetadata& entry : {
            storage::RecordMetadata{log}, storage::RecordMetadata{memo},
            storage::RecordMetadata{todo}, storage::RecordMetadata{root_todo},
@@ -170,7 +170,7 @@ void change_log_title(storage::MetadataCatalog& catalog) {
       id("17183823-2574-4bfd-b411-99ed177d3e43"));
   if (!found) throw std::runtime_error("Missing test Log");
   auto log = std::get<storage::LogMetadata>(*found);
-  log.title = "Changed after first save";
+  log.metadata.title = "Changed after first save";
   if (!std::holds_alternative<std::monostate>(catalog.update_record(
           storage::RecordMetadata{log})))
     throw std::runtime_error("Could not update test Log");
@@ -455,13 +455,13 @@ TEST_F(CatalogCoordinatorTest, UnpersistedEmptyCatalogCanReplaceAndMissingTarget
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
   for (const auto& entry : owned_catalog.query()) {
     EXPECT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.remove_record(
-        std::visit([](const auto& value) { return value.id; }, entry))));
+        std::visit([](const auto& value) { return value.metadata.id; }, entry))));
   }
   // Directory records must be removed after their members.
   for (const auto kind : {core::DirectoryKind::Memo, core::DirectoryKind::Todo}) {
     for (const auto& directory : owned_catalog.list_directories(kind))
       EXPECT_TRUE(std::holds_alternative<std::monostate>(
-          owned_catalog.remove_directory(directory.id)));
+          owned_catalog.remove_directory(directory.metadata.id)));
   }
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_TRUE(owned_catalog.query().empty());
@@ -546,7 +546,7 @@ TEST_F(CatalogCoordinatorTest, EncodingFailurePreservesExistingCacheAndUnpersist
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
   auto log = std::get<storage::LogMetadata>(*owned_catalog.find_record(
       id("17183823-2574-4bfd-b411-99ed177d3e43")));
-  log.log_date.date = std::chrono::year{-1} / 1 / 1;
+  log.metadata.log_date.date = std::chrono::year{-1} / 1 / 1;
   ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.update_record(
       storage::RecordMetadata{log})));
   const auto failed = coordinator.shutdown_save();
@@ -554,8 +554,8 @@ TEST_F(CatalogCoordinatorTest, EncodingFailurePreservesExistingCacheAndUnpersist
   ASSERT_TRUE(std::get<storage::CoordinatorError>(failed).codec_error.has_value());
   EXPECT_EQ(read_bytes(file), original);
   EXPECT_TRUE(owned_catalog.unpersisted());
-  log.log_date.date = std::chrono::year{2027} / 1 / 15;
-  log.title = "Recovered after failed encoding";
+  log.metadata.log_date.date = std::chrono::year{2027} / 1 / 15;
+  log.metadata.title = "Recovered after failed encoding";
   ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.update_record(
       storage::RecordMetadata{log})));
   const auto retried = coordinator.shutdown_save();
@@ -666,8 +666,8 @@ TEST_F(CatalogCoordinatorTest, MissingIndexRebuildsAuthoritativeFilesWithoutInde
   EXPECT_TRUE(owned_catalog.unpersisted());
   const auto found = owned_catalog.find_record(snapshot.id);
   ASSERT_TRUE(found.has_value());
-  EXPECT_EQ(std::get<storage::LogMetadata>(*found).title, snapshot.title);
-  EXPECT_EQ(std::get<storage::LogMetadata>(*found).created.timestamp,
+  EXPECT_EQ(std::get<storage::LogMetadata>(*found).metadata.title, snapshot.title);
+  EXPECT_EQ(std::get<storage::LogMetadata>(*found).metadata.created.timestamp,
             snapshot.created.timestamp);
   EXPECT_FALSE(fs::exists(state / "index"));
   expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);

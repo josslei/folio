@@ -1,4 +1,5 @@
 #include "application/internal/backend_states.hpp"
+#include "application/internal/access_codec.hpp"
 #include <folio/application/ipc.hpp>
 #include <folio/config/configuration.hpp>
 #include <folio/logging/logging.hpp>
@@ -15,7 +16,8 @@ namespace folio::application::internal {
 using Phase = BackendStateMachine::State;
 namespace {
 core::Result<std::monostate, IpcError> serve(
-    RepositoryOwnership& ownership, const std::string& startup_failure);
+    RepositoryOwnership& ownership, const std::string& startup_failure,
+    BackendContext* context = nullptr);
 }  // namespace
 
 BackendActionOutcome Bootstrap(BackendContext& context) {
@@ -68,7 +70,7 @@ BackendActionOutcome Bootstrap(BackendContext& context) {
 }
 
 BackendActionOutcome Serve(BackendContext& context) {
-  auto result = serve(*context.ownership, {});
+  auto result = serve(*context.ownership, {}, &context);
   if (auto* error = std::get_if<IpcError>(&result)) {
     return record_backend_failure(context, {Phase::Serve, *error});
   }
@@ -134,14 +136,17 @@ using Clock = std::chrono::steady_clock;
 struct Peer {
   IpcStream stream;
   std::string input, output;
+  std::optional<std::string> response;
+  std::size_t response_offset = 0;
   bool active = false, registering = false, close_after_output = false;
   Clock::time_point deadline = Clock::now() + std::chrono::seconds(3);
 };
 
-// Lifecycle has one owner: this loop. There are no application operations yet.
-// Future queued/active work must be drained here before finish_session().
+// This loop owns lifecycle and synchronous read execution. No handler outlives
+// its request. Future queued/active mutations must drain before finish_session().
 core::Result<std::monostate, IpcError> serve(
-    RepositoryOwnership& ownership, const std::string& startup_failure) {
+    RepositoryOwnership& ownership, const std::string& startup_failure,
+    BackendContext* context) {
   std::vector<Peer> peers;
   bool served = false;
   const auto initial_deadline =
@@ -159,13 +164,27 @@ core::Result<std::monostate, IpcError> serve(
     for (auto it = peers.begin(); it != peers.end();) {
       auto& peer = *it;
       bool remove = false;
+      if (peer.output.empty() && peer.response) {
+        const auto remaining = peer.response->size() - peer.response_offset;
+        const auto size = std::min(remaining, max_message_bytes - 4);
+        const auto final = size == remaining;
+        peer.output = encode_message({final ? MessageKind::ResponseEnd : MessageKind::ResponseChunk,
+            payload_bytes(std::string_view(*peer.response).substr(peer.response_offset, size))});
+        peer.response_offset += size;
+        if (final) {
+          peer.response.reset();
+          peer.response_offset = 0;
+        }
+      }
       if (!peer.output.empty()) {
         auto written = peer.stream.write(
             std::as_bytes(std::span(peer.output.data(), peer.output.size())));
         if (std::holds_alternative<IpcError>(written))
           remove = true;
         else {
-          peer.output.erase(0, std::get<std::size_t>(written));
+          const auto count = std::get<std::size_t>(written);
+          if (count) peer.deadline = Clock::now() + std::chrono::seconds(3);
+          peer.output.erase(0, count);
           if (peer.output.empty()) {
             if (peer.close_after_output)
               remove = true;
@@ -204,12 +223,35 @@ core::Result<std::monostate, IpcError> serve(
             } else if (peer.active && message->kind == MessageKind::Ping &&
                        message->payload.empty()) {
               peer.output = encode_message({MessageKind::Pong, {}});
+            } else if (peer.active && message->kind == MessageKind::AccessRequest && context) {
+              auto request = decode_access_request(payload_text(message->payload));
+              {
+                AccessResponse result = std::holds_alternative<IpcError>(request)
+                    ? AccessResponse{ApplicationError{ErrorCategory::InvalidRequest,
+                        ErrorReason::InvalidQuery, "The read request is malformed or contains invalid values.",
+                        {ErrorAction::Dismiss}}}
+                    : handle_access(std::get<AccessRequest>(request), context->catalog,
+                                    *context->repository, *context->coordinator);
+                auto encoded = encode_access_response(result);
+                if (std::holds_alternative<IpcError>(encoded)) {
+                  encoded = encode_access_response(ApplicationError{
+                      ErrorCategory::ApplicationUnavailable, ErrorReason::ResourceLimit,
+                      "The read response could not be represented within the resource limit.",
+                      {ErrorAction::Dismiss}});
+                }
+                if (auto* bytes = std::get_if<std::string>(&encoded)) {
+                  peer.response = std::move(*bytes);
+                  peer.deadline = Clock::now() + std::chrono::seconds(3);
+                } else {
+                  reject("Unable to encode Application response");
+                }
+              }
             } else
               reject("Invalid lifecycle message");
           }
         }
       }
-      if ((!peer.active || !peer.input.empty() || !peer.output.empty()) &&
+      if ((!peer.active || !peer.input.empty() || !peer.output.empty() || peer.response) &&
           Clock::now() >= peer.deadline)
         remove = true;
       if (remove)

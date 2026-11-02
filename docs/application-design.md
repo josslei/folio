@@ -280,3 +280,12 @@ Backend diagnostics are logged once where retained, including cleanup failures;
 logging does not alter the lifecycle table or replace Frontend error delivery.
 Explicit logger flush/release follows Finish or Frontend completion. Existing
 user-facing TUI stderr messages remain separate. See [Logging](logging.md).
+
+## Public read access — Phase 4.2a implemented
+
+Browse, scoped metadata queries, Directory listing, and typed Snapshot loading
+are now available on BackendConnectionHandle through IPC. See
+[Public read access](application-access.md) for current contracts, warnings,
+errors, transport limits, and deferred work. This supersedes earlier statements
+in this document that all Public Application operations are absent. Mutations,
+Recovery, Edit Locks, events, and Vault remain deferred.

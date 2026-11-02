@@ -5,6 +5,8 @@
 #include "folio/core/memo.hpp"
 #include "folio/core/todo.hpp"
 #include "storage/common.hpp"
+#include "storage/located.hpp"
+#include <folio/core/metadata.hpp>
 
 #include <chrono>
 #include <filesystem>
@@ -17,47 +19,11 @@
 
 namespace folio::core::storage {
 
-struct LogMetadata {
-  Id id;
-  std::filesystem::path relative_path;
-  Privacy privacy;
-  TimestampContext created;
-  TimestampContext modified;
-  std::string title;
-  std::vector<Tag> tags;
-  DateContext log_date;
-};
-
-struct MemoMetadata {
-  Id id;
-  std::filesystem::path relative_path;
-  Privacy privacy;
-  TimestampContext created;
-  TimestampContext modified;
-  std::string title;
-  std::vector<Tag> tags;
-  std::optional<Id> directory_id;
-};
-
-struct TodoMetadata {
-  Id id;
-  std::filesystem::path relative_path;
-  Privacy privacy;
-  TimestampContext created;
-  TimestampContext modified;
-  std::string title;
-  TodoStatus status;
-  TodoPriority priority;
-  std::optional<DueDate> due_date;
-  std::optional<Id> directory_id;
-};
-
-struct DirectoryMetadata {
-  Id id;
-  DirectoryKind kind;
-  std::filesystem::path relative_path;
-  std::string name;
-};
+// Private typed conveniences; shared fields are defined only in Core.
+using LogMetadata = Located<core::LogMetadata>;
+using MemoMetadata = Located<core::MemoMetadata>;
+using TodoMetadata = Located<core::TodoMetadata>;
+using DirectoryMetadata = Located<core::DirectoryMetadata>;
 
 // Records are Log/Memo/Todo Entries. Directory remains a first-class Entry
 // with different fields; these types do not change existing query semantics.

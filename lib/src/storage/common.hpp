@@ -24,7 +24,7 @@ namespace folio::core::storage {
 using config::ApplicationPaths;
 using config::StoragePaths;
 
-enum class RecordType { Log, Memo, Todo };
+using core::RecordType;
 using core::DirectoryKind;
 
 enum class StorageErrorCode {
