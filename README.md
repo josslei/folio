@@ -54,7 +54,7 @@ Testing is enabled by default through CTest. Configure, build, and run:
 ```sh
 cmake -S . -B build -DBUILD_TESTING=ON
 cmake --build build --config Debug --parallel
-ctest --test-dir build -C Debug --output-on-failure
+ctest --test-dir build -C Debug --parallel --output-on-failure
 ```
 
 Resource-heavy boundary tests live separately under `tests/resource_limits/` and
@@ -63,7 +63,7 @@ are excluded from the default build and CTest suite. Enable and run them explici
 ```sh
 cmake -S . -B build-resource-limits -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DFOLIO_BUILD_RESOURCE_LIMIT_TESTS=ON
 cmake --build build-resource-limits --config Debug --target folio_resource_limit_tests --parallel
-ctest --test-dir build-resource-limits -C Debug -L resource_limits --output-on-failure
+ctest --test-dir build-resource-limits -C Debug -L resource_limits --parallel 1 --output-on-failure
 ```
 
 These check correctness at large input/resource boundaries, rather than benchmark
@@ -79,6 +79,8 @@ cmake --build build-release --config Release --parallel
 
 `--parallel` lets CMake use available CPU cores. To limit the number of concurrent build jobs, pass a number, such as `--parallel 4`.
 
+Run CTest with `--parallel` to select concurrency automatically (requires CTest 3.29+). Older CTest versions require `--parallel N`. If concurrent tests consume too much memory, especially resource-limit tests, use an explicit lower count.
+
 Use `-G "Visual Studio 17 2022"` or `-G Xcode` when selecting those generators. For single-configuration generators, set `CMAKE_BUILD_TYPE` to `Debug` or `Release`. The GoogleTest runtime is configured to match the MSVC runtime on Windows.
 
 ### Serialized samples
@@ -88,7 +90,7 @@ Generate serialized examples of all supported objects for visual review:
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
 cmake --build build --config Debug --parallel
-ctest --test-dir build -C Debug -R CoreCodecSamplesTest --output-on-failure
+ctest --test-dir build -C Debug -R CoreCodecSamplesTest --parallel --output-on-failure
 ```
 
 Inspect `build/serialization-samples/Debug/`: `log.md`, `memo.md`, `todo-date.toml`, `todo-datetime.toml`, `todo-minimal.toml`, `directory.toml`, and `common-values.toml`. The test regenerates and replaces these files using the codecs; they contain synthetic data and are generated output rather than fixtures or manual templates. `Protected` and `Hidden` are metadata values in these plaintext samples; no encryption is performed.

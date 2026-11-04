@@ -65,13 +65,15 @@ Require CMake 3.20+, Git, and C and C++20 compilers. Initialize dependencies wit
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
 cmake --build build --config Debug --parallel
-ctest --test-dir build -C Debug --output-on-failure
+ctest --test-dir build -C Debug --parallel --output-on-failure
 
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 cmake --build build-release --config Release --parallel
 ```
 
 Pass `--parallel` to let CMake use available CPU cores; use `--parallel N` to cap concurrent jobs.
+Run CTest with `--parallel` for automatic concurrency (requires CTest 3.29+). Older CTest versions require `--parallel N`. Use an explicit lower count if memory pressure warrants it, especially for resource-limit tests.
+Use parallel incremental builds for routine edits. Run focused tests during iteration and the full suite when required by the task or the change's scope; documentation-only edits need no compilation or test run. Run the opt-in resource-limit suite separately with `--parallel 1`.
 
 Single-configuration generators use `CMAKE_BUILD_TYPE`. Visual Studio and Xcode ignore it: select builds with `--config Debug` or `--config Release`, and tests with `-C Debug` or `-C Release`.
 
