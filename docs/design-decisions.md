@@ -117,7 +117,7 @@ Status distinguishes implemented contracts from agreed future direction. This re
 - **Motivation:** Acknowledgment loss does not prove persistence failure.
 - **Alternatives considered:** Cache drafts, blind retry, or treating disconnect as failed write.
 - **Consequences:** Public API must support safe authoritative reconciliation.
-- **Open/Deferred:** Operation IDs, revisions, acknowledgment algorithm and retention.
+- **Open/Deferred:** Draft Recovery correlation using `MutationId`, revisions, acknowledgment algorithm and retention. Mutation identity naming is decided; persistent receipts and cross-restart lookup remain open. See [mutation follow-up work](application-mutations.md#traceable-follow-up-work).
 
 ## D14 — Vault Frontend encrypt-only recovery
 

@@ -39,7 +39,7 @@ The future owner supplies known UUIDs/locators, Ready-state checks, creation che
 
 Local IPC needs per-user access controls, requests/responses/events, disconnect detection, and explicit connection-loss/errors. Transport and wire format are Open/Deferred. Callbacks in a Frontend are local dispatch mechanisms; IPC sends messages, never cross-process function pointers. An event receiver can dispatch to the UI loop.
 
-Initial mutations execute through a serialized queue. This avoids requiring every domain/Storage class to be independently thread-safe. Read scheduling and cancellation are deferred. Acknowledgment must distinguish an unknown outcome from a confirmed failure; request identity, operation IDs, revision protection, and reconciliation must be designed with [Frontend Recovery](recovery-design.md) before exposing retry semantics.
+Initial mutations execute through a serialized queue. This avoids requiring every domain/Storage class to be independently thread-safe. Read scheduling and cancellation are deferred. Acknowledgment must distinguish an unknown outcome from a confirmed failure; separate Request IDs, revision protection, and reconciliation remain open. Mutation intentions use the approved name `MutationId`; see [mutation contracts](application-mutations.md). Retry semantics must be designed with [Frontend Recovery](recovery-design.md) before exposing retry semantics.
 
 ## Editing and events
 

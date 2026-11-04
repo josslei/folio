@@ -20,6 +20,7 @@ add_library(folio_backend STATIC
   src/core/version.cpp
   src/application/backend.cpp
   src/application/backend_connection_handle.cpp
+  src/application/mutation/mutation_id.cpp
   src/application/internal/backend_state_machine.cpp
   src/application/internal/backend_states.cpp
   src/application/internal/metadata_access.cpp

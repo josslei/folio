@@ -14,6 +14,23 @@ Status vocabulary throughout these documents: **Implemented** means present in t
 - [Roadmap](roadmap.md): implementation order, gates, and dependencies.
 - [Decisions](design-decisions.md): rationale, alternatives, and deferred details.
 
+## Application Operation taxonomy — Decided/Planned
+
+Application Operation is the umbrella for Query Operations (Browse, Metadata
+Query, Directory Listing, Record Loading) and Mutation Operations (Create,
+Update, Move, and future Delete/Trash). These classifications require no C++
+base classes. Normal Query Operations are implemented in Phase 4.2a; public
+mutation execution remains deferred.
+
+Query Operations do not modify authoritative business data and can generally be
+issued afresh after connection loss. Mutation Operations may already have changed
+data, so they retain one logical `MutationId` across submission and future Recovery.
+The strong `MutationId` type is implemented as a public Application contract.
+This identity differs from a possible future
+`RequestId` for an IPC exchange. Sequential synchronous IPC currently needs no
+Request ID. Mutation IDs guarantee neither replay safety nor execution history.
+See [mutation contracts and deferred guarantees](application-mutations.md).
+
 ## Domain baseline — Implemented
 
 ```text

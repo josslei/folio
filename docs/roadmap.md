@@ -116,3 +116,10 @@ queries, Directory listing, and typed content loads through IPC. Public errors
 and metadata warnings preserve meaningful causes without exposing locators.
 See [read-access contracts](application-access.md). Phase 4.2b operation outcomes
 and later mutation, Recovery, Vault, and event work remain deferred.
+
+## Phase 4.2b — Mutation contract foundation
+
+Public mutation identity and result/evidence value types are implemented for
+review. The identity type and response members now use `MutationId` and
+`mutation_id` consistently. Mutation execution, IPC messages, and finer internal persistence evidence
+remain deferred. See [mutation contracts and follow-up decisions](application-mutations.md).

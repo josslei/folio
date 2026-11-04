@@ -1,5 +1,8 @@
 # Public read access — Phase 4.2a
 
+Mutation result and Mutation ID contracts are documented separately in
+[Mutation contracts](application-mutations.md); mutation execution remains deferred.
+
 Implemented for Normal Entries. Frontends use `BackendConnectionHandle` through
 IPC; they never own a Catalog or pass physical Entry locators. Business methods
 return `ApplicationResult<T>`, without private Storage or transport errors.
