@@ -58,12 +58,13 @@ Methods synchronously exchange one request at a time on each connection, with a
 UI. No automatic reconnect or replay occurs. Transport/protocol failure closes
 the affected handle; confirmed Application errors leave it usable.
 
-The private version-1 lifecycle protocol retains bounded 64 KiB frames. New read
-messages use positional MessagePack arrays independent of persisted schemas.
-Responses are chunked internally, so callers do not manage frames. A logical
-response is bounded to 64 MiB and collections to 100,000 elements; exceeding
-limits returns an explicit error rather than partial results. Query requests
-fit one frame. No public pagination or mutation request identity is introduced.
+The private version-1 protocol sends one complete length-prefixed request or
+response. MessagePack payloads remain positional arrays independent of persisted
+schemas. The transport handles partial OS reads/writes internally; there are no
+protocol chunks. A message body is bounded to 64 MiB (including version/kind),
+with collections limited to 100,000 elements. Exceeding limits returns an explicit
+error rather than partial results. No public pagination is introduced. See the
+[unified IPC protocol](ipc-protocol.md) for limits and transfer handling.
 The single Backend loop executes reads and owns all live Catalog state.
 
 ## Deferred

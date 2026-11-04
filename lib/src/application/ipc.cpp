@@ -220,7 +220,8 @@ std::string encode_message(const Message& message) {
   append_number(result, static_cast<std::uint32_t>(message.payload.size() + 4), 4);
   append_number(result, message.version, 2);
   append_number(result, static_cast<std::uint16_t>(message.kind), 2);
-  result += payload_text(message.payload);
+  if (!message.payload.empty())
+    result.append(reinterpret_cast<const char*>(message.payload.data()), message.payload.size());
   return result;
 }
 
@@ -237,8 +238,18 @@ core::Result<std::optional<Message>, IpcError> decode_message(
   if (version != protocol_version)
     return error(IpcErrorCode::Incompatible, "Unsupported IPC protocol version");
   const auto kind = number(std::string_view(buffer).substr(6, 2));
-  if (kind < 1 || kind > static_cast<unsigned>(MessageKind::ResponseEnd))
-    return error(IpcErrorCode::Protocol, "Unknown IPC message kind");
+  switch (static_cast<MessageKind>(kind)) {
+    case MessageKind::Hello:
+    case MessageKind::Ready:
+    case MessageKind::Ping:
+    case MessageKind::Pong:
+    case MessageKind::Reject:
+    case MessageKind::Request:
+    case MessageKind::Response:
+      break;
+    default:
+      return error(IpcErrorCode::Protocol, "Unknown IPC message kind");
+  }
   if (buffer.size() < size + 4)
     return std::optional<Message>{};
   Message result{static_cast<MessageKind>(kind),

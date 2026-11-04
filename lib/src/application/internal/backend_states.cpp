@@ -1,5 +1,6 @@
 #include "application/internal/backend_states.hpp"
-#include "application/internal/access_codec.hpp"
+#include "application/internal/application_codec.hpp"
+#include "application/internal/message_transport.hpp"
 #include <folio/application/ipc.hpp>
 #include <folio/config/configuration.hpp>
 #include <folio/logging/logging.hpp>
@@ -135,9 +136,8 @@ using Clock = std::chrono::steady_clock;
 
 struct Peer {
   IpcStream stream;
-  std::string input, output;
-  std::optional<std::string> response;
-  std::size_t response_offset = 0;
+  MessageTransport messages;
+  Clock::time_point request_deadline{};
   bool active = false, registering = false, close_after_output = false;
   Clock::time_point deadline = Clock::now() + std::chrono::seconds(3);
 };
@@ -159,35 +159,28 @@ core::Result<std::monostate, IpcError> serve(
       if (auto* problem = std::get_if<IpcError>(&accepted))
         return *problem;
       if (auto& stream = std::get<std::optional<IpcStream>>(accepted); stream)
-        peers.push_back(Peer{std::move(*stream), {}, {}});
+        peers.push_back(Peer{std::move(*stream)});
     }
     for (auto it = peers.begin(); it != peers.end();) {
       auto& peer = *it;
       bool remove = false;
-      if (peer.output.empty() && peer.response) {
-        const auto remaining = peer.response->size() - peer.response_offset;
-        const auto size = std::min(remaining, max_message_bytes - 4);
-        const auto final = size == remaining;
-        peer.output = encode_message({final ? MessageKind::ResponseEnd : MessageKind::ResponseChunk,
-            payload_bytes(std::string_view(*peer.response).substr(peer.response_offset, size))});
-        peer.response_offset += size;
-        if (final) {
-          peer.response.reset();
-          peer.response_offset = 0;
-        }
-      }
-      if (!peer.output.empty()) {
-        auto written = peer.stream.write(
-            std::as_bytes(std::span(peer.output.data(), peer.output.size())));
-        if (std::holds_alternative<IpcError>(written))
+      auto queue = [&](MessageKind kind, std::vector<std::byte> payload) {
+        auto result = peer.messages.queue({kind, std::move(payload)});
+        if (std::holds_alternative<IpcError>(result)) remove = true;
+        peer.deadline = Clock::now() + std::chrono::seconds(3);
+      };
+      auto reject = [&](const std::string& reason) {
+        queue(MessageKind::Reject, payload_bytes(reason));
+        peer.close_after_output = true;
+      };
+      if (peer.messages.sending()) {
+        auto written = peer.messages.flush(peer.stream);
+        if (std::holds_alternative<IpcError>(written)) {
           remove = true;
-        else {
-          const auto count = std::get<std::size_t>(written);
-          if (count) peer.deadline = Clock::now() + std::chrono::seconds(3);
-          peer.output.erase(0, count);
-          if (peer.output.empty()) {
-            if (peer.close_after_output)
-              remove = true;
+        } else {
+          peer.deadline = peer.messages.last_activity() + std::chrono::seconds(3);
+          if (!peer.messages.sending()) {
+            if (peer.close_after_output) remove = true;
             if (peer.registering) {
               peer.active = true;
               peer.registering = false;
@@ -196,62 +189,50 @@ core::Result<std::monostate, IpcError> serve(
           }
         }
       } else {
-        std::array<std::byte, 4096> bytes{};
-        auto received = peer.stream.read(bytes);
-        if (std::holds_alternative<IpcError>(received))
-          remove = true;
-        else {
-          auto count = std::get<std::size_t>(received);
-          if (count && peer.input.empty())
-            peer.deadline = Clock::now() + std::chrono::seconds(3);
-          peer.input += payload_text(std::span(bytes).first(count));
-          auto decoded = decode_message(peer.input);
-          auto reject = [&](std::string message) {
-            peer.output = encode_message({MessageKind::Reject, payload_bytes(message)});
-            peer.close_after_output = true;
-            peer.deadline = Clock::now() + std::chrono::seconds(3);
-          };
-          if (auto* problem = std::get_if<IpcError>(&decoded))
-            reject(problem->message);
-          else if (auto& message = std::get<std::optional<Message>>(decoded); message) {
-            if (!startup_failure.empty())
-              reject(startup_failure);
-            else if (!peer.active && message->kind == MessageKind::Hello &&
-                     message->payload.empty()) {
-              peer.output = encode_message({MessageKind::Ready, {}});
-              peer.registering = true;
-            } else if (peer.active && message->kind == MessageKind::Ping &&
-                       message->payload.empty()) {
-              peer.output = encode_message({MessageKind::Pong, {}});
-            } else if (peer.active && message->kind == MessageKind::AccessRequest && context) {
-              auto request = decode_access_request(payload_text(message->payload));
-              {
-                AccessResponse result = std::holds_alternative<IpcError>(request)
-                    ? AccessResponse{ApplicationError{ErrorCategory::InvalidRequest,
-                        ErrorReason::InvalidQuery, "The read request is malformed or contains invalid values.",
-                        {ErrorAction::Dismiss}}}
-                    : handle_access(std::get<AccessRequest>(request), context->catalog,
-                                    *context->repository, *context->coordinator);
-                auto encoded = encode_access_response(result);
-                if (std::holds_alternative<IpcError>(encoded)) {
-                  encoded = encode_access_response(ApplicationError{
-                      ErrorCategory::ApplicationUnavailable, ErrorReason::ResourceLimit,
-                      "The read response could not be represented within the resource limit.",
-                      {ErrorAction::Dismiss}});
-                }
-                if (auto* bytes = std::get_if<std::string>(&encoded)) {
-                  peer.response = std::move(*bytes);
-                  peer.deadline = Clock::now() + std::chrono::seconds(3);
-                } else {
-                  reject("Unable to encode Application response");
-                }
-              }
-            } else
-              reject("Invalid lifecycle message");
+        if (!peer.messages.receiving())
+          peer.request_deadline = Clock::now() + std::chrono::seconds(30);
+        auto received = peer.messages.receive(peer.stream);
+        peer.deadline = peer.messages.last_activity() + std::chrono::seconds(3);
+        if (auto* error = std::get_if<IpcError>(&received)) {
+          if (error->code == IpcErrorCode::Protocol || error->code == IpcErrorCode::Incompatible)
+            reject(error->message);
+          else
+            remove = true;
+        } else if (auto& message = std::get<std::optional<Message>>(received); message) {
+          if (!startup_failure.empty()) {
+            reject(startup_failure);
+          } else if (!peer.active && message->kind == MessageKind::Hello && message->payload.empty()) {
+            queue(MessageKind::Ready, {});
+            peer.registering = true;
+          } else if (peer.active && message->kind == MessageKind::Ping && message->payload.empty()) {
+            queue(MessageKind::Pong, {});
+          } else if (peer.active && context && message->kind == MessageKind::Request) {
+            auto request = decode_access_request(payload_text(message->payload));
+            AccessResponse result = std::holds_alternative<IpcError>(request)
+                ? AccessResponse{ApplicationError{ErrorCategory::InvalidRequest,
+                    ErrorReason::InvalidQuery, "The read request is malformed or contains invalid values.",
+                    {ErrorAction::Dismiss}}}
+                : handle_access(std::get<AccessRequest>(request), context->catalog,
+                                *context->repository, *context->coordinator);
+            auto encoded = encode_access_response(result);
+            if (std::holds_alternative<IpcError>(encoded)) {
+              encoded = encode_access_response(ApplicationError{
+                  ErrorCategory::ApplicationUnavailable, ErrorReason::ResourceLimit,
+                  "The read response could not be represented within the resource limit.",
+                  {ErrorAction::Dismiss}});
+            }
+            if (auto* bytes = std::get_if<std::string>(&encoded))
+              queue(MessageKind::Response, payload_bytes(*bytes));
+            else
+              reject("Unable to encode Application response");
+          } else {
+            reject("Invalid lifecycle message");
           }
         }
       }
-      if ((!peer.active || !peer.input.empty() || !peer.output.empty() || peer.response) &&
+      if (peer.messages.receiving() && Clock::now() >= peer.request_deadline)
+        remove = true;
+      if ((!peer.active || peer.messages.receiving() || peer.messages.sending()) &&
           Clock::now() >= peer.deadline)
         remove = true;
       if (remove)

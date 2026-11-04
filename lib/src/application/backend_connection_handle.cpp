@@ -1,7 +1,7 @@
 #include <folio/application/backend_connection_handle.hpp>
-#include "application/internal/access_codec.hpp"
+#include "application/internal/application_codec.hpp"
+#include "application/internal/message_transport.hpp"
 #include <folio/logging/logging.hpp>
-#include <array>
 #include <thread>
 
 namespace folio::application {
@@ -9,38 +9,6 @@ using namespace internal;
 namespace {
 using Clock = std::chrono::steady_clock;
 
-core::Result<Message, IpcError> exchange(IpcStream& stream, Message message,
-                                                   Clock::time_point deadline) {
-  auto outgoing = encode_message(message);
-  std::size_t offset = 0;
-  std::string incoming;
-  std::array<std::byte, 4096> bytes{};
-  while (Clock::now() < deadline) {
-    if (offset < outgoing.size()) {
-      auto sent = stream.write(
-          std::as_bytes(std::span(outgoing.data(), outgoing.size())).subspan(offset));
-      if (auto* problem = std::get_if<IpcError>(&sent))
-        return *problem;
-      offset += std::get<std::size_t>(sent);
-    } else {
-      auto read = stream.read(bytes);
-      if (auto* problem = std::get_if<IpcError>(&read))
-        return *problem;
-      incoming += payload_text(std::span(bytes).first(std::get<std::size_t>(read)));
-      auto decoded = decode_message(incoming);
-      if (auto* problem = std::get_if<IpcError>(&decoded))
-        return *problem;
-      auto& response = std::get<std::optional<Message>>(decoded);
-      if (response) {
-        if (!incoming.empty())
-          return IpcError{IpcErrorCode::Protocol, "Unexpected trailing response"};
-        return std::move(*response);
-      }
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  }
-  return IpcError{IpcErrorCode::Timeout, "Backend handshake/response timed out"};
-}
 // Public reads are serial on a connection. Only transport/protocol failures
 // invalidate it; confirmed Application failures leave the connection usable.
 template<class Value>
@@ -50,53 +18,22 @@ ApplicationResult<Value> access(IpcStream& stream, AccessRequest request) {
     return ApplicationError{ErrorCategory::InvalidRequest, ErrorReason::ResourceLimit,
                             "The query exceeds the request resource limit.", {ErrorAction::Dismiss}};
   const auto& payload = std::get<std::string>(encoded);
-  if (payload.size() > max_message_bytes - 4)
-    return ApplicationError{ErrorCategory::InvalidRequest, ErrorReason::ResourceLimit,
-                            "The query exceeds the request resource limit.", {ErrorAction::Dismiss}};
   auto fail = [&](IpcError error) -> ApplicationResult<Value> {
     stream = IpcStream{};
     return access_connection_error(error);
   };
-  const auto outgoing = encode_message({MessageKind::AccessRequest, payload_bytes(payload)});
-  std::size_t offset = 0;
-  std::string input, response;
-  std::array<std::byte, 16384> bytes{};
-  const auto deadline = Clock::now() + std::chrono::seconds(30);
-  while (Clock::now() < deadline) {
-    if (offset < outgoing.size()) {
-      auto sent = stream.write(std::as_bytes(std::span(outgoing.data(), outgoing.size())).subspan(offset));
-      if (auto* error = std::get_if<IpcError>(&sent)) return fail(*error);
-      offset += std::get<std::size_t>(sent);
-    } else {
-      auto received = stream.read(bytes);
-      if (auto* error = std::get_if<IpcError>(&received)) return fail(*error);
-      input += payload_text(std::span(bytes).first(std::get<std::size_t>(received)));
-      for (;;) {
-        auto decoded = decode_message(input);
-        if (auto* error = std::get_if<IpcError>(&decoded)) return fail(*error);
-        auto& message = std::get<std::optional<Message>>(decoded);
-        if (!message) break;
-        if (message->kind != MessageKind::ResponseChunk && message->kind != MessageKind::ResponseEnd)
-          return fail({IpcErrorCode::Protocol, "Unexpected Application response frame"});
-        if (message->payload.size() > max_access_bytes - response.size())
-          return fail({IpcErrorCode::Protocol, "Application response exceeds resource limit"});
-        if (message->kind == MessageKind::ResponseChunk && message->payload.empty())
-          return fail({IpcErrorCode::Protocol, "Empty Application continuation frame"});
-        response += payload_text(message->payload);
-        if (message->kind == MessageKind::ResponseEnd) {
-          if (!input.empty()) return fail({IpcErrorCode::Protocol, "Trailing Application response bytes"});
-          auto result = decode_access_response(response);
-          if (auto* error = std::get_if<IpcError>(&result)) return fail(*error);
-          auto& value = std::get<AccessResponse>(result);
-          if (auto* error = std::get_if<ApplicationError>(&value)) return std::move(*error);
-          if (auto* expected = std::get_if<Value>(&value)) return std::move(*expected);
-          return fail({IpcErrorCode::Protocol, "Wrong Application response type"});
-        }
-      }
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
-  return fail({IpcErrorCode::Timeout, "Application read timed out"});
+  auto received = exchange_message(stream, {MessageKind::Request, payload_bytes(payload)},
+                                   Clock::now() + std::chrono::seconds(30));
+  if (auto* error = std::get_if<IpcError>(&received)) return fail(*error);
+  const auto& message = std::get<Message>(received);
+  if (message.kind != MessageKind::Response)
+    return fail({IpcErrorCode::Protocol, "Unexpected Application response message"});
+  auto decoded = decode_access_response(payload_text(message.payload));
+  if (auto* error = std::get_if<IpcError>(&decoded)) return fail(*error);
+  auto& value = std::get<AccessResponse>(decoded);
+  if (auto* error = std::get_if<ApplicationError>(&value)) return std::move(*error);
+  if (auto* expected = std::get_if<Value>(&value)) return std::move(*expected);
+  return fail({IpcErrorCode::Protocol, "Wrong Application response type"});
 }
 }  // namespace
 
@@ -109,7 +46,7 @@ core::Result<BackendConnectionHandle, IpcError> BackendConnectionHandle::connect
   if (auto* problem = std::get_if<IpcError>(&connected))
     return *problem;
   auto stream = std::get<IpcStream>(std::move(connected));
-  auto response = exchange(
+  auto response = exchange_message(
       stream, {MessageKind::Hello, {}},
       Clock::now() + timeout);
   if (auto* problem = std::get_if<IpcError>(&response))
@@ -125,7 +62,7 @@ core::Result<BackendConnectionHandle, IpcError> BackendConnectionHandle::connect
 }
 
 core::Result<std::monostate, IpcError> BackendConnectionHandle::ping() {
-  auto response = exchange(stream_, {MessageKind::Ping, {}},
+  auto response = exchange_message(stream_, {MessageKind::Ping, {}},
                            Clock::now() + std::chrono::seconds(3));
   if (auto* problem = std::get_if<IpcError>(&response)) {
     stream_ = IpcStream{};

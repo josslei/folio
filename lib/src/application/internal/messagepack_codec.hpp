@@ -1,5 +1,8 @@
-#include "application/internal/access_codec.hpp"
+#pragma once
 
+#include "application/internal/metadata_access.hpp"
+#include <folio/application/ipc.hpp>
+#include <folio/application/mutation/mutation_result.hpp>
 #include <msgpack.hpp>
 
 #include <chrono>
@@ -9,12 +12,13 @@
 #include <type_traits>
 #include <utility>
 
-namespace folio::application::internal {
-namespace {
-// Private positional read-protocol encoding, independent of persisted schemas.
+// Extracted from the original read codec. Templates live here so future approved
+// payloads can use the same field/type validation, not a parallel serializer.
+namespace folio::application::internal::codec {
+// Shared positional Application-protocol encoding, independent of persisted schemas.
 // Arrays have exact field counts. Optionals/variants are explicitly tagged.
 #define FIELDS(Type, ...) \
-  auto fields(const Type& v) { return std::tie(__VA_ARGS__); }
+  inline auto fields(const Type& v) { return std::tie(__VA_ARGS__); }
 FIELDS(core::LogMetadata, v.id, v.privacy, v.created, v.modified, v.title, v.tags, v.log_date)
 FIELDS(core::MemoMetadata, v.id, v.privacy, v.created, v.modified, v.title, v.tags, v.directory_id)
 FIELDS(core::TodoMetadata, v.id, v.privacy, v.created, v.modified, v.title, v.status, v.priority, v.due_date, v.directory_id)
@@ -43,6 +47,9 @@ FIELDS(ListDirectoriesRequest, v.kind)
 FIELDS(LoadLogRequest, v.id)
 FIELDS(LoadMemoRequest, v.id)
 FIELDS(LoadTodoRequest, v.id)
+FIELDS(MutationStepEvidence, v.step, v.observation)
+FIELDS(MutationEvidence, v.entry_id, v.source, v.destination, v.steps)
+FIELDS(MutationFailure, v.error, v.status, v.evidence)
 #undef FIELDS
 
 template<class T>
@@ -50,7 +57,11 @@ auto fields(const InclusiveRange<T>& v) { return std::tie(v.from, v.through); }
 template<class T>
 auto fields(const ApplicationResponse<T>& v) { return std::tie(v.value, v.warnings); }
 
+template<class T>
+auto fields(const MutationResponse<T>& v) { return std::tie(v.mutation_id, v.result); }
+
 template<class T> struct IsOptional : std::false_type {};
+
 template<class T> struct IsOptional<std::optional<T>> : std::true_type { using Value = T; };
 template<class T> struct IsVector : std::false_type {};
 template<class T> struct IsVector<std::vector<T>> : std::true_type { using Value = T; };
@@ -61,12 +72,12 @@ struct Failure : std::exception {
   bool limit;
   explicit Failure(bool resource_limit = false) : limit(resource_limit) {}
 };
-void require(bool condition) { if (!condition) throw Failure{}; }
+inline void require(bool condition) { if (!condition) throw Failure{}; }
 
 struct Buffer {
   std::string bytes;
   void write(const char* data, std::size_t size) {
-    if (size > max_access_bytes - bytes.size()) throw Failure{true};
+    if (size > max_application_bytes - bytes.size()) throw Failure{true};
     bytes.append(data, size);
   }
 };
@@ -85,9 +96,12 @@ constexpr auto last(MetadataSort) { return MetadataSort::Privacy; }
 constexpr auto last(ErrorCategory) { return ErrorCategory::ApplicationUnavailable; }
 constexpr auto last(ErrorReason) { return ErrorReason::NotImplemented; }
 constexpr auto last(ErrorAction) { return ErrorAction::Dismiss; }
+constexpr auto last(AuthoritativeChangeStatus) { return AuthoritativeChangeStatus::Unknown; }
+constexpr auto last(MutationStep) { return MutationStep::RemoveSource; }
+constexpr auto last(StepObservation) { return StepObservation::Unknown; }
 constexpr auto last(WarningReason) { return WarningReason::CatalogInconsistent; }
 
-void array_size(const Object& o, std::size_t size) {
+inline void array_size(const Object& o, std::size_t size) {
   require(o.type == msgpack::type::ARRAY && o.via.array.size == size);
 }
 
@@ -97,7 +111,7 @@ template<class T> T read(const Object& o);
 template<class T>
 void pack(Packer& p, const T& value) {
   if constexpr (std::is_same_v<T, std::string>) {
-    if (value.size() > max_access_bytes) throw Failure{true};
+    if (value.size() > max_application_bytes) throw Failure{true};
     p.pack_str(static_cast<std::uint32_t>(value.size()));
     p.pack_str_body(value.data(), static_cast<std::uint32_t>(value.size()));
   } else if constexpr (std::is_same_v<T, bool>) {
@@ -106,7 +120,7 @@ void pack(Packer& p, const T& value) {
     // Keep malformed caller enums intact so the Backend rejects them as a
     // malformed request; they can never be interpreted as another valid enum.
     p.pack_int64(static_cast<std::int64_t>(value));
-  } else if constexpr (std::is_same_v<T, core::Id>) {
+  } else if constexpr (std::is_same_v<T, core::Id> || std::is_same_v<T, MutationId>) {
     pack(p, value.to_string());
   } else if constexpr (std::is_same_v<T, core::Timestamp>) {
     p.pack_int64(std::chrono::duration_cast<std::chrono::nanoseconds>(value.time_since_epoch()).count());
@@ -161,8 +175,8 @@ T read(const Object& o) {
     require(o.type == msgpack::type::POSITIVE_INTEGER);
     require(o.via.u64 <= static_cast<std::uint64_t>(last(T{})));
     return static_cast<T>(o.via.u64);
-  } else if constexpr (std::is_same_v<T, core::Id>) {
-    auto id = core::Id::parse(read<std::string>(o));
+  } else if constexpr (std::is_same_v<T, core::Id> || std::is_same_v<T, MutationId>) {
+    auto id = T::parse(read<std::string>(o));
     require(id.has_value());
     return *id;
   } else if constexpr (std::is_same_v<T, core::Timestamp>) {
@@ -209,45 +223,25 @@ core::Result<std::string, IpcError> encode(const T& value) {
     pack(packer, value);
     return std::move(buffer.bytes);
   } catch (const Failure& e) {
-    return IpcError{IpcErrorCode::Protocol, e.limit ? "Read response exceeds resource limit" : "Invalid read response"};
+    return IpcError{IpcErrorCode::Protocol, e.limit ? "Application message exceeds resource limit" : "Invalid Application message"};
   } catch (...) {
-    return IpcError{IpcErrorCode::Protocol, "Read response encoding failed"};
+    return IpcError{IpcErrorCode::Protocol, "Application message encoding failed"};
   }
 }
 
 template<class T>
 core::Result<T, IpcError> decode(std::string_view bytes) {
   try {
-    if (bytes.empty() || bytes.size() > max_access_bytes) throw Failure{};
+    if (bytes.empty() || bytes.size() > max_application_bytes) throw Failure{};
     std::size_t offset = 0;
-    const msgpack::unpack_limit limits{max_items, 0, max_access_bytes, 0, 0, 32};
+    const msgpack::unpack_limit limits{max_items, 0, max_application_bytes, 0, 0, 32};
     auto unpacked = msgpack::unpack(bytes.data(), bytes.size(), offset, nullptr, nullptr, limits);
     require(offset == bytes.size());
     return read<T>(unpacked.get());
   } catch (...) {
     // No parser strings or content bytes cross the public diagnostic boundary.
-    return IpcError{IpcErrorCode::Protocol, "Malformed Application read message"};
+    return IpcError{IpcErrorCode::Protocol, "Malformed Application message"};
   }
 }
-}  // namespace
 
-core::Result<std::string, IpcError> encode_access_request(const AccessRequest& value) { return encode(value); }
-core::Result<AccessRequest, IpcError> decode_access_request(std::string_view bytes) { return decode<AccessRequest>(bytes); }
-core::Result<std::string, IpcError> encode_access_response(const AccessResponse& value) { return encode(value); }
-core::Result<AccessResponse, IpcError> decode_access_response(std::string_view bytes) { return decode<AccessResponse>(bytes); }
-
-ApplicationError access_connection_error(const IpcError& error) {
-  auto reason = ErrorReason::IoFailure;
-  auto actions = std::vector{ErrorAction::Reconnect, ErrorAction::Dismiss};
-  switch (error.code) {
-    case IpcErrorCode::Unavailable: reason = ErrorReason::BackendUnavailable; break;
-    case IpcErrorCode::ConnectionLost: reason = ErrorReason::ConnectionLost; break;
-    case IpcErrorCode::Timeout: reason = ErrorReason::Timeout; break;
-    case IpcErrorCode::Protocol: reason = ErrorReason::ProtocolError; actions = {ErrorAction::Dismiss}; break;
-    case IpcErrorCode::Incompatible: reason = ErrorReason::IncompatibleProtocol; actions = {ErrorAction::Dismiss}; break;
-    case IpcErrorCode::AccessDenied: reason = ErrorReason::AccessDenied; actions = {ErrorAction::ResolveExternally, ErrorAction::Dismiss}; break;
-    case IpcErrorCode::IoError: break;
-  }
-  return {ErrorCategory::ConnectionFailure, reason, "The Backend connection could not complete the read operation.", std::move(actions)};
-}
-}  // namespace folio::application::internal
+}  // namespace folio::application::internal::codec

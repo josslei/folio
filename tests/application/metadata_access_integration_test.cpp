@@ -1,5 +1,8 @@
 #include <folio/application/backend_connection_handle.hpp>
 #include "application/internal/process.hpp"
+#include "application/internal/application_codec.hpp"
+#include <algorithm>
+#include <array>
 #include "storage/normal_repository.hpp"
 #include <gtest/gtest.h>
 #include <fstream>
@@ -31,8 +34,13 @@ class MetadataAccessIntegration : public testing::Test {
       {base / "config", base / "data", base / "state", base / "cache", base / "logs", base / "runtime"}};
   storage::NormalRepository repository{paths.normal_root};
   core::Memo memo{"Long memo", std::string(80 * 1024, 'x'), time};
-  std::uint64_t pid = 0;
-  fs::path result_file = base / "exited";
+  struct Child { std::uint64_t pid; fs::path result; };
+  std::vector<Child> children;
+  bool all_exited() const {
+    return std::all_of(children.begin(), children.end(), [](const Child& child) {
+      return fs::exists(child.result);
+    });
+  }
   template<class F> bool until(F predicate) {
     auto deadline = std::chrono::steady_clock::now() + 8s;
     while (std::chrono::steady_clock::now() < deadline) {
@@ -46,23 +54,67 @@ class MetadataAccessIntegration : public testing::Test {
     ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(memo.snapshot())));
   }
   void TearDown() override {
-    if (pid && !until([&]{return fs::exists(result_file);})) {
+    for (const auto& child : children) {
+      if (until([&]{return fs::exists(child.result);})) continue;
 #ifndef _WIN32
-      kill(static_cast<pid_t>(pid), SIGKILL);
+      kill(static_cast<pid_t>(child.pid), SIGKILL);
 #else
-      auto handle = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
+      auto handle = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, static_cast<DWORD>(child.pid));
       if (handle) { TerminateProcess(handle, 9); WaitForSingleObject(handle, 5000); CloseHandle(handle); }
 #endif
-      ADD_FAILURE() << "Backend failed orderly shutdown";
+      ADD_FAILURE() << "Backend candidate failed orderly shutdown: " << child.pid;
     }
     std::error_code ignored;
     fs::remove_all(base, ignored);
   }
+  bool send_bytes(ipc::IpcStream& stream, std::string_view bytes) {
+    std::size_t offset = 0;
+    return until([&] {
+      auto sent = stream.write(std::as_bytes(std::span(bytes.data(), bytes.size())).subspan(offset));
+      if (std::holds_alternative<ipc::IpcError>(sent)) return false;
+      offset += std::get<std::size_t>(sent);
+      return offset == bytes.size();
+    });
+  }
+  bool send(ipc::IpcStream& stream, const ipc::Message& message) {
+    return send_bytes(stream, ipc::encode_message(message));
+  }
+  std::optional<ipc::Message> receive(ipc::IpcStream& stream) {
+    std::string input;
+    std::optional<ipc::Message> result;
+    const auto done = until([&] {
+      std::array<std::byte, 65536> bytes{};
+      auto read = stream.read(bytes);
+      if (std::holds_alternative<ipc::IpcError>(read)) return false;
+      input += ipc::payload_text(std::span(bytes).first(std::get<std::size_t>(read)));
+      auto decoded = ipc::decode_message(input);
+      if (auto* message = std::get_if<std::optional<ipc::Message>>(&decoded); message && *message) {
+        result = std::move(**message);
+        return true;
+      }
+      return false;
+    });
+    return done ? std::move(result) : std::nullopt;
+  }
+  ipc::IpcStream raw_connection() {
+    auto settings = std::get<ipc::ConnectionSettings>(ipc::connection_settings(paths));
+    auto connected = ipc::IpcStream::connect(settings.endpoint);
+    if (!std::holds_alternative<ipc::IpcStream>(connected)) throw std::runtime_error("Raw connection failed");
+    auto stream = std::get<ipc::IpcStream>(std::move(connected));
+    if (!send(stream, {ipc::MessageKind::Hello, {}})) throw std::runtime_error("Hello failed");
+    auto ready = receive(stream);
+    if (!ready || ready->kind != ipc::MessageKind::Ready) throw std::runtime_error("Ready failed");
+    return stream;
+  }
   app::BackendConnectionHandle connect() {
     auto connection = app::connect_or_start_backend(
         std::get<ipc::ConnectionSettings>(ipc::connection_settings(paths)), [&] {
+          // Startup can launch multiple candidates. Each must report separately:
+          // an AlreadyOwned loser exiting does not mean the active Backend ended.
+          const auto result_file = base / ("exited-" + std::to_string(children.size()));
           auto launched = ipc::launch_process(FOLIO_BACKEND_CHILD, {"backend", base, result_file});
-          if (auto* process = std::get_if<app::LaunchedProcess>(&launched)) pid = process->id;
+          if (auto* process = std::get_if<app::LaunchedProcess>(&launched))
+            children.push_back({process->id, result_file});
           return launched;
         }, 8s);
     if (!std::holds_alternative<app::BackendConnectionHandle>(connection))
@@ -104,8 +156,8 @@ TEST_F(MetadataAccessIntegration, OneBrowseOperationHandlesRootsAndUserDirectori
   EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
 }
 
-TEST_F(MetadataAccessIntegration, LargeContentAndMetadataResponsesAllowTwoPeersAndSubsequentPing) {
-  // A large metadata string exercises a frame beyond the 64KiB lifecycle limit.
+TEST_F(MetadataAccessIntegration, LargeContentAndMetadataMessagesAllowTwoPeersAndSubsequentPing) {
+  // A large metadata string exercises partial transfers of one complete message.
   // No arbitrary bulk fixture or whole-repository scan is needed at runtime.
   auto changed = memo.snapshot();
   changed.title = std::string(70 * 1024, 'm');
@@ -129,7 +181,7 @@ TEST_F(MetadataAccessIntegration, LargeContentAndMetadataResponsesAllowTwoPeersA
     EXPECT_TRUE(std::holds_alternative<std::monostate>(second.ping()));
     EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
   }
-  ASSERT_TRUE(until([&]{return fs::exists(result_file);}));
+  ASSERT_TRUE(until([&]{return all_exited();}));
   EXPECT_TRUE(fs::exists(paths.application.cache / "index/normal.msgpack"));
   EXPECT_FALSE(fs::exists(paths.application.state / "session.marker"));
 }
@@ -159,5 +211,76 @@ TEST_F(MetadataAccessIntegration, MissingWrongTypeAndStaleErrorsLeaveConnectionU
   EXPECT_EQ(std::get<app::ApplicationError>(stale).reason, app::ErrorReason::StaleLocation);
   EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
   EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+}
+TEST_F(MetadataAccessIntegration, LargeQueryRequestUsesOneMessageAndConnectionRemainsUsable) {
+  auto connection = connect();
+  app::RecordQuery query;
+  query.type = core::RecordType::Memo;
+  query.filters.title_contains = std::string(150000, 'z');
+  auto result = connection.query_records(query);
+  ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(result));
+  EXPECT_TRUE(std::get<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(result).value.empty());
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
+  EXPECT_TRUE(std::holds_alternative<core::Memo::Snapshot>(connection.load_memo(memo.id())));
+  EXPECT_TRUE(std::holds_alternative<app::ApplicationError>(connection.load_log(core::Id::generate())));
+  EXPECT_TRUE(std::holds_alternative<app::ApplicationResponse<std::vector<core::DirectoryMetadata>>>(
+      connection.list_directories(core::DirectoryKind::Memo)));
+}
+
+TEST_F(MetadataAccessIntegration, PartialRequestWaitsForCompletionWithoutBlockingOtherConnections) {
+  auto keeper = connect();
+  auto stream = raw_connection();
+  const auto request = std::get<std::string>(ipc::encode_access_request(ipc::LoadMemoRequest{memo.id()}));
+  const auto bytes = ipc::encode_message({ipc::MessageKind::Request, ipc::payload_bytes(request)});
+  ASSERT_TRUE(send_bytes(stream, std::string_view(bytes).substr(0, bytes.size() - 1)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(keeper.ping()));
+  std::array<std::byte, 8> unexpected{};
+  auto pending = stream.read(unexpected);
+  ASSERT_TRUE(std::holds_alternative<std::size_t>(pending));
+  EXPECT_EQ(std::get<std::size_t>(pending), 0u);
+  ASSERT_TRUE(send_bytes(stream, std::string_view(bytes).substr(bytes.size() - 1)));
+  auto response = receive(stream);
+  ASSERT_TRUE(response);
+  EXPECT_EQ(response->kind, ipc::MessageKind::Response);
+  auto decoded = ipc::decode_access_response(ipc::payload_text(response->payload));
+  ASSERT_TRUE(std::holds_alternative<ipc::AccessResponse>(decoded));
+  EXPECT_TRUE(std::holds_alternative<core::Memo::Snapshot>(std::get<ipc::AccessResponse>(decoded)));
+}
+
+TEST_F(MetadataAccessIntegration, PrematureDisconnectAndInvalidMessagesDoNotAffectOtherConnections) {
+  auto keeper = connect();
+  {
+    auto stream = raw_connection();
+    const auto bytes = ipc::encode_message({ipc::MessageKind::Request, ipc::payload_bytes("incomplete")});
+    ASSERT_TRUE(send_bytes(stream, std::string_view(bytes).substr(0, bytes.size() - 1)));
+    // Closing the stream must not dispatch its incomplete request.
+  }
+  {
+    auto stream = raw_connection();
+    ASSERT_TRUE(send(stream, {ipc::MessageKind::Response, {}}));
+    auto rejected = receive(stream);
+    ASSERT_TRUE(rejected);
+    EXPECT_EQ(rejected->kind, ipc::MessageKind::Reject);
+  }
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(keeper.ping()));
+  EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+}
+
+TEST_F(MetadataAccessIntegration, MalformedCompleteRequestsKeepApplicationErrorSemantics) {
+  auto keeper = connect();
+  for (const auto& payload : {std::string{}, std::string("malformed")}) {
+    auto stream = raw_connection();
+    ASSERT_TRUE(send(stream, {ipc::MessageKind::Request, ipc::payload_bytes(payload)}));
+    auto message = receive(stream);
+    ASSERT_TRUE(message);
+    ASSERT_EQ(message->kind, ipc::MessageKind::Response);
+    auto decoded = ipc::decode_access_response(ipc::payload_text(message->payload));
+    ASSERT_TRUE(std::holds_alternative<ipc::AccessResponse>(decoded));
+    EXPECT_TRUE(std::holds_alternative<app::ApplicationError>(std::get<ipc::AccessResponse>(decoded)));
+    ASSERT_TRUE(send(stream, {ipc::MessageKind::Ping, {}}));
+    auto pong = receive(stream);
+    ASSERT_TRUE(pong);
+    EXPECT_EQ(pong->kind, ipc::MessageKind::Pong);
+  }
 }
 }  // namespace

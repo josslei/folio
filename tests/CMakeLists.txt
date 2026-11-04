@@ -45,6 +45,7 @@ option(FOLIO_BUILD_RESOURCE_LIMIT_TESTS "Build opt-in resource limit tests" OFF)
 if(FOLIO_BUILD_RESOURCE_LIMIT_TESTS)
   add_executable(folio_resource_limit_tests
     resource_limits/index_resource_limits_test.cpp
+    resource_limits/ipc_resource_limits_test.cpp
   )
   target_include_directories(folio_resource_limit_tests PRIVATE "${PROJECT_SOURCE_DIR}/lib/src")
   target_compile_features(folio_resource_limit_tests PRIVATE cxx_std_20)
@@ -77,11 +78,11 @@ target_link_libraries(folio_backend_child PRIVATE folio_backend)
 if(MINGW)
   target_link_options(folio_backend_child PRIVATE -municode)
 endif()
-add_executable(folio_application_tests application/mutation_contract_test.cpp application/access_codec_test.cpp application/metadata_access_test.cpp application/metadata_access_integration_test.cpp application/logging_test.cpp application/configuration_test.cpp application/backend_states_test.cpp application/backend_lifecycle_test.cpp application/process_test.cpp application/backend_test.cpp)
+add_executable(folio_application_tests application/message_transport_test.cpp application/mutation_codec_test.cpp application/mutation_contract_test.cpp application/access_codec_test.cpp application/metadata_access_test.cpp application/metadata_access_integration_test.cpp application/logging_test.cpp application/configuration_test.cpp application/backend_states_test.cpp application/backend_lifecycle_test.cpp application/process_test.cpp application/backend_test.cpp)
 target_include_directories(folio_application_tests PRIVATE "${PROJECT_SOURCE_DIR}/lib/src")
 target_compile_features(folio_application_tests PRIVATE cxx_std_20)
 set_target_properties(folio_application_tests PROPERTIES CXX_EXTENSIONS OFF)
-target_link_libraries(folio_application_tests PRIVATE folio_backend GTest::gtest_main)
+target_link_libraries(folio_application_tests PRIVATE folio_backend GTest::gtest_main msgpack-cxx)
 target_compile_definitions(folio_application_tests PRIVATE
   "FOLIO_PROCESS_CHILD=\"$<TARGET_FILE:folio_process_child>\"")
 target_compile_definitions(folio_application_tests PRIVATE

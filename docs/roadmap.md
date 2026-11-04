@@ -123,3 +123,24 @@ Public mutation identity and result/evidence value types are implemented for
 review. The identity type and response members now use `MutationId` and
 `mutation_id` consistently. Mutation execution, IPC messages, and finer internal persistence evidence
 remain deferred. See [mutation contracts and follow-up decisions](application-mutations.md).
+
+## Phase 4.2c — Unified IPC protocol extension implemented
+
+Shared Query/Mutation codec components and bounded complete-message transport are
+implemented with Protocol Version 1. Read payloads/API semantics are preserved.
+No concrete Mutation request/success payload, dispatch or execution is enabled;
+these belong to 4.3a with the serialized mutation queue. Edit Locks remain 4.3b,
+Push Events 4.4a, and Frontend integration/reconnection 4.4b.
+See [IPC implementation scope](ipc-protocol.md) and traceable
+[MUT follow-ups](application-mutations.md#traceable-follow-up-work), including the
+internal schema-versioning review after Minimum TUI.
+
+## Phase 4 completion gate — IPC waiting
+
+**TODO IPC-01 — Deferred Implementation; required before completing Phase 4:**
+replace Backend and Frontend IPC sleep-and-poll loops with OS event-driven
+waiting. The current loops wake periodically even without data; protocol
+simplification does not resolve that overhead. Preserve deadlines, disconnection
+detection, connection fairness, and shutdown wakeups. Schedule and verify this
+before closing Phase 4; native API selection is still an implementation decision.
+See [IPC-01 requirements](ipc-protocol.md#ipc-01--os-event-driven-waiting-deferred-implementation-phase-4-completion-gate).

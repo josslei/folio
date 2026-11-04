@@ -42,18 +42,18 @@ core::Result<ConnectionSettings, IpcError> connection_settings(
 core::Result<ConnectionSettings, IpcError> connection_settings();
 
 inline constexpr std::uint16_t protocol_version = 1;
-inline constexpr std::size_t max_message_bytes = 64 * 1024;
+// One complete message body: version + kind + payload. This is a memory
+// safety bound, independent of OS buffers and individual read/write sizes.
+inline constexpr std::size_t max_message_bytes = 64u * 1024u * 1024u;
+inline constexpr std::size_t max_application_bytes = max_message_bytes - 4;
 enum class MessageKind : std::uint16_t {
   Hello = 1,
   Ready = 2,
   Ping = 3,
   Pong = 4,
   Reject = 5,
-  // Internal read protocol. Requests fit one bounded frame; responses may span
-  // several frames, with exactly one final ResponseEnd frame.
-  AccessRequest = 6,
-  ResponseChunk = 7,
-  ResponseEnd = 8
+  Request = 6,
+  Response = 7
 };
 
 struct Message {

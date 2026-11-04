@@ -182,14 +182,16 @@ clients rejected. Endpoint names are not authentication. RepositoryOwnership is
 required before stale endpoint cleanup, binding, Catalog startup, or finalization.
 Only stale sockets are reclaimed; live endpoints are preserved.
 
-Frames use a big-endian 32-bit length (including the following header), 16-bit
-version 1 and 16-bit kind; the maximum frame body is 64 KiB. Hello/Ready confirm protocol compatibility and readiness with empty payloads;
+Messages use a big-endian 32-bit body length, 16-bit version 1 and 16-bit
+kind; the maximum complete body is 64 MiB, including version/kind. Partial OS
+transfers are handled internally, without protocol chunking. Hello/Ready confirm protocol compatibility and readiness with empty payloads;
 Ping/Pong also carry no payload. Reject
 contains an internal diagnostic. Unknown versions/kinds/invalid lengths are
 rejected. This internal lifecycle protocol has no CRUD or event schemas.
 
 One Backend loop owns lifecycle and all connection state, capped at 64 peers.
-Handshake/partial-frame/output deadlines are three seconds. A ten-second initial
+Handshake, incomplete-message inactivity, and output inactivity deadlines are
+three seconds; total request reception is bounded to thirty seconds. A ten-second initial
 registration window permits the launching Client to arrive. Once Clients have
 registered, the final disconnect stops admission immediately. Pending handshakes
 may retry against the next owner; startup retries are bounded to fifteen seconds.
@@ -289,3 +291,12 @@ are now available on BackendConnectionHandle through IPC. See
 errors, transport limits, and deferred work. This supersedes earlier statements
 in this document that all Public Application operations are absent. Mutations,
 Recovery, Edit Locks, events, and Vault remain deferred.
+
+## Phase 4.2c — unified protocol components implemented
+
+Query and future Mutation Operations share one IPC transport and MessagePack
+codec architecture. Complete length-prefixed messages use shared nonblocking transfer handling
+without separate protocol chunks. Mutation identity, failure/evidence and confirmed envelopes have codecs,
+including ID correlation checks; complete business payloads and dispatch remain
+deferred to 4.3a. Protocol version remains 1. See [protocol boundaries and limits](ipc-protocol.md).
+Backend lifecycle, ownership, Catalog and Marker behavior are unchanged.

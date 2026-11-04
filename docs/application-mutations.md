@@ -4,8 +4,10 @@ Implemented for review: public value contracts in `folio/application/mutation/mu
 and the strong `MutationId` type in `folio/application/mutation/mutation_id.hpp`, with its
 matching implementation at `lib/src/application/mutation/mutation_id.cpp`. These are
 Application concepts; Core supplies secure UUID generation but does not depend
-on mutation submission or Recovery. No mutation methods, handlers, IPC messages,
-or execution changes are implemented by this contract step. Read APIs are unchanged.
+on mutation submission or Recovery. This contract step introduced no mutation methods, handlers, or execution changes.
+Phase 4.2c adds shared codec support and bounded complete-message transport, described in the
+[unified IPC protocol](ipc-protocol.md); concrete Mutation exchanges remain deferred.
+Read APIs are unchanged.
 
 ## Application Operation taxonomy — Decided/Planned
 
@@ -78,7 +80,8 @@ locators, temporary filenames, Record contents, or Vault secrets belong here.
 
 The Frontend generates a Mutation ID for one intention before submission. A
 distinct intention gets a new ID; investigation after connection loss retains
-the old ID. Future confirmed response handling must validate the echoed ID.
+the old ID. The shared confirmed-response decoder now validates the echoed ID; its future
+exchange caller must invalidate the connection on mismatch.
 NotSent confirms no transmission; MayHaveBeenSent does not imply Backend acceptance.
 Neither correlation nor content equivalence proves execution. There is no receipt,
 deduplication, automatic retry, or exactly-once guarantee.
@@ -108,9 +111,11 @@ history and failed Index saving does not undo authoritative writes.
 | MUT-03 | Open design | Persistent Mutation Receipts and cross-restart Mutation status lookup are absent. Both require a crash-consistent persistence design; revisit with Recovery before promising history or lookup. |
 | MUT-04 | Open design | Mutation deduplication and idempotency are absent and need mutation-specific safety rules before replay is considered. |
 | MUT-05 | Open design | Separate `RequestId` is not implemented because present exchanges are sequential; reconsider with concurrent requests or Push Event protocol design. |
-| MUT-06 | Open design / deferred implementation | Revision checking remains undecided; Edit Lock integration belongs to later mutation/concurrency work. Both affect fresh validation for Recovery. |
+| MUT-06 | Open design / deferred implementation | Revision checking remains undecided; Edit Lock integration belongs to Phase 4.3b. Both affect fresh validation for Recovery. |
 | MUT-07 | Deferred implementation | Shared persistent Draft Recovery and correlation using `MutationId` are not implemented. They require retained submission evidence and distinct buffer restoration/application contracts; revisit in Phases 5–6. |
 | MUT-08 | Deferred implementation / security review | Vault-safe Draft and evidence persistence requires encryption and visibility review in Vault/Recovery phases; do not persist sensitive content in plaintext. |
 | MUT-09 | Deferred implementation / further design | Compound Move recovery and Delete/Trash semantics require explicit partial-failure resolution in their respective design phases. |
-| MUT-10 | Deferred implementation | Frontend reconnection and concrete notifications require presentation integration; preserve drafts and do not replay unknown outcomes. |
-| MUT-11 | Not Guaranteed | Exactly-once execution is not provided by Mutation IDs or the current protocol. Reconsider only if a concrete need justifies additional execution/persistence mechanisms. |
+| MUT-10 | Deferred implementation | Frontend reconnection and concrete notifications belong to Phase 4.4b / Recovery; preserve drafts and do not replay unknown outcomes. |
+| MUT-11 | Not Guaranteed | Exactly-once execution, safe automatic replay of Unknown mutations, and proof of execution from MutationId alone are not provided. Correlation is not a receipt; reconsider only with mutation-specific safety evidence and justified persistence mechanisms. |
+| MUT-12 | Deferred implementation | Concrete Mutation Request/Success payloads, the complete request envelope, Backend dispatch/execution and unsupported-Mutation responses belong to Phase 4.3a. They require business preconditions and approved payloads; 4.2c supplies common codecs/framing only, without fake handlers. |
+| MUT-13 | Open design | Internal schema-versioning policy remains undecided before release. Version 1 is retained without negotiation or a separate Mutation version; revisit after Minimum TUI before defining compatibility promises. |

@@ -338,7 +338,7 @@ TEST_F(Backend, InvalidFramesRejectedWithoutTerminatingOtherClient) {
   auto endpoint = std::get<app::ConnectionSettings>(app::connection_settings(paths)).endpoint;
   for (const auto& bytes :
        {app::encode_message({app::MessageKind::Hello, {}, 2}),
-        std::string("\x00\x02\x00\x00", 4), std::string("\0\0\0\1", 4),
+        std::string("\x04\x00\x00\x01", 4), std::string("\0\0\0\1", 4),
         app::encode_message(
             {app::MessageKind::Hello, app::payload_bytes("unexpected handshake payload")})}) {
     auto connected = app::IpcStream::connect(endpoint);
