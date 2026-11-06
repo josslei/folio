@@ -157,4 +157,36 @@ TEST_F(MetadataAccess, InconsistentCatalogProducesWarningAndUnavailableIsAnError
   ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(unavailable));
   EXPECT_EQ(std::get<app::ApplicationError>(unavailable).reason, app::ErrorReason::MetadataUnavailable);
 }
+
+TEST_F(MetadataAccess, MalformedRecordFailureDoesNotPoisonOtherReadsOrFinalizeSession) {
+  const auto metadata = std::get<storage::MemoMetadata>(*catalog.find_record(root.id()));
+  std::ofstream(paths.normal_root / metadata.relative_path, std::ios::trunc)
+      << "malformed authoritative Record";
+  const auto failure = value<app::ApplicationError>(access::LoadMemoRequest{root.id()});
+  EXPECT_EQ(failure.reason, app::ErrorReason::InvalidData);
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+  EXPECT_EQ(value<core::Memo::Snapshot>(access::LoadMemoRequest{member.id()}).content,
+            "member-body");
+  EXPECT_EQ(value<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(
+      access::QueryRecordsRequest{{}}).value.size(), 4u);
+  EXPECT_TRUE(fs::exists(paths.application.state / "session.marker"));
+  EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+}
+
+TEST_F(MetadataAccess, FinalizedSessionRejectsAccessAndManagedCreation) {
+  ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.finish_session()));
+  EXPECT_EQ(value<app::ApplicationError>(access::LoadMemoRequest{root.id()}).reason,
+            app::ErrorReason::MetadataUnavailable);
+  EXPECT_EQ(value<app::ApplicationError>(access::QueryRecordsRequest{{}}).reason,
+            app::ErrorReason::MetadataUnavailable);
+  core::Memo late{"After shutdown", "must not be written", time};
+  auto result = repository.create_memo(late.snapshot(), coordinator.memo_creation_callback(),
+                                       coordinator.creation_check());
+  ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(result));
+  EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
+            storage::MutationFailureStage::BeforeAuthoritativeChange);
+  EXPECT_FALSE(catalog.contains_entry(late.id()));
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Stopped);
+  EXPECT_FALSE(fs::exists(paths.application.state / "session.marker"));
+}
 }  // namespace

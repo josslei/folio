@@ -16,25 +16,27 @@ Status labels follow [architecture](architecture.md). Stage numbers are planning
 | Phase 10 | Git Sync | Planned; after complete application foundations |
 | Phase 11 | Hardening and release | Planned; safety testing also occurs throughout |
 
-## Phase 4 completion gate — Pending Backend safety audit
+## Phase 4 completion gate — Backend safety audit completed
 
-**BACKEND-01 is NOT completed. Phase 4 must not be marked complete until this
-audit and any confirmed corrective work are finished. Schedule it before Normal
-Mutation execution (Phase 4.3a), as already required.**
+**BACKEND-01 is completed for the current Normal Storage and Query paths.**
+See the [audit findings and verification](backend-failure-containment-audit.md).
+Phase 4.3a must apply the same containment rules to new Mutation handlers before
+writing; completing this audit does not implement or approve those handlers.
 
-- [ ] Audit NormalRepository, MetadataCatalog, CatalogCoordinator, and their
+- [x] Audit NormalRepository, MetadataCatalog, CatalogCoordinator, and their
   Application handling boundaries for failure containment.
-- [ ] Verify nonfatal operation errors never terminate the Backend and are
+- [x] Verify nonfatal operation errors never terminate the Backend and are
   routed to the requesting Frontend, not broadcast to unrelated Frontends.
-- [ ] Verify unsafe module state rejects affected operations and fatal,
+- [x] Verify unsafe module state rejects affected operations and fatal,
   unresolvable service failures are recognizable by the lifecycle owner.
-- [ ] Correct confirmed violations, add appropriate regression coverage, and
+- [x] Correct confirmed violations, add appropriate regression coverage, and
   record the audit findings and actual verification results.
 
-The agreed principles are documented; implementation compliance has **not** been
-established. Passing current tests and completing runtime refactors do not close
-this gate. See [BACKEND-01](#todo-backend-01--backend-module-failure-containment-audit)
-for scope. Deferred notification delivery remains in its planned phases.
+No confirmed production-code defect was found. Added failure-path tests and
+reviewed state/exception boundaries close this audit for the implemented scope;
+this is not proof against arbitrary hangs or failures that prevent execution.
+See [BACKEND-01](#backend-01--backend-module-failure-containment-audit-completed).
+Deferred notification delivery remains in its planned phases.
 
 ## Completed foundation
 
@@ -173,24 +175,21 @@ Concurrent Reads and cancellation are open decisions. See
 [MUT follow-ups](application-mutations.md#traceable-follow-up-work); no persistent
 queue, receipt, replay, RequestId or exactly-once guarantee is implemented.
 
-### TODO BACKEND-01 — Backend module failure-containment audit
+### BACKEND-01 — Backend module failure-containment audit completed
 
-**Deferred Implementation:** Schedule a small focused subphase before Normal
-Mutation execution (Phase 4.3a) to audit `NormalRepository`, `MetadataCatalog`,
-and `CatalogCoordinator` against the
-[Backend module failure-containment principle](application-design.md#backend-module-failure-containment--decided-audit-deferred).
-Existing compliance has not yet been established. Check that operational errors
-do not terminate the process, invalid internal state rejects further affected
-operations explicitly, errors remain collectable, and fatal unresolvable failures
-are recognizable by the lifecycle owner. Confirm that nonfatal operation errors
-remain request-scoped and do not abort service. If classification depends on
-module state and its existing contract is ambiguous, bring the concrete case
-back for design review rather than inventing a blanket error-code rule.
-Review exception boundaries and add
-focused failure-path tests; correct confirmed violations within that subphase.
-The audit must preserve persistence and Session Marker safety and must not add a
-generic executor health check. This TODO records future work, not a claim that
-the current modules already satisfy every requirement.
+**Completed:** Reviewed `NormalRepository`, `MetadataCatalog`, `CatalogCoordinator`,
+Application Query handlers and runtime/lifecycle containment against the
+[containment principle](application-design.md#backend-module-failure-containment--decided-current-paths-audited).
+No confirmed production-code defect was found. Added three tests and extended
+the two-Frontend integration coverage; all 378 normal tests passed on macOS.
+See the [audit report](backend-failure-containment-audit.md) for reviewed state
+transitions, exception boundaries and limitations. Persistence and Session Marker
+algorithms are unchanged; no generic executor health check was introduced.
+
+**Deferred Implementation — Phase 4.3a:** Apply pre-write readiness checks and
+failure/evidence mapping to new Mutation handlers. Post-persistence callbacks do
+not replace admission/execution preconditions, and managed creation checks do
+not cover future Update/Move handlers. Verify these new paths when implemented.
 
 ## Runtime-role project structure — Implemented
 

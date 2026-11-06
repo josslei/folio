@@ -641,6 +641,24 @@ TEST_F(NormalRepositoryCallbacksTest, ManagedPrePublicationFailurePreservesReady
   EXPECT_FALSE(owned_catalog.unpersisted());
 }
 
+TEST_F(NormalRepositoryCallbacksTest, NonstandardPreflightExceptionDoesNotPoisonSession) {
+  const storage::CreationCheck throwing_check = [](const core::Id&)
+      -> core::Result<std::monostate, storage::StorageError> { throw 7; };
+  const auto snapshot = log_snapshot();
+  const auto result = repository.create_log(snapshot, coordinator.log_creation_callback(),
+                                             throwing_check);
+  expect_code(result, storage::StorageErrorCode::OperationFailure);
+  ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(result));
+  EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
+            storage::MutationFailureStage::BeforeAuthoritativeChange);
+  EXPECT_FALSE(fs::exists(normal / "logs"));
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+  EXPECT_FALSE(owned_catalog.unpersisted());
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(
+      snapshot, coordinator.log_creation_callback(), coordinator.creation_check())));
+  EXPECT_TRUE(owned_catalog.contains_entry(snapshot.id));
+}
+
 TEST_F(NormalRepositoryCallbacksTest, ProjectionFailureIsClassifiedBeforeSuccessCallbackRuns) {
   ScopedRepositoryHooks hooks;
   storage::internal::repository_test_hooks.before_projection = [] {

@@ -178,6 +178,7 @@ TEST_F(MetadataAccessIntegration, LargeContentAndMetadataMessagesAllowTwoPeersAn
 
 TEST_F(MetadataAccessIntegration, MissingWrongTypeAndStaleErrorsLeaveConnectionUsableWithoutDiscovery) {
   auto connection = connect();
+  auto other = connect();
   app::RecordQuery invalid;
   invalid.filters.log_date.from = std::chrono::year{2027}/2/30;
   auto rejected = connection.query_records(invalid);
@@ -201,6 +202,11 @@ TEST_F(MetadataAccessIntegration, MissingWrongTypeAndStaleErrorsLeaveConnectionU
   EXPECT_EQ(std::get<app::ApplicationError>(stale).reason, app::ErrorReason::StaleLocation);
   EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
   EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+  // Request-specific failures must not be broadcast or terminate other sessions.
+  auto browsed = other.browse(core::RecordType::Memo);
+  ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<app::BrowseResult>>(browsed));
+  EXPECT_EQ(std::get<app::ApplicationResponse<app::BrowseResult>>(browsed).value.records.size(), 1u);
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(other.ping()));
 }
 TEST_F(MetadataAccessIntegration, LargeQueryRequestUsesOneMessageAndConnectionRemainsUsable) {
   auto connection = connect();

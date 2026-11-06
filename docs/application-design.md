@@ -233,11 +233,13 @@ break connections and leave Marker-based reconstruction for the next session.
 The runtime now drains queued/active Query Operations through this lifecycle
 boundary. Concrete Mutation execution remains Phase 4.3a.
 
-### Backend module failure containment — Decided; audit deferred
+### Backend module failure containment — Decided; current paths audited
 
-**Pending implementation audit, not verified compliance:** BACKEND-01 is a
-[Phase 4 completion gate](roadmap.md#phase-4-completion-gate--pending-backend-safety-audit)
-and must be addressed before Phase 4.3a Normal Mutation execution.
+**BACKEND-01 completed for current Normal Storage and Query paths:** see the
+[audit findings, tests and limitations](backend-failure-containment-audit.md).
+No confirmed production-code defect was found. New Phase 4.3a Mutation handlers
+must still enforce pre-write readiness and operation-specific preconditions;
+post-persistence callbacks cannot substitute for those checks.
 
 Backend modules, currently `NormalRepository`, `MetadataCatalog`, and
 `CatalogCoordinator`, must not terminate the process on operational failure.
@@ -268,8 +270,8 @@ The executor continues consuming accepted requests, invoking handlers and
 retaining their actual results or exceptions. Draining guarantees an execution
 attempt, not success. Modules enforce their own state and operation preconditions;
 the executor does not add a general health check or classify which queued
-operations may succeed after a previous failure. See roadmap TODO BACKEND-01
-for verification of existing modules against this principle.
+operations may succeed after a previous failure. See the BACKEND-01 audit for
+verification of existing modules against this principle.
 
 `run_backend()` defines five lifecycle states: Bootstrap, Serve, Stopping,
 Report, and Finish. Bootstrap performs configuration, ownership acquisition,
