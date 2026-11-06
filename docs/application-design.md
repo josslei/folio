@@ -235,6 +235,10 @@ boundary. Concrete Mutation execution remains Phase 4.3a.
 
 ### Backend module failure containment — Decided; audit deferred
 
+**Pending implementation audit, not verified compliance:** BACKEND-01 is a
+[Phase 4 completion gate](roadmap.md#phase-4-completion-gate--pending-backend-safety-audit)
+and must be addressed before Phase 4.3a Normal Mutation execution.
+
 Backend modules, currently `NormalRepository`, `MetadataCatalog`, and
 `CatalogCoordinator`, must not terminate the process on operational failure.
 If a module's internal state cannot support correct execution, it must reject
@@ -244,6 +248,21 @@ earlier failure. Fatal, unresolvable errors must be recognizable so the Backend
 lifecycle owner can initiate termination. Modules do not terminate the process
 themselves. Forced termination, crashes, and failures that make further execution
 impossible are outside this ordinary error-handling guarantee.
+
+Nonfatal operation errors must not terminate the Backend. Return them through
+Application error contracts to the requesting Frontend; do not broadcast a
+request-specific error to unrelated Frontends. For example, a Save failure for
+Frontend B belongs to B's final response, not to Frontend A's browsing session.
+The request/response path already routes current Query results to their
+originating connection; Mutation delivery remains future work.
+
+If a failure also changes shared service availability, affected Frontends may
+need a separate availability notification. That notification must contain only
+relevant, safe shared-state information, not another Frontend's operation error
+or sensitive context. Future lifecycle/Push notification design must explicitly
+define recipients. Error severity alone does not determine broadcast scope.
+Fatal, unresolvable service failures are handled by the lifecycle owner;
+ordinary operation rejection and lifecycle termination remain distinct.
 
 The executor continues consuming accepted requests, invoking handlers and
 retaining their actual results or exceptions. Draining guarantees an execution
@@ -482,5 +501,29 @@ catching an exception is not evidence that execution has stopped.
 Do not add `noexcept` merely to hide thread/synchronization infrastructure
 failures: termination would bypass cleanup, and incomplete draining must never
 be represented as complete. This operational guarantee excludes failures that
-make further execution impossible. Hung-operation handling is deferred to the
-next runtime subphase and does not alter this contract.
+make further execution impossible. See the hung-operation boundary below.
+
+#### Unpredictable hangs — Agreed limitation
+
+Find and fix concrete preventable hangs in existing code: incorrect lock
+ordering, missing wakeups, loops without progress, and waits with an applicable
+safe termination mechanism. This does not prove the absence of overlooked
+bugs, deadlocks, or stalled OS operations.
+
+An unpredictable hang may block the sequential executor during Serve and may
+also prevent draining and orderly shutdown. No operation-completion deadline
+or bounded shutdown is guaranteed. Slowness is not evidence of operation failure.
+Do not add watchdogs, progress tracking, automatic process termination, or new
+timeout/cancellation policies solely to hide this limitation; none is authorized
+by this decision. Existing bounded IPC transfer waits remain unchanged.
+
+Do not forcibly terminate an operation thread, finalize Catalog while execution
+may still access it, fabricate a final result, or automatically replay an
+unconfirmed Mutation. If the user forcibly terminates the Backend, treat that
+as a crash: OS ownership is released by the OS, the durable Session Marker
+remains for an active session, and subsequent startup uses the existing
+Marker-based recovery path. This restores Catalog consistency, not proof of a
+particular Mutation's outcome, and does not promise Draft Recovery.
+
+Revisit additional hang-handling mechanisms only for a concrete requirement
+through design review. No such mechanism is currently scheduled.

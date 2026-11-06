@@ -16,6 +16,26 @@ Status labels follow [architecture](architecture.md). Stage numbers are planning
 | Phase 10 | Git Sync | Planned; after complete application foundations |
 | Phase 11 | Hardening and release | Planned; safety testing also occurs throughout |
 
+## Phase 4 completion gate — Pending Backend safety audit
+
+**BACKEND-01 is NOT completed. Phase 4 must not be marked complete until this
+audit and any confirmed corrective work are finished. Schedule it before Normal
+Mutation execution (Phase 4.3a), as already required.**
+
+- [ ] Audit NormalRepository, MetadataCatalog, CatalogCoordinator, and their
+  Application handling boundaries for failure containment.
+- [ ] Verify nonfatal operation errors never terminate the Backend and are
+  routed to the requesting Frontend, not broadcast to unrelated Frontends.
+- [ ] Verify unsafe module state rejects affected operations and fatal,
+  unresolvable service failures are recognizable by the lifecycle owner.
+- [ ] Correct confirmed violations, add appropriate regression coverage, and
+  record the audit findings and actual verification results.
+
+The agreed principles are documented; implementation compliance has **not** been
+established. Passing current tests and completing runtime refactors do not close
+this gate. See [BACKEND-01](#todo-backend-01--backend-module-failure-containment-audit)
+for scope. Deferred notification delivery remains in its planned phases.
+
 ## Completed foundation
 
 Implemented: independent domain models and Snapshots, plaintext codecs, atomic filesystem utilities, NormalRepository, typed Catalog/reverse membership, MessagePack Index, Coordinator startup fallback/full Refresh/shutdown save, and optional Repository synchronization hooks. Post-audit corrections enforce unified UUID identity, classified post-publication failure notification, and efficient managed known-locator/creation operations. Evidence: [Storage sources](../server/src/storage/) and [tests](../tests/storage/).
@@ -162,7 +182,11 @@ and `CatalogCoordinator` against the
 Existing compliance has not yet been established. Check that operational errors
 do not terminate the process, invalid internal state rejects further affected
 operations explicitly, errors remain collectable, and fatal unresolvable failures
-are recognizable by the lifecycle owner. Review exception boundaries and add
+are recognizable by the lifecycle owner. Confirm that nonfatal operation errors
+remain request-scoped and do not abort service. If classification depends on
+module state and its existing contract is ambiguous, bring the concrete case
+back for design review rather than inventing a blanket error-code rule.
+Review exception boundaries and add
 focused failure-path tests; correct confirmed violations within that subphase.
 The audit must preserve persistence and Session Marker safety and must not add a
 generic executor health check. This TODO records future work, not a claim that
@@ -179,11 +203,27 @@ values and process error contracts no longer depend on role-owned headers.
 This is a structural refactor preserving pending runtime work; it authorizes no
 new behavior or later Phase 4 operations. See [module ownership](architecture.md#runtime-role-module-structure--implemented).
 
-### TODO BACKEND-02 — Hung-operation handling
+### BACKEND-02 — Preventable-hang review and agreed limitation
 
-**Deferred Implementation / Open Design Decision:** In the next runtime subphase,
-review non-returning operations during Serve and termination draining. A timeout
-alone cannot safely stop an executor thread or authorize Catalog finalization.
-Determine operation wait/termination policies and appropriate stall detection;
-no bounded completion or safe forced thread termination is currently guaranteed.
-Keep this separate from retaining operation errors/exceptions while draining.
+**Review performed / Not Guaranteed:** Inspection of current executor, IPC,
+shutdown, Storage loops, and I/O progress handling found no confirmed
+preventable-hang defect. Existing scheduler/IPC/lifecycle tests passed on macOS;
+this is not proof that all hangs are excluded or native Linux/Windows verification.
+Fix concrete preventable hangs when identified. Follow the
+[agreed unpredictable-hang boundary](application-design.md#unpredictable-hangs--agreed-limitation):
+operation completion and shutdown duration are not bounded, no unsafe thread
+termination or finalization is permitted, and unconfirmed Mutations are not
+replayed. Watchdogs, progress tracking, automatic termination, and new timeout
+policies are not scheduled. This supersedes the earlier TODO proposing stall
+detection in the next runtime subphase; reopen only for a concrete requirement
+and design review.
+
+### Platform release verification policy
+
+Linux native runtime verification remains pending and should run when an
+environment is available. Windows implementation may remain runtime-unverified
+until release preparation. Native process/IPC/security/shutdown verification is
+a gate for claiming Windows support, not a requirement to delay every platform's
+first release. If Windows cannot be verified and corrected in time, omit Windows
+support from the first release. No platform code is removed by this decision;
+macOS results and cross-compilation do not establish native Windows correctness.

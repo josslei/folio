@@ -163,19 +163,21 @@ proof, safe replay, deduplication or exactly-once execution.
 
 Periodic Backend progress and Frontend response polling have been removed.
 macOS runtime tests cover readiness, disconnection, timeout and shutdown wakeups;
-Linux and Windows native execution remains required for release verification.
+Linux and Windows native execution remains required before claiming verified
+support for each platform. Windows may be omitted from the first release if
+verification and fixes are not completed; it does not block other platforms.
 The current welcome TUI's existing connection monitor remains separate from this
 transport; its replacement belongs to Frontend UI/IPC Worker integration below.
 
 | ID | Status | Missing capability / revisit condition |
 |---|---|---|
 | IPC-02 | Deferred Implementation | Concrete Mutation execution and operation-specific admission, including mapping admission rejection and accepted-but-unconfirmed submission into Mutation contracts: 4.3a. Existing MutationId correlation and final evidence must be preserved. |
-| IPC-03 | Deferred Implementation | Edit Locks in 4.3b; Push Notifications in 4.4a. Scheduling does not implement either protocol. |
+| IPC-03 | Deferred Implementation | Edit Locks in 4.3b; Push/lifecycle notifications in 4.4a and Frontend handling in 4.4b. Define recipients explicitly: request errors go to their originating Frontend; shared availability changes may notify affected Frontends without disclosing another Frontend's operation details. Scheduling does not implement these notification protocols. |
 | IPC-04 | Deferred Implementation | Frontend UI/IPC Worker ownership and completion events, connection monitor replacement, bounded reconnection and ordinary state initialization on a new connection: 4.4b. Blocking methods must run off the UI thread; no extra manual Refresh is required solely by reconnecting. |
 | IPC-05 | Deferred Implementation | Durable Batch Recovery preparation before protected authoritative changes; revisit Batch/Recovery design. Acceptance does not require persistence. Frontend Draft Persistence remains separate in Recovery phases. |
 | IPC-06 | Open Design Decision | Concurrent Read execution requires a demonstrated need and Catalog access policy; initially all execution is sequential. |
 | IPC-07 | Open Design Decision | Request cancellation semantics need operation-specific safety rules. Ceasing to wait or disconnecting does not cancel accepted work. |
-| IPC-08 | Deferred Verification | Linux/Windows runtime, access controls, overlapped I/O cancellation and shutdown must run on native CI before claiming support is verified. |
+| IPC-08 | Deferred Verification | Linux/Windows runtime, access controls, overlapped I/O cancellation and shutdown need native verification before claiming support for that platform is verified. Linux testing awaits an environment; Windows may be deferred to release preparation and omitted from the first release if not verified. |
 
 The existing MUT TODOs in [mutation contracts](application-mutations.md#traceable-follow-up-work)
 remain authoritative for RequestId/multiplexing, schema-versioning review after
@@ -184,3 +186,8 @@ checking, Draft Recovery and compound-operation Recovery. Exactly-once execution
 safe automatic replay and execution proof from MutationId alone are **Not
 Guaranteed**. A hung operation can delay orderly draining indefinitely; Accepted
 is not a liveness guarantee and there is no safe forced-operation cancellation.
+
+See the [agreed unpredictable-hang boundary](application-design.md#unpredictable-hangs--agreed-limitation).
+A stalled executor must not be bypassed by unsafe Catalog finalization or forced
+thread termination. No watchdog, progress tracking, automatic termination, or
+new operation timeout policy is introduced; existing transport deadlines remain.
