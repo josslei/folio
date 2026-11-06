@@ -1,8 +1,8 @@
-#include "application/internal/process.hpp"
+#include "process.hpp"
 // Test-only independent process. File barriers belong only to these tests;
 // they are not a Folio IPC protocol or production Backend lifecycle.
-#include "application/internal/repository_ownership.hpp"
-#include <folio/application/backend.hpp>
+#include "runtime/repository_ownership.hpp"
+#include "backend.hpp"
 
 #include <chrono>
 #include <fstream>

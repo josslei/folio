@@ -1,7 +1,7 @@
-#include "io/filesystem.hpp"
-#include "io/path.hpp"
-#include "io/atomic_write.hpp"
-#include "io/filesystem_test_hooks.hpp"
+#include <folio/io/filesystem.hpp>
+#include <folio/io/path.hpp>
+#include "io/internal/atomic_write.hpp"
+#include "io/internal/filesystem_test_hooks.hpp"
 
 #include <algorithm>
 #include <sodium.h>

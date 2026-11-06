@@ -56,7 +56,10 @@ if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin|Windows)$")
   message(FATAL_ERROR "Folio Application process support requires Linux, macOS, or Windows")
 endif()
 
+find_package(Threads REQUIRED)
+
 add_subdirectory(lib)
+add_subdirectory(server)
 add_subdirectory(app)
 
 if(BUILD_TESTING)

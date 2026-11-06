@@ -1,6 +1,9 @@
 # Public Application and process design
 
-**Status: Decided/Planned**, except the explicitly identified current baseline. See [architecture](architecture.md), [decisions](design-decisions.md), and [roadmap](roadmap.md). No Public Application API, daemon, IPC, queue, Edit Lock registry, or push event system exists today.
+**Status: Implemented baseline with planned extensions.** Processes, ownership,
+local IPC, lifecycle, public Normal reads and shared sequential request scheduling
+are implemented. Mutation execution, Edit Locks and Push Events remain deferred.
+See [architecture](architecture.md), [decisions](design-decisions.md) and [roadmap](roadmap.md).
 
 ## User configuration and executable
 
@@ -8,7 +11,9 @@ One OS user has one Folio data configuration with separately configurable Normal
 
 The agreed direction is a single `folio` executable: default invocation launches TUI; command arguments request CLI operations such as `folio todo ...`. Exact grammar is Open/Deferred. Both modes use the same formal Public Application API. Current default `folio` shows a welcome screen; private Backend dispatch is implemented as described below.
 
-The same executable has an internal Backend mode. Process launching and exclusive ownership are implemented in Phase 4.1a; connection handshake and service readiness remain deferred to 4.1b. Default TUI invocation does not yet launch a Backend.
+The same executable has an internal Backend mode. Process launching and exclusive ownership are implemented in Phase 4.1a;
+connection handshake and readiness in 4.1b. Default TUI startup connects to or
+launches the Backend and retains its connection.
 
 ## Ownership and boundaries
 
@@ -19,8 +24,8 @@ Backend (one active owner for this user's configuration)
     ├── MetadataCatalog
     ├── CatalogCoordinator (borrows that Catalog)
     ├── NormalRepository / future VaultRepository
-    ├── serialized mutation queue
-    └── Entry Edit Lock registry
+    ├── shared request queue / one sequential executor
+    └── future Entry Edit Lock registry
 ```
 
 Backend owns operations, lifecycle, metadata, event publication, and later Recovery/Trash/Vault/Git integration. Frontends own navigation, tabs, focus, and editing buffers. They do not own the authoritative Catalog or invoke private Storage APIs.
@@ -29,7 +34,12 @@ Formal Application APIs begin here; private Storage classes/errors/callbacks/han
 
 ## Lifetime and exclusivity
 
-Lifecycle is Starting → Ready → Stopping → Stopped. Start on demand; stay alive while clients or active operations remain. After the final disconnect and all operations finish, stop accepting work, persist orderly state, release resources, and exit. A CLI-only run may cause immediate shutdown. No permanent daemon or idle grace period is agreed.
+The lifecycle states are Bootstrap → Serve → Stopping → Report → Finish, with
+ordinary failures routed to Report and mandatory Finish. Start on demand. At the
+final Frontend disconnect stop admission, drain accepted operations, finalize
+Catalog state and release resources. A bounded ten-second initial connection
+window allows the launching Frontend to arrive; established sessions have no
+arbitrary idle delay or permanent daemon lifetime.
 
 An OS lock prevents concurrent Backend owners. File existence is not lock ownership. OS termination releases locks; stale files must not permanently block startup. Keep lock identity outside independently clearable Cache. Locking and [Session Marker](recovery-design.md) have different purposes. Startup/connect/shutdown races need tested protocol design.
 
@@ -37,9 +47,14 @@ The future owner supplies known UUIDs/locators, Ready-state checks, creation che
 
 ## IPC and operations
 
-Local IPC needs per-user access controls, requests/responses/events, disconnect detection, and explicit connection-loss/errors. Transport and wire format are Open/Deferred. Callbacks in a Frontend are local dispatch mechanisms; IPC sends messages, never cross-process function pointers. An event receiver can dispatch to the UI loop.
+Local IPC implements per-user access controls, requests/responses, disconnect
+detection and explicit errors using Unix sockets or Windows Named Pipes.
+Push Event messages remain deferred. Callbacks in a Frontend are local dispatch mechanisms; IPC sends messages, never cross-process function pointers. An event receiver can dispatch to the UI loop.
 
-Initial mutations execute through a serialized queue. This avoids requiring every domain/Storage class to be independently thread-safe. Read scheduling and cancellation are deferred. Acknowledgment must distinguish an unknown outcome from a confirmed failure; separate Request IDs, revision protection, and reconciliation remain open. Mutation intentions use the approved name `MutationId`; see [mutation contracts](application-mutations.md). Retry semantics must be designed with [Frontend Recovery](recovery-design.md) before exposing retry semantics.
+One shared queue/executor initially serializes every accepted Query and future
+Mutation through completion, including required Catalog synchronization. IPC
+handling runs independently. Concurrent Reads and cancellation remain open
+decisions; domain/Storage classes need no speculative thread-safety changes. Acknowledgment must distinguish an unknown outcome from a confirmed failure; separate Request IDs, revision protection, and reconciliation remain open. Mutation intentions use the approved name `MutationId`; see [mutation contracts](application-mutations.md). Retry semantics must be designed with [Frontend Recovery](recovery-design.md) before exposing retry semantics.
 
 ## Editing and events
 
@@ -59,11 +74,12 @@ Before implementation resolve launcher/lock race handling, platform IPC transpor
 
 ## Process foundation — Implemented in Phase 4.1a
 
-Private implementation lives in [src/application](../lib/src/application/internal/), compiled
-as `folio_application` with a private dependency on the existing `folio_backend`.
-The executable entry point is [app/src/main.cpp](../app/src/main.cpp); presentation stays
-in `app/src/tui/`. No Application headers are public yet. Public Application APIs
-belong to 4.2; TUI/CLI operations through them belong to 4.4.
+Frontend launching and discovery live in `app/src/`; Backend
+ownership and lifecycle live in `server/src/runtime/`. Shared IPC primitives and
+protocol codecs live in `lib/`. Each module owns its exposed headers; only the
+[dispatcher](../app/src/main.cpp) consumes both role entry points. Presentation
+stays in `app/src/tui/`. Public read operations are implemented in 4.2a; functional
+TUI/CLI integration remains 4.4b.
 
 `app/src/main.cpp` uses a preliminary CLI11 parser to detect private `--backend-process`, allowing unrelated arguments and disabling help handling.
 If present anywhere, all other arguments are ignored. The switch is absent from
@@ -84,7 +100,7 @@ functionality in `backend_connection_handle.hpp/.cpp`, reusable by TUI, CLI, or 
 GUI. The TUI holds a connection during its lifetime; it does not implement process
 launching or IPC connection policy. Generic `launch_process()` and
 `current_executable()` declarations and implementations are private under
-`application/internal/`. Tests receive explicit private include access; no
+`app/src/`. Tests receive explicit private include access; no
 Frontend implementation source is compiled into tests.
 
 On POSIX, `launch_process()` uses a detached double-fork/exec sequence. All C++
@@ -150,21 +166,21 @@ lifecycle, and only then release ownership. It must handle launch success follow
 by a losing candidate, startup failure, and connect/shutdown races. Existing Marker
 and Index algorithms are unchanged in 4.1a.
 
-## Build organization — Phase 4.1a.5
+## Build organization — Runtime-role layout
 
-`folio_backend` is the static Backend library under `lib/`; `folio` is the sole
-executable under `app/`. Same-executable internal Backend dispatch uses the narrow
-public `folio/application/backend.hpp` header. Private Storage and runtime headers
-remain under `lib/src/`, available explicitly to internal tests only. Frontend
-operations must retain their IPC path when the separately stashed 4.1b work is
-restored; linking the Backend library does not authorize bypassing IPC.
-Phase 4.1b exists but awaits review/acceptance; this refactor adds no functionality.
-
+`folio_frontend` (app/), `folio_backend` (server/) and `folio_shared` (lib/) are
+static libraries. The sole `folio` executable links both roles, and both depend
+on shared code. Only lib/ exports its include tree; app/ and server/ keep their include
+trees private and grant explicit access to the dispatcher/tests. Backend initialization remains `folio::application::run_backend()`;
+Frontend launching is declared separately in `backend_launcher.hpp`.
+BackendConnectionHandle belongs to app/, while query/error/mutation contracts
+remain shared. Linking the libraries together does not allow Frontends to bypass
+IPC or include private Storage. See [physical ownership](architecture.md#runtime-role-module-structure--implemented).
 
 ## Phase 4.1b connection lifecycle — Implemented
 
-Private `application/client.hpp`, `ipc.hpp`, and `backend.hpp` implement on-demand
-connections. Default Frontend startup retains a Client through the welcome TUI;
+Frontend BackendConnectionHandle and launcher interfaces, shared IPC facilities,
+and the Backend entry point implement on-demand connections. Default Frontend startup retains a Client through the welcome TUI;
 connection loss exits the TUI with an explicit error. No automatic request replay
 occurs. Public operations remain Phase 4.2.
 
@@ -189,13 +205,23 @@ Ping/Pong also carry no payload. Reject
 contains an internal diagnostic. Unknown versions/kinds/invalid lengths are
 rejected. This internal lifecycle protocol has no CRUD or event schemas.
 
-One Backend loop owns lifecycle and all connection state, capped at 64 peers.
-Handshake, incomplete-message inactivity, and output inactivity deadlines are
-three seconds; total request reception is bounded to thirty seconds. A ten-second initial
-registration window permits the launching Client to arrive. Once Clients have
-registered, the final disconnect stops admission immediately. Pending handshakes
-may retry against the next owner; startup retries are bounded to fifteen seconds.
-The five-millisecond transport poll interval is not a persistence timer.
+The lifecycle owner accepts connections and creates bounded IPC workers (at most
+64). Linux/macOS readiness waits use poll plus explicit wake pipes; Windows uses
+overlapped Named Pipes and completion/wake events. There are no recurring sleep
+loops for established IPC progress. Workers decode complete requests and admit
+through one Backend-owned RequestScheduler. One executor performs all current
+Query and future Mutation execution sequentially; it alone accesses live Storage.
+Accepted acknowledgment is distinct from final Response; Rejected is distinct
+from execution failure. See [runtime/protocol limits](ipc-protocol.md).
+
+Handshake and transfer-inactivity bounds remain three seconds; total request
+reception is bounded to thirty seconds. A ten-second initial registration window
+permits launching Frontends to connect. Acceptance is session-only and waiting in
+the queue has no short operation-completion deadline. The final disconnection
+stops admission and drains accepted work, including work whose connection is lost.
+Admission closure wakes idle reception without closing usable connections.
+Accepted work and bounded final delivery settle before Report; Finish closes
+remaining connections and joins workers before Catalog finalization.
 
 The endpoint is bound under ownership before Storage initialization so startup
 errors can be returned, but no successful handshake is processed until
@@ -204,8 +230,27 @@ Marker. Shutdown closes admission/connections, explicitly calls `finish_session(
 and releases ownership last. Failed finalization returns failure and retains the
 Marker according to Storage's existing contract. Backend crashes release locks,
 break connections and leave Marker-based reconstruction for the next session.
-There are no application operations to drain yet; Phase 4.3 must extend this
-single lifecycle boundary to account for queued/active work.
+The runtime now drains queued/active Query Operations through this lifecycle
+boundary. Concrete Mutation execution remains Phase 4.3a.
+
+### Backend module failure containment — Decided; audit deferred
+
+Backend modules, currently `NormalRepository`, `MetadataCatalog`, and
+`CatalogCoordinator`, must not terminate the process on operational failure.
+If a module's internal state cannot support correct execution, it must reject
+the affected operation with an explicit error rather than continue unsafely.
+Errors must remain available for collection; a later error must not erase an
+earlier failure. Fatal, unresolvable errors must be recognizable so the Backend
+lifecycle owner can initiate termination. Modules do not terminate the process
+themselves. Forced termination, crashes, and failures that make further execution
+impossible are outside this ordinary error-handling guarantee.
+
+The executor continues consuming accepted requests, invoking handlers and
+retaining their actual results or exceptions. Draining guarantees an execution
+attempt, not success. Modules enforce their own state and operation preconditions;
+the executor does not add a general health check or classify which queued
+operations may succeed after a previous failure. See roadmap TODO BACKEND-01
+for verification of existing modules against this principle.
 
 `run_backend()` defines five lifecycle states: Bootstrap, Serve, Stopping,
 Report, and Finish. Bootstrap performs configuration, ownership acquisition,
@@ -242,9 +287,8 @@ Marker. Resource ownership itself determines which handles need release.
 
 Report retains the existing bounded startup handshake rejection where an endpoint
 was established, without printing internal diagnostics to the terminal. Configuration and ownership
-failures before an endpoint exists still lack reliable Frontend delivery. On
-serving-loop failure its connections close before Report; no final broadcast is
-promised. Multiple Frontends remain independent, and the final disconnect ends
+failures before an endpoint exists still lack reliable Frontend delivery. On serving failure accepted work drains before final resource release; no final
+broadcast is promised. Multiple Frontends remain independent, and the final disconnect ends
 the session. Complete final Frontend reporting and pre-IPC bootstrap delivery
 remain deferred pending output/protocol design. No new IPC message is introduced.
 
@@ -300,3 +344,143 @@ without separate protocol chunks. Mutation identity, failure/evidence and confir
 including ID correlation checks; complete business payloads and dispatch remain
 deferred to 4.3a. Protocol version remains 1. See [protocol boundaries and limits](ipc-protocol.md).
 Backend lifecycle, ownership, Catalog and Marker behavior are unchanged.
+
+## Runtime refactor before Normal Mutations — Implemented
+
+IPC connection workers and one shared sequential executor now have independent
+scheduling. BackendStateMachine and explicit Coordinator finalization retain
+lifecycle authority. Scheduling does not persist accepted requests, implement
+Recovery, cancel work on disconnect, or guarantee execution after a crash.
+See [admission and runtime contract](ipc-protocol.md#scheduling-and-lifecycle)
+for limits, deadlines, shutdown and deferred Frontend integration.
+
+### Backend lifecycle call flow — Implemented
+
+Normal and abnormal termination retain distinct state transitions. Operational
+failure does not promise successful execution of queued work: the executor
+attempts each accepted action and retains its actual result or exception. Modules
+remain responsible for checking their own preconditions and consistency.
+
+```text
+BACKEND MAIN THREAD                    CONNECTION WORKERS                 EXECUTOR THREAD
+───────────────────                    ──────────────────                 ───────────────
+
+run_backend()
+  └─ BackendStateMachine::run()
+       │
+       ▼
+[Bootstrap]
+  Bootstrap(context)
+    ├─ Load configuration
+    ├─ Acquire RepositoryOwnership / listener
+    ├─ Initialize Repository / Catalog / Coordinator
+    └─ startup_load() → durable Session Marker
+       │
+       ├─ Failure ───────────────────────────────────────────────► [Report]
+       ▼ Success
+[Serve]
+  Serve(context)
+    ├─ Construct IpcServer; store handle_access(...) callback
+    │    └─ Construct RequestScheduler ──────────────────────────────────► Start executor
+    │                                                                      └─ Wait for work
+    └─ IpcServer::run() [blocks main thread]
+         ├─ ownership.wait() → OS readiness wait
+         ├─ ownership.accept()
+         ├─ Start connection worker ──► connection(...)
+         │                               ├─ Receive / validate Hello
+         │                               ├─ Register connection
+         │                               └─ Send Ready
+         │                               │
+         │                               ▼
+         │                             Request loop
+         │                               ├─ Wait / receive complete message
+         │                               ├─ Validate framing/version/bounds
+         │                               ├─ decode_access_request()
+         │                               └─ scheduler.admit(action)
+         │                                    ├─ Reject → send Rejected
+         │                                    └─ Enqueue ───────────────► Wake executor
+         │                                         │                         ├─ Pop action
+         │                                    Send Accepted                  ├─ handler_(request)
+         │                                         │                         │   └─ handle_access(...)
+         │                                    Wait for result                │       └─ Catalog / Repository
+         │                                         │                         ├─ Encode response
+         │                                         │                         ├─ Retain result/exception
+         │                                         ◄─────────────────────────┤ Signal completion
+         │                                    Send final response            └─ Consume next action
+         │                                    Repeat request loop
+         │
+         │                             On disconnection:
+         │                               Unregister; wake main thread; exit
+         │                               Accepted work is NOT cancelled
+         │
+         └─ Detect stopping condition
+              Stop admission/listening; preserve established connections
+              ├─ Failure ──────────────────────────────────────► [Report]
+              └─ Normal return
+       │
+       ▼
+[Stopping] [normal path]
+  Stopping(context)
+    ├─ drain_requests() ─────────────────────────────────────────────────► Attempt accepted work
+    │                                                                      └─ Executor exits
+    ├─ Join executor and reap completed connection workers
+    └─ Collect retained failures
+       │ either outcome
+       ▼
+[Report] [also reached directly on Bootstrap / Serve failure]
+  Report(context)
+    ├─ drain_requests()
+    │    ├─ Normal path: already drained
+    │    └─ Failure path: attempt accepted work and join executor
+    ├─ Collect retained failures
+    │                                  Usable workers retain streams
+    │                                  without admitting new requests
+    ├─ Existing startup rejection where applicable
+    └─ Connected-Frontend lifecycle notification: DEFERRED; no implementation
+       │ regardless of outcome
+       ▼
+[Finish]
+  Finish(context)
+    ├─ Ensure requests drained [exceptional fallback]
+    ├─ close_connections() ────────────► Wake workers; close streams; exit
+    │    └─ Join remaining workers
+    ├─ Collect retained failures
+    ├─ Finalize eligible Catalog session
+    │    ├─ Save Index when permitted / required
+    │    └─ Clear Marker only when safety is established
+    └─ Release RepositoryOwnership
+       │
+       ▼
+     Stopped
+```
+
+`drain_requests()` is idempotent and does not close usable connections. The
+repeated calls establish the prerequisite on both termination paths and provide
+Finish's exceptional fallback; they do not certify clean Catalog state.
+`take_failures()` transfers and clears retained failures, without logging or
+sending them. Connection workers parked after admission closes are woken by
+Finish's cooperative stop signal; threads are not forcibly terminated.
+Actual lifecycle notification remains deferred to the output/notification design;
+keeping streams alive is resource preparation, not a placeholder wire message.
+Catalog finalization eligibility, error propagation, and the transition table are
+unchanged.
+
+#### Drain exception contract
+
+Operation errors and exceptions are outcomes collected during draining, not
+failures of draining itself. The executor catches action exceptions, retains
+original exception pointers on tickets, publishes completion, and continues with
+all remaining accepted actions. IpcServer retains handler failures for lifecycle
+diagnostics without rethrowing them from `drain_requests()`. Repeated draining
+is harmless. Completion means execution has stopped, not that every action
+succeeded or that Catalog state is consistent.
+
+Report also retains unexpected drain-preparation exceptions locally so they
+do not skip the reporting action. Finish retries draining before finalization;
+catching an exception is not evidence that execution has stopped.
+
+Do not add `noexcept` merely to hide thread/synchronization infrastructure
+failures: termination would bypass cleanup, and incomplete draining must never
+be represented as complete. This operational guarantee excludes failures that
+make further execution impossible. Hung-operation handling is deferred to the
+next runtime subphase and does not alter this contract.

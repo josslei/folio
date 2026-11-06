@@ -1,4 +1,5 @@
-#include "application/internal/application_codec.hpp"
+#include "backend_connection_handle.hpp"
+#include <folio/ipc/application_codec.hpp>
 #include <gtest/gtest.h>
 
 namespace {

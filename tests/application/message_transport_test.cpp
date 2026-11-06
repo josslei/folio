@@ -1,8 +1,10 @@
-#include "application/internal/message_transport.hpp"
-#include "application/internal/repository_ownership.hpp"
+#include <folio/ipc/message_transport.hpp>
+#include "runtime/repository_ownership.hpp"
+#include "backend_connection_handle.hpp"
 #include <gtest/gtest.h>
 
 #include <thread>
+#include <future>
 
 namespace {
 namespace ipc = folio::application::internal;
@@ -143,5 +145,52 @@ TEST_F(MessageTransport, TrailingMessageBytesAreProtocolFailure) {
     return error.has_value();
   }));
   EXPECT_EQ(error->code, ipc::IpcErrorCode::Protocol);
+}
+
+TEST_F(MessageTransport, PublicReadRejectsInvalidAdmissionOrFinalConfirmation) {
+  namespace app = folio::application;
+  for (int scenario = 0; scenario != 4; ++scenario) {
+    auto frontend = std::async(std::launch::async, [&] {
+      auto connected = app::BackendConnectionHandle::connect(
+          std::get<ipc::ConnectionSettings>(ipc::connection_settings(paths)));
+      if (!std::holds_alternative<app::BackendConnectionHandle>(connected))
+        throw std::runtime_error("Synthetic handshake failed");
+      auto handle = std::get<app::BackendConnectionHandle>(std::move(connected));
+      auto result = handle.load_memo(core::Id::generate());
+      return std::make_pair(std::move(result), handle.connected());
+    });
+    auto ready = owner->wait(std::chrono::steady_clock::now() + 3s);
+    ASSERT_TRUE(std::holds_alternative<bool>(ready));
+    auto accepted = owner->accept();
+    ASSERT_TRUE(std::holds_alternative<std::optional<ipc::IpcStream>>(accepted));
+    auto socket = std::move(*std::get<std::optional<ipc::IpcStream>>(accepted));
+    ipc::MessageTransport handshake;
+    ASSERT_TRUE(std::holds_alternative<ipc::Message>(ipc::receive_message(
+        socket, handshake, std::chrono::steady_clock::now() + 3s)));
+    ASSERT_TRUE(std::holds_alternative<std::monostate>(ipc::send_message(
+        socket, {ipc::MessageKind::Ready, {}}, std::chrono::steady_clock::now() + 3s)));
+    ipc::MessageTransport request;
+    auto received = ipc::receive_message(socket, request, std::chrono::steady_clock::now() + 3s);
+    ASSERT_TRUE(std::holds_alternative<ipc::Message>(received));
+    EXPECT_EQ(std::get<ipc::Message>(received).kind, ipc::MessageKind::Request);
+    if (scenario == 0) {
+      // A final result without acceptance is not trustworthy.
+      ipc::send_message(socket, {ipc::MessageKind::Response, {}}, std::chrono::steady_clock::now() + 3s);
+    } else if (scenario == 1) {
+      ipc::send_message(socket, {ipc::MessageKind::Accepted, ipc::payload_bytes("invalid")},
+                        std::chrono::steady_clock::now() + 3s);
+    } else {
+      ipc::send_message(socket, {ipc::MessageKind::Accepted, {}}, std::chrono::steady_clock::now() + 3s);
+      if (scenario == 2)
+        ipc::send_message(socket, {ipc::MessageKind::Accepted, {}}, std::chrono::steady_clock::now() + 3s);
+      else
+        socket = ipc::IpcStream{}; // Accepted, but no confirmed final result.
+    }
+    auto [result, connected] = frontend.get();
+    ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(result));
+    EXPECT_EQ(std::get<app::ApplicationError>(result).reason,
+              scenario == 3 ? app::ErrorReason::ConnectionLost : app::ErrorReason::ProtocolError);
+    EXPECT_FALSE(connected);
+  }
 }
 }  // namespace

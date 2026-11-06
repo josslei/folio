@@ -7,7 +7,7 @@ user-facing CLI/TUI output. It does not resolve the deferred Backend Output API.
 ## Dependency and ownership
 
 Folio uses pinned spdlog v1.17.0 (`thirdparty/spdlog`, commit
-`79524ddd08a4ec981b7fea76afd08ee05f83755d`). The existing `folio_backend`
+`79524ddd08a4ec981b7fea76afd08ee05f83755d`). The shared `folio_shared`
 static target links compiled `spdlog::spdlog`; the dependency propagates to
 consumers because shared code uses spdlog directly. All six severity macros are
 compiled in, with runtime filtering. Windows uses native wide-character filenames.

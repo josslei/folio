@@ -54,8 +54,10 @@ outcomes and reconciliation contracts remain Phase 4.2b work.
 ## Transport and limits
 
 Methods synchronously exchange one request at a time on each connection, with a
-30-second read deadline. Frontends schedule these calls appropriately for their
-UI. No automatic reconnect or replay occurs. Transport/protocol failure closes
+bounded admission deadline followed by a separate Accepted acknowledgment and
+final result/error. Accepted queue waiting has no short completion deadline;
+transfer stalls and disconnections remain errors. Frontends schedule these
+blocking calls outside their UI event thread. No automatic reconnect or replay occurs. Transport/protocol failure closes
 the affected handle; confirmed Application errors leave it usable.
 
 The private version-1 protocol sends one complete length-prefixed request or

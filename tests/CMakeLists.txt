@@ -7,7 +7,7 @@ add_executable(folio_core_tests
 )
 target_compile_features(folio_core_tests PRIVATE cxx_std_20)
 set_target_properties(folio_core_tests PROPERTIES CXX_EXTENSIONS OFF)
-target_link_libraries(folio_core_tests PRIVATE folio_backend GTest::gtest_main)
+target_link_libraries(folio_core_tests PRIVATE folio_shared GTest::gtest_main)
 
 add_executable(folio_storage_tests
   storage/codec_test.cpp
@@ -22,7 +22,8 @@ add_executable(folio_storage_tests
   storage/serialization_samples_test.cpp
   storage/tomlplusplus_test.cpp
 )
-target_include_directories(folio_storage_tests PRIVATE "${PROJECT_SOURCE_DIR}/lib/src")
+target_include_directories(folio_storage_tests PRIVATE
+  "${PROJECT_SOURCE_DIR}/server/include" "${PROJECT_SOURCE_DIR}/lib/src")
 target_compile_features(folio_storage_tests PRIVATE cxx_std_20)
 target_compile_definitions(folio_storage_tests PRIVATE
   "FOLIO_SERIALIZATION_SAMPLES_DIR=\"${PROJECT_BINARY_DIR}/serialization-samples/$<CONFIG>\""
@@ -47,7 +48,8 @@ if(FOLIO_BUILD_RESOURCE_LIMIT_TESTS)
     resource_limits/index_resource_limits_test.cpp
     resource_limits/ipc_resource_limits_test.cpp
   )
-  target_include_directories(folio_resource_limit_tests PRIVATE "${PROJECT_SOURCE_DIR}/lib/src")
+  target_include_directories(folio_resource_limit_tests PRIVATE
+    "${PROJECT_SOURCE_DIR}/server/include" "${PROJECT_SOURCE_DIR}/lib/src")
   target_compile_features(folio_resource_limit_tests PRIVATE cxx_std_20)
   set_target_properties(folio_resource_limit_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_link_libraries(folio_resource_limit_tests PRIVATE
@@ -63,26 +65,32 @@ endif()
 
 # Private process fixtures: no production test switches or application IPC.
 add_executable(folio_process_child application/process_child.cpp)
-target_include_directories(folio_process_child PRIVATE "${PROJECT_SOURCE_DIR}/lib/src")
+target_include_directories(folio_process_child PRIVATE
+  "${PROJECT_SOURCE_DIR}/server/include" "${PROJECT_SOURCE_DIR}/app/include"
+  "${PROJECT_SOURCE_DIR}/lib/src")
 target_compile_features(folio_process_child PRIVATE cxx_std_20)
 set_target_properties(folio_process_child PROPERTIES CXX_EXTENSIONS OFF)
-target_link_libraries(folio_process_child PRIVATE folio_backend)
+target_link_libraries(folio_process_child PRIVATE folio_frontend folio_backend)
 if(MINGW)
   target_link_options(folio_process_child PRIVATE -municode)
 endif()
 
 add_executable(folio_backend_child application/backend_child.cpp)
-target_include_directories(folio_backend_child PRIVATE "${PROJECT_SOURCE_DIR}/lib/src")
+target_include_directories(folio_backend_child PRIVATE
+  "${PROJECT_SOURCE_DIR}/server/include" "${PROJECT_SOURCE_DIR}/app/include"
+  "${PROJECT_SOURCE_DIR}/lib/src")
 target_compile_features(folio_backend_child PRIVATE cxx_std_20)
-target_link_libraries(folio_backend_child PRIVATE folio_backend)
+target_link_libraries(folio_backend_child PRIVATE folio_frontend folio_backend)
 if(MINGW)
   target_link_options(folio_backend_child PRIVATE -municode)
 endif()
-add_executable(folio_application_tests application/message_transport_test.cpp application/mutation_codec_test.cpp application/mutation_contract_test.cpp application/access_codec_test.cpp application/metadata_access_test.cpp application/metadata_access_integration_test.cpp application/logging_test.cpp application/configuration_test.cpp application/backend_states_test.cpp application/backend_lifecycle_test.cpp application/process_test.cpp application/backend_test.cpp)
-target_include_directories(folio_application_tests PRIVATE "${PROJECT_SOURCE_DIR}/lib/src")
+add_executable(folio_application_tests application/runtime_test.cpp application/message_transport_test.cpp application/mutation_codec_test.cpp application/mutation_contract_test.cpp application/access_codec_test.cpp application/metadata_access_test.cpp application/metadata_access_integration_test.cpp application/logging_test.cpp application/configuration_test.cpp application/backend_states_test.cpp application/backend_lifecycle_test.cpp application/process_test.cpp application/backend_test.cpp)
+target_include_directories(folio_application_tests PRIVATE
+  "${PROJECT_SOURCE_DIR}/server/include" "${PROJECT_SOURCE_DIR}/app/include"
+  "${PROJECT_SOURCE_DIR}/lib/src")
 target_compile_features(folio_application_tests PRIVATE cxx_std_20)
 set_target_properties(folio_application_tests PROPERTIES CXX_EXTENSIONS OFF)
-target_link_libraries(folio_application_tests PRIVATE folio_backend GTest::gtest_main msgpack-cxx)
+target_link_libraries(folio_application_tests PRIVATE folio_frontend folio_backend GTest::gtest_main msgpack-cxx)
 target_compile_definitions(folio_application_tests PRIVATE
   "FOLIO_PROCESS_CHILD=\"$<TARGET_FILE:folio_process_child>\"")
 target_compile_definitions(folio_application_tests PRIVATE
@@ -93,9 +101,10 @@ gtest_discover_tests(folio_application_tests DISCOVERY_TIMEOUT 30 PROPERTIES TIM
 # Compile the same entry point with an injected log root. This keeps CLI tests
 # away from real user logs on Windows as well as POSIX, without a production
 # environment override or a test switch in folio.
-add_executable(folio_cli_test ../app/src/main.cpp ../app/src/tui/tui.cpp)
-target_include_directories(folio_cli_test PRIVATE "${PROJECT_SOURCE_DIR}/app/src")
-target_link_libraries(folio_cli_test PRIVATE folio_backend ftxui::component CLI11::CLI11)
+add_executable(folio_cli_test ../app/src/main.cpp)
+target_include_directories(folio_cli_test PRIVATE
+  "${PROJECT_SOURCE_DIR}/app/include" "${PROJECT_SOURCE_DIR}/server/include")
+target_link_libraries(folio_cli_test PRIVATE folio_frontend folio_backend CLI11::CLI11)
 target_compile_definitions(folio_cli_test PRIVATE
   "FOLIO_TEST_LOG_ROOT=\"${CMAKE_CURRENT_BINARY_DIR}/cli-logs\"")
 if(MINGW)

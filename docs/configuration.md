@@ -105,8 +105,9 @@ implemented by this configuration system.
 
 The shared public interface is `<folio/config/configuration.hpp>`, implemented in
 `lib/src/config/configuration.cpp`. It exposes configuration/path values and
-errors without private Storage or IPC headers. Connection settings are declared together in `folio/application/ipc.hpp` and
-implemented together in `application/ipc.cpp`. The file-local
+errors without private Storage or IPC headers. Explicit-path connection settings
+are shared in `lib/` through `folio/ipc/ipc.hpp`; the convenience overload
+that loads configuration belongs to app/'s BackendConnectionHandle component. The file-local
 `backend_endpoint_path(application_paths)` derives the endpoint. Callers refer explicitly to
 `folio::config`; there are no forwarding Config aliases in Application. Storage aliases the shared path values for compatibility.
 

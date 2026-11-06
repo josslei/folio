@@ -18,7 +18,7 @@ Status labels follow [architecture](architecture.md). Stage numbers are planning
 
 ## Completed foundation
 
-Implemented: independent domain models and Snapshots, plaintext codecs, atomic filesystem utilities, NormalRepository, typed Catalog/reverse membership, MessagePack Index, Coordinator startup fallback/full Refresh/shutdown save, and optional Repository synchronization hooks. Post-audit corrections enforce unified UUID identity, classified post-publication failure notification, and efficient managed known-locator/creation operations. Evidence: [Storage sources](../lib/src/storage/) and [tests](../tests/storage/).
+Implemented: independent domain models and Snapshots, plaintext codecs, atomic filesystem utilities, NormalRepository, typed Catalog/reverse membership, MessagePack Index, Coordinator startup fallback/full Refresh/shutdown save, and optional Repository synchronization hooks. Post-audit corrections enforce unified UUID identity, classified post-publication failure notification, and efficient managed known-locator/creation operations. Evidence: [Storage sources](../server/src/storage/) and [tests](../tests/storage/).
 
 Not completed by those milestones: Application integration, navigation count checks, configuration/platform defaults, daemon service/IPC, Vault, Trash, Journal, and Git. Marker-based unclean-session detection is implemented internally. The welcome TUI does not wire Storage lifecycle.
 
@@ -129,18 +129,61 @@ remain deferred. See [mutation contracts and follow-up decisions](application-mu
 Shared Query/Mutation codec components and bounded complete-message transport are
 implemented with Protocol Version 1. Read payloads/API semantics are preserved.
 No concrete Mutation request/success payload, dispatch or execution is enabled;
-these belong to 4.3a with the serialized mutation queue. Edit Locks remain 4.3b,
+these belong to 4.3a using the shared sequential executor. Edit Locks remain 4.3b,
 Push Events 4.4a, and Frontend integration/reconnection 4.4b.
 See [IPC implementation scope](ipc-protocol.md) and traceable
 [MUT follow-ups](application-mutations.md#traceable-follow-up-work), including the
 internal schema-versioning review after Minimum TUI.
 
-## Phase 4 completion gate — IPC waiting
+## Runtime architecture refactor before Normal Mutations — Implemented
 
-**TODO IPC-01 — Deferred Implementation; required before completing Phase 4:**
-replace Backend and Frontend IPC sleep-and-poll loops with OS event-driven
-waiting. The current loops wake periodically even without data; protocol
-simplification does not resolve that overhead. Preserve deadlines, disconnection
-detection, connection fairness, and shutdown wakeups. Schedule and verify this
-before closing Phase 4; native API selection is still an implementation decision.
-See [IPC-01 requirements](ipc-protocol.md#ipc-01--os-event-driven-waiting-deferred-implementation-phase-4-completion-gate).
+IPC-01 replaces established-connection progress polling with OS waits. Bounded
+connection workers admit into one shared in-memory FIFO; one executor processes
+all accepted operations sequentially. Accepted/Rejected and final Response are
+distinct stages. Orderly shutdown drains accepted work before existing Catalog
+finalization and ownership release. macOS is verified; Linux/Windows execution
+remains IPC-08 native verification work.
+
+This supplies scheduling infrastructure before 4.3a, without implementing
+Mutations. Concrete payloads, handlers and operation-specific admission remain
+4.3a; Edit Locks 4.3b; Push Notifications 4.4a; Frontend UI/IPC Worker and
+reconnection integration 4.4b. Batch/Draft Recovery remain independent later work.
+Concurrent Reads and cancellation are open decisions. See
+[IPC-01 through IPC-08](ipc-protocol.md#deferred-decisions) and existing
+[MUT follow-ups](application-mutations.md#traceable-follow-up-work); no persistent
+queue, receipt, replay, RequestId or exactly-once guarantee is implemented.
+
+### TODO BACKEND-01 — Backend module failure-containment audit
+
+**Deferred Implementation:** Schedule a small focused subphase before Normal
+Mutation execution (Phase 4.3a) to audit `NormalRepository`, `MetadataCatalog`,
+and `CatalogCoordinator` against the
+[Backend module failure-containment principle](application-design.md#backend-module-failure-containment--decided-audit-deferred).
+Existing compliance has not yet been established. Check that operational errors
+do not terminate the process, invalid internal state rejects further affected
+operations explicitly, errors remain collectable, and fatal unresolvable failures
+are recognizable by the lifecycle owner. Review exception boundaries and add
+focused failure-path tests; correct confirmed violations within that subphase.
+The audit must preserve persistence and Session Marker safety and must not add a
+generic executor health check. This TODO records future work, not a claim that
+the current modules already satisfy every requirement.
+
+## Runtime-role project structure — Implemented
+
+Frontend-only implementation and headers now belong to app/, Backend-only code
+and private Storage to server/, and shared Core/Config/Logging/I/O/contracts/IPC
+to lib/. Each owns include/ and src/; app/src/main.cpp remains the deliberate
+shared dispatcher. Static targets are folio_frontend, folio_backend and
+folio_shared; one executable still supports both runtime processes. Shared wire
+values and process error contracts no longer depend on role-owned headers.
+This is a structural refactor preserving pending runtime work; it authorizes no
+new behavior or later Phase 4 operations. See [module ownership](architecture.md#runtime-role-module-structure--implemented).
+
+### TODO BACKEND-02 — Hung-operation handling
+
+**Deferred Implementation / Open Design Decision:** In the next runtime subphase,
+review non-returning operations during Serve and termination draining. A timeout
+alone cannot safely stop an executor thread or authorize Catalog finalization.
+Determine operation wait/termination policies and appropriate stall detection;
+no bounded completion or safe forced thread termination is currently guaranteed.
+Keep this separate from retaining operation errors/exceptions while draining.

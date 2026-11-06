@@ -67,20 +67,30 @@ Logs have no user Directory. Memos/Todos support one level, optional membership 
 
 ## Current component and build boundary — Implemented
 
-[Root CMake](../CMakeLists.txt) builds one static `folio_backend` (`folio_backend`) containing domain implementations and private Storage. `folio` links the private `folio_application` process foundation, `folio_backend`, and FTXUI. `include/` is PUBLIC; `src/` PRIVATE. Tests explicitly receive `src/`; consumers do not. Dependencies are pinned submodules: FTXUI, GoogleTest/GoogleMock, stduuid, libsodium, toml++, msgpack-cxx, and CLI11. No database or JSON serialization is used.
+[Root CMake](../CMakeLists.txt) builds three static libraries: `folio_shared`
+(`lib/`), `folio_frontend` (`app/`) and `folio_backend` (`server/`). Both roles
+depend on shared code; neither role depends on the other. The single `folio`
+executable is their shared dispatcher. Only lib/include propagates shared headers; app/include and server/include remain
+role-private, with explicit dispatcher access; only internal tests receive private source paths.
+FTXUI belongs to the Frontend and CLI11 to the dispatcher. Dependencies remain
+pinned submodules; no database or JSON serialization is introduced.
 
 Private process code uses `folio::application::internal`. Domain/Storage namespaces are `folio::core`, `folio::core::storage`, `folio::core::storage::codec`, and Storage `internal` atomic helpers. The generic internal Result<T, E> is a variant, not a public Application contract.
 
 | Component | Responsibility / evidence |
 | --- | --- |
-| [NormalRepository](../lib/src/storage/normal_repository.hpp) | Authoritative Normal Entry operations; targeted identity verification, explicit UUID discovery, full scan |
-| [MetadataCatalog](../lib/src/storage/metadata_catalog.hpp) | Four typed maps, derived UUID membership sets, non-recursive listing and Record metadata search; no filesystem I/O |
-| [CatalogCoordinator](../lib/src/storage/catalog_coordinator.hpp) | Borrows owner-supplied Catalog; startup, full Refresh, Index shutdown persistence, stored synchronization callbacks and consistency status |
-| [IndexCodec](../lib/src/storage/index_codec.hpp) | Pure deterministic MessagePack encode/decode; temporary validated Catalog, no file I/O |
-| [I/O](../lib/src/io/filesystem.hpp) | Generic byte reads, atomic create/replace, and durability operations |
-| [Storage common types](../lib/src/storage/common.hpp) | Storage-specific errors, mixed Repository results, and effective-path validation |
+| [NormalRepository](../server/include/storage/normal_repository.hpp) | Authoritative Normal Entry operations; targeted identity verification, explicit UUID discovery, full scan |
+| [MetadataCatalog](../server/include/storage/metadata_catalog.hpp) | Four typed maps, derived UUID membership sets, non-recursive listing and Record metadata search; no filesystem I/O |
+| [CatalogCoordinator](../server/include/storage/catalog_coordinator.hpp) | Borrows owner-supplied Catalog; startup, full Refresh, Index shutdown persistence, stored synchronization callbacks and consistency status |
+| [IndexCodec](../server/include/storage/index_codec.hpp) | Pure deterministic MessagePack encode/decode; temporary validated Catalog, no file I/O |
+| [I/O](../lib/include/folio/io/filesystem.hpp) | Generic byte reads, atomic create/replace, and durability operations |
+| [Storage common types](../server/include/storage/common.hpp) | Storage-specific errors, mixed Repository results, and effective-path validation |
 
-There is no BinaryIO, IndexStore, IndexBuilder, IndexRefresh, Application Service, daemon service loop, or IPC implementation. Private process launching and OS ownership are implemented under `lib/src/application/internal/`. The [executable](../app/src/main.cpp) dispatches default welcome TUI or internal Backend bootstrap; neither initializes Catalog lifecycle or saves an Index in Phase 4.1a. The historical `binary_io_test.cpp` filename does not denote a production BinaryIO module.
+There is no separate BinaryIO, IndexStore or IndexBuilder. Frontend launching
+lives under `app/src/`; Backend ownership/lifecycle under
+`server/src/runtime/`. The [dispatcher](../app/src/main.cpp) selects the role;
+only the Backend initializes Catalog lifecycle and finalizes its Index/Marker.
+The historical `binary_io_test.cpp` filename does not denote a production module.
 
 ## Catalog-centric flows — Implemented internal capabilities
 
@@ -177,35 +187,49 @@ Windows/Linux execution and actual power-loss tests require platform validation.
 The Marker does not repair partially completed authoritative multi-file operations;
 scan conflicts remain errors for later Recovery design.
 
-## Phase 4.1a.5 target structure
+## Runtime-role module structure — Implemented
 
-The single static `folio_backend` target owns public headers in `lib/include/`
-and private Core, Storage and runtime implementations in `lib/src/`. The `folio`
-executable owns `app/src/main.cpp` and TUI code and links that library. Its include
-paths contain `app/src/` and the library's public headers, never `lib/src/`.
-`folio/application/backend.hpp` exposes Backend launching and the internal-mode
-execution entry point. `backend_connection_handle.hpp` exposes shared Backend connection
-and handshake/startup functionality for all Frontends. Generic process creation
-is private under `application/internal/`; no Storage types are exposed. Tests explicitly
-receive `lib/src/` when testing internals. FTXUI and CLI11 belong to the executable.
-Build-target ownership does not alter the separate-process Backend architecture.
+```text
+app/                         Frontend-only code
+  include/                   BackendConnectionHandle, launcher and TUI entry
+  src/                       Frontend implementations
+  src/main.cpp               Shared dispatcher (explicit ownership exception)
+server/                      Backend-only code
+  include/                   Backend headers: entry point, runtime, IPC, Storage
+  src/                       Entry point, handlers and request executor
+  src/runtime/               Lifecycle, state machine and ownership implementations
+  src/ipc/                   Backend connection management
+  src/storage/               Storage implementations (headers in include/      storage)
+lib/                         Shared code; no dependency on either runtime role
+  include/folio/             Core, Config, Logging, I/O and shared contracts
+  src/                       Implementations and private helpers/test seams
+```
 
-Phase 4.1a is complete. Phase 4.1a.5 is the structure-only refactor. The unreviewed
-4.1b implementation is retained separately in a Git stash and is not included in
-this changeset. Its restoration and conflict resolution must preserve IPC behavior;
-Phase 4.2 has not started. No placeholder module directories are required.
+`folio -> {folio_frontend, folio_backend} -> folio_shared`. There is still one
+executable and separate Frontend/Backend processes at runtime. Presentation never
+calls Storage directly. Frontend reuse across TUI, CLI or GUI does not make a
+component shared between runtime roles: connection/launch code stays in app/.
 
+Each module owns its headers. include/ separates declarations from sources; it does not itself promise an exposed API. The folio/ include prefix is reserved for lib/include/folio; app/include and server/include have no folio/ wrapper. Only lib/include is shared between roles; app/include and server/include are private to their owners, with explicit dispatcher/test access. Shared codec/transport headers under
+`lib/include/folio/ipc/` are implementation-facing cross-module
+interfaces, not a second business API. I/O filesystem/path interfaces are shared
+through `lib/include/folio/io/`; atomic-write internals and test hooks stay private.
+Wire value types no longer require a Backend handler header. Process error values
+are shared; Frontend launching and Backend execution have separate headers.
+No production target receives another module's private source path. Internal
+tests explicitly receive the private paths they exercise. CMake visibility is a
+build boundary, not language-level access control.
 
-### Phase 4.1b status update
+The earlier Phase 4.1a.5 physical layout is superseded. This role-based refactor
+preserves the pending runtime implementation without expanding its behavior.
 
-Internal local IPC, readiness handshake, Client lifetime, bootstrap configuration,
-and Backend Catalog startup/finalization are now implemented. The default welcome
-TUI connects to or starts the Backend and retains its connection. See the
-[implemented connection lifecycle](application-design.md#phase-41b-connection-lifecycle--implemented)
-for current contracts. Earlier Phase 4.1a-only baseline statements above describe
-the prior milestone. Public Application operations, queues, Edit Locks and Push
-Events remain planned.
+## Backend runtime scheduling — Implemented
 
-Configuration and I/O ownership now follow [Configuration](configuration.md) and
-[File I/O](io.md). Config and Storage reuse internal I/O without reverse dependencies;
-Application-specific connection settings and endpoint derivation live in `application/ipc.cpp`.
+The existing BackendStateMachine owns lifecycle. Bounded IPC workers own individual
+connections and OS waits; one Backend-owned queue and executor own all operation
+execution. Query and future Mutation Operations share admission and scheduling.
+Accepted is session-only responsibility, followed by a final result/error.
+Disconnection does not retract accepted work. Stopping/Finish drain and join
+runtime resources before explicit Catalog finalization under RepositoryOwnership.
+Public methods remain synchronous; UI/IPC Worker integration is deferred to 4.4b.
+See [IPC runtime contracts and TODOs](ipc-protocol.md).

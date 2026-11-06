@@ -2,15 +2,17 @@
 
 ## Project Context & Structure
 
-Folio is a personal TUI application written in C++20, built with CMake and FTXUI, with GoogleTest, GoogleMock, and CTest for testing. Log, Memo, Todo, and Directory are its four first-class Entry types. Core provides in-memory domain models and shared types, while the same `folio_backend` target contains a private Storage subsystem for codecs and Normal persistence. Subtasks belong to Todo. The TUI provides a welcome screen with `q` to exit.
+Folio is a personal TUI application written in C++20, built with CMake and FTXUI, with GoogleTest, GoogleMock, and CTest for testing. Log, Memo, Todo, and Directory are its four first-class Entry types. Core provides in-memory domain models and shared types through `folio_shared`. Frontend-only code builds as `folio_frontend`; Backend-only code, including private Storage, builds as `folio_backend`. The single `folio` executable links both roles. Subtasks belong to Todo. The TUI provides a welcome screen with `q` to exit.
 
-- `lib/include/folio/core/`: public domain-model headers available to frontends.
-- `lib/src/core/`: domain implementations and `lib/src/core/internal/`: private domain helpers.
-- `lib/src/io/`: private byte-oriented file operations and generic path helpers; no domain, Config, Storage, or Application dependency.
-- `lib/src/storage/`: private persistence implementation, including codecs, filesystem operations, and the Normal Repository. Storage depends on Core models; Core models do not depend on Storage.
-- `app/src/main.cpp`: process-mode dispatch; `app/src/tui/`: terminal presentation.
-- `lib/include/folio/application/` and `lib/src/application/`: shared Backend launch, connection, and public Normal read access for all Frontends; mutations remain deferred.
-- `lib/src/application/internal/`: private OS process mechanisms, Backend ownership, and lifecycle implementation.
+- `app/include/` and `app/src/`: Frontend-only interfaces and implementations, including launching/discovery, BackendConnectionHandle and TUI presentation.
+- `app/src/main.cpp`: shared process dispatcher; the deliberate consumer of both role entry points.
+- `server/include/backend.hpp`: narrow Backend execution entry point.
+- `server/src/runtime/` and `server/src/ipc/`: private Backend lifecycle, ownership and connection scheduling.
+- `server/src/`: Backend entry-point implementation and private operation handlers/executor.
+- `server/include/storage/` and `server/src/storage/`: Backend-private persistence, Catalog, codecs and NormalRepository; never accessible to Frontend implementation.
+- `lib/include/folio/` and `lib/src/`: shared Core models, Configuration, Logging, byte-oriented I/O, Application contracts and IPC facilities. Shared code depends on neither app nor server.
+- `lib/include/folio/ipc/`: implementation-facing protocol/transport interfaces intentionally shared between modules; not the stable business API.
+- `lib/src/core/internal/`, `lib/src/io/internal/` and `lib/src/logging/internal/`: colocated private helpers and test seams.
 - `tests/core/` and `tests/storage/`: domain-model and persistence tests, registered through `tests/CMakeLists.txt`.
 - `thirdparty/`: pinned dependency submodules.
 
@@ -24,11 +26,11 @@ Future direction is one configuration per OS user and one on-demand Backend with
 
 An Entry is an independently identifiable persistent Folio object: Log, Memo, Todo, or Directory. Use Entry to describe all four conceptually; terminology alignment must preserve existing program behavior and does not require every API to support all four types. Distinguish a type only when its fields, membership rules, or persistence layout require it; never use “Entry” to implicitly exclude Directory. Record is shorthand for Log, Memo, and Todo only. Use it for genuinely narrower APIs; do not introduce separate behavior for Records and Directories when their behavior is shared. Directory membership is a relationship between Entries, not a domain hierarchy. Keep independent classes without a common Entry base class. Directory has no parent ID: only Memo/Todo single-level organization is supported. Persisted Folio Entries are authoritative; the Catalog and binary Index are rebuildable projections.
 
-Keep dependency direction `folio -> folio_backend`, with TUI also using public Core domain APIs. The Application process foundation is private; do not expose Storage headers as public APIs. Core must remain independent of FTXUI and all presentation frameworks, with APIs reusable by a future CLI or alternative frontend. Keep business logic, storage, encryption, and synchronization out of UI components. Prefer clear module boundaries and straightforward solutions; do not create speculative modules, interfaces, placeholder classes, or unnecessary abstractions.
+Keep dependencies `folio -> folio_frontend / folio_backend -> folio_shared`. Frontend code must not depend on server interfaces; Backend code must not depend on app interfaces. The shared dispatcher is the deliberate exception. TUI uses shared public Core domain APIs. The Application process foundation is private; do not expose Storage headers as public APIs. Core must remain independent of FTXUI and all presentation frameworks, with APIs reusable by a future CLI or alternative frontend. Keep business logic, storage, encryption, and synchronization out of UI components. Prefer clear module boundaries and straightforward solutions; do not create speculative modules, interfaces, placeholder classes, or unnecessary abstractions.
 
-Keep the Core library boundary explicit. Public domain declarations belong under `lib/include/folio/core/`. Internal declarations belong alongside their implementations under `lib/src/`, including Storage headers under `lib/src/storage/`; do not expose implementation directories through `folio_backend`'s public include paths or include internal headers from public headers. The TUI links `folio_backend` for domain APIs and must not include or call Storage internals directly.
+Keep module boundaries explicit: each top-level module owns its `include/` declarations and `src/` implementations. Core declarations remain in `lib/include/folio/core/`; Storage declarations stay under `server/include/storage/` and implementations under `server/src/storage/`, both Backend-private. No production target receives another module's complete `src/` include path. Shared I/O and protocol interfaces used across module boundaries live in `lib/include/folio/`; private atomic/test hooks remain under module-local internal/ directories beneath `lib/src/`. These implementation-facing headers are not public business operations.
 
-Use `folio::core` for domain models, `folio::core::storage` for persistence, `folio::core::storage::codec` for serialization, and `folio::core::storage::internal` for Atomic Write implementation/testing helpers. Keep one `folio_backend` library target: Storage is an internal subsystem in that target, not a separate library. Keep `lib/include/` PUBLIC and source implementation paths PRIVATE; expose implementation headers to tests only through explicit test-target include paths. Keep implementation-only dependencies PRIVATE where possible.
+Use `folio::core` for domain models, `folio::core::storage` for persistence, `folio::core::storage::codec` for serialization, and `folio::core::storage::internal` for Storage implementation/testing helpers. Storage remains an internal subsystem of `folio_backend`, not a separate library. Each target exports only its own include directory and shared dependency requirements; source paths remain PRIVATE, except explicit test-only access. Keep implementation-only dependencies PRIVATE where possible.
 
 Call `folio::core::ensure_sodium_initialized()` before using libsodium in Core code. `Id::generate()` already calls this shared one-time helper.
 
@@ -83,17 +85,15 @@ Run `./build/folio` on Unix-like systems with a single-configuration build, `./b
 
 Use concise imperative commit subjects; do not create commits unless requested. Preserve existing user changes and do not perform destructive Git operations without explicit authorization. Exclude generated build output from commits. Update README or relevant documentation when build instructions, architecture, or visible behavior materially change. Keep extensive implementation documentation out of this file. Pull requests should summarize changes and actual verification, with terminal output or screenshots where useful for TUI changes.
 
-Phase 4.1a.5 uses one static folio_backend target and the folio executable. The executable receives app/src and lib/include only; lib/src is private and explicitly available to internal tests. The public Backend dispatch header exposes no Storage types. Phase 4.1b is stashed separately pending review; preserve it when restoring after the structural commit.
+Runtime-role ownership supersedes the earlier Phase 4.1a.5 single-library layout. Keep one executable and three role-aligned static libraries: shared, Frontend and Backend. Only the dispatcher links both role entry points; linking them into one binary does not authorize bypassing IPC. Preserve pending runtime work and existing Git staging during structural refactors.
 
-Public Application headers under lib/include/folio/application have corresponding implementations at lib/src/application/<name>.cpp. Header-only declarations/templates need no empty source file.
+Headers in each module's include/ tree have corresponding module-relative sources where implementations exist. include/ does not imply public visibility: only lib/include is shared, while app/include and server/include remain role-private. Implementation details intentionally colocated with sources belong under internal/. Header-only declarations/templates need no empty source file. Keep ordinary headers out of src/; internal/ is the explicit exception for colocated implementation details and test seams. Use subdirectories for real responsibilities (Core, IPC, Storage, runtime, TUI), not generic application/ wrappers inside app/ or server/. Shared Application contracts remain under lib/application; shared IPC interfaces/implementations live under lib/include/folio/ipc and lib/src/ipc.
 
-Private declarations in modules with public APIs belong in module-local internal/ directories (for example application/internal and core/internal). Storage is entirely private and lives directly under lib/src/storage/ without an additional internal/ directory. Sources implementing public headers retain matching module-relative paths.
-
-Frontend-independent Backend launching, discovery, connection and handshake logic belongs in the Application library, not app/. Use BackendConnectionHandle for the shared connection abstraction. Frontends use launch_backend(); generic launch_process() and current_executable() remain private OS helpers.
+Launching/discovery, handshake and BackendConnectionHandle are reusable across TUI/CLI/future GUI but are Frontend-only, so belong under app/. Frontends use launch_backend(); generic launch_process() and current_executable() remain private app OS helpers. The Backend run_backend() entry point belongs under server/. Shared Application contracts do not own either runtime role.
 
 Shared configuration APIs belong in lib/include/folio/config/ with matching implementations in lib/src/config/. Public configuration headers must not depend on private Storage or IPC interfaces.
 
-Low-level file operations belong in lib/src/io/. Atomic creation and replacement remain distinct. Writes use byte spans with zero-copy string-view overloads; reads return owning opaque bytes. Config owns effective-path policy; Storage results preserve distinct Storage and I/O errors, including publication flags; shared declarations live in storage/common.hpp. See docs/io.md. Tests inject configuration inputs explicitly; do not restore global configuration overrides.
+Low-level file operations are implemented in lib/src/io/, with cross-module filesystem/path interfaces in lib/include/folio/io/. Atomic creation and replacement remain distinct. Writes use byte spans with zero-copy string-view overloads; reads return owning opaque bytes. Config owns effective-path policy; Storage results preserve distinct Storage and I/O errors, including publication flags; shared declarations live in storage/common.hpp. See docs/io.md. Tests inject configuration inputs explicitly; do not restore global configuration overrides.
 
 Process diagnostics use the single default spdlog logger (`folio/logging/logging.hpp`).
 Use source-aware SPDLOG macros at handling boundaries, without changing error
@@ -102,3 +102,11 @@ text, secrets, or arbitrary exception messages. Platform log paths require no
 TOML loading. Tests inject log roots; no rotation/retention is implemented.
 
 Shared locator-free metadata types live in `lib/include/folio/core/metadata.hpp`. Storage uses private `Located<Metadata>` composition for locator information; Application returns the Core metadata values. Do not duplicate metadata field definitions in Application or expose private locators.
+
+Backend IPC workers own connections and OS readiness waits; one shared bounded
+RequestScheduler/executor serializes all accepted Application Operations. Workers
+must not access live Catalog/Repository state. Accepted is session-only admission,
+not a final result or a durability promise. Disconnecting does not cancel accepted
+work. Stop admission, drain accepted work and join workers before explicit Catalog
+finalization; retain RepositoryOwnership until afterward. Public methods remain
+blocking and must eventually run off the UI thread. See docs/ipc-protocol.md.

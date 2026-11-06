@@ -1,7 +1,7 @@
-#include "application/internal/process.hpp"
-#include "application/internal/repository_ownership.hpp"
-#include <folio/application/backend.hpp>
-#include "application/internal/backend_states.hpp"
+#include "process.hpp"
+#include "runtime/repository_ownership.hpp"
+#include "backend.hpp"
+#include "runtime/backend_states.hpp"
 #include "folio/core/types.hpp"
 
 #include <gtest/gtest.h>

@@ -1,8 +1,8 @@
 #include <folio/logging/logging.hpp>
 #include <folio/core/types.hpp>
-#include <folio/application/backend_connection_handle.hpp>
+#include "backend_connection_handle.hpp"
 #include "logging/internal/session_file_test_access.hpp"
-#include "application/internal/backend_states.hpp"
+#include "runtime/backend_states.hpp"
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/base_sink.h>
 

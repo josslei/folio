@@ -1,9 +1,9 @@
 #include "error_test_helpers.hpp"
-#include "io/filesystem.hpp"
+#include <folio/io/filesystem.hpp>
 #include "storage/catalog_coordinator.hpp"
 #include "storage/normal_repository.hpp"
 #include "storage/normal_repository_test_hooks.hpp"
-#include "io/atomic_write.hpp"
+#include "io/internal/atomic_write.hpp"
 
 #ifndef _WIN32
 #include <cerrno>

@@ -1,6 +1,7 @@
-#include <folio/application/backend_connection_handle.hpp>
-#include "application/internal/process.hpp"
-#include "application/internal/application_codec.hpp"
+#include "backend_connection_handle.hpp"
+#include "process.hpp"
+#include <folio/ipc/application_codec.hpp>
+#include <folio/ipc/message_transport.hpp>
 #include <algorithm>
 #include <array>
 #include "storage/normal_repository.hpp"
@@ -80,21 +81,10 @@ class MetadataAccessIntegration : public testing::Test {
     return send_bytes(stream, ipc::encode_message(message));
   }
   std::optional<ipc::Message> receive(ipc::IpcStream& stream) {
-    std::string input;
-    std::optional<ipc::Message> result;
-    const auto done = until([&] {
-      std::array<std::byte, 65536> bytes{};
-      auto read = stream.read(bytes);
-      if (std::holds_alternative<ipc::IpcError>(read)) return false;
-      input += ipc::payload_text(std::span(bytes).first(std::get<std::size_t>(read)));
-      auto decoded = ipc::decode_message(input);
-      if (auto* message = std::get_if<std::optional<ipc::Message>>(&decoded); message && *message) {
-        result = std::move(**message);
-        return true;
-      }
-      return false;
-    });
-    return done ? std::move(result) : std::nullopt;
+    ipc::MessageTransport transport;
+    auto received = ipc::receive_message(stream, transport, std::chrono::steady_clock::now() + 8s);
+    if (auto* message = std::get_if<ipc::Message>(&received)) return std::move(*message);
+    return std::nullopt;
   }
   ipc::IpcStream raw_connection() {
     auto settings = std::get<ipc::ConnectionSettings>(ipc::connection_settings(paths));
@@ -239,6 +229,10 @@ TEST_F(MetadataAccessIntegration, PartialRequestWaitsForCompletionWithoutBlockin
   ASSERT_TRUE(std::holds_alternative<std::size_t>(pending));
   EXPECT_EQ(std::get<std::size_t>(pending), 0u);
   ASSERT_TRUE(send_bytes(stream, std::string_view(bytes).substr(bytes.size() - 1)));
+  auto accepted = receive(stream);
+  ASSERT_TRUE(accepted);
+  EXPECT_EQ(accepted->kind, ipc::MessageKind::Accepted);
+  EXPECT_TRUE(accepted->payload.empty());
   auto response = receive(stream);
   ASSERT_TRUE(response);
   EXPECT_EQ(response->kind, ipc::MessageKind::Response);
@@ -273,10 +267,10 @@ TEST_F(MetadataAccessIntegration, MalformedCompleteRequestsKeepApplicationErrorS
     ASSERT_TRUE(send(stream, {ipc::MessageKind::Request, ipc::payload_bytes(payload)}));
     auto message = receive(stream);
     ASSERT_TRUE(message);
-    ASSERT_EQ(message->kind, ipc::MessageKind::Response);
-    auto decoded = ipc::decode_access_response(ipc::payload_text(message->payload));
-    ASSERT_TRUE(std::holds_alternative<ipc::AccessResponse>(decoded));
-    EXPECT_TRUE(std::holds_alternative<app::ApplicationError>(std::get<ipc::AccessResponse>(decoded)));
+    ASSERT_EQ(message->kind, ipc::MessageKind::Rejected);
+    auto decoded = ipc::codec::decode<app::ApplicationError>(ipc::payload_text(message->payload));
+    ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(decoded));
+    EXPECT_EQ(std::get<app::ApplicationError>(decoded).reason, app::ErrorReason::InvalidQuery);
     ASSERT_TRUE(send(stream, {ipc::MessageKind::Ping, {}}));
     auto pong = receive(stream);
     ASSERT_TRUE(pong);

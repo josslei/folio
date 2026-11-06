@@ -7,7 +7,11 @@ Application concepts; Core supplies secure UUID generation but does not depend
 on mutation submission or Recovery. This contract step introduced no mutation methods, handlers, or execution changes.
 Phase 4.2c adds shared codec support and bounded complete-message transport, described in the
 [unified IPC protocol](ipc-protocol.md); concrete Mutation exchanges remain deferred.
-Read APIs are unchanged.
+Read API signatures remain unchanged. The subsequent runtime refactor adds
+session-only Accepted/Rejected admission and a shared sequential executor. Accepted
+is not a final Mutation response, durable receipt or promise of cross-restart
+execution. Mutation-specific admission/result integration remains MUT-12 / 4.3a;
+transport failure must not fabricate NotApplied. See [runtime rules](ipc-protocol.md#scheduling-and-lifecycle).
 
 ## Application Operation taxonomy — Decided/Planned
 

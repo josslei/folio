@@ -1,6 +1,13 @@
-# Unified IPC protocol — Phase 4.2c
+# Unified IPC protocol and runtime
 
 ## Implemented boundary
+
+Shared transport, codecs and wire value types are under lib/. Frontend exchanges
+and BackendConnectionHandle belong to app/; server connection management, admission
+and execution belong to server/. Implementation-facing protocol headers are under
+`lib/include/folio/ipc/`; they depend on shared contracts and
+Core values, never Backend handler or Storage headers. This physical separation
+does not change messages or runtime behavior.
 
 Query and Mutation are categories of Application Operation, not C++ base classes.
 Both use the existing per-user IPC connection, version-1 messages, positional
@@ -47,23 +54,44 @@ negotiation or separate Mutation schema version.
 | Hello / Ready | 1 / 2 | Readiness handshake |
 | Ping / Pong | 3 / 4 | Connection health |
 | Reject | 5 | Protocol/lifecycle rejection followed by closure |
-| Request / Response | 6 / 7 | One complete Application request / response |
+| Request / Response | 6 / 7 | Complete Application request / final result |
+| Accepted | 11 | Empty acknowledgment: admitted to this Backend session |
+| Rejected | 12 | ApplicationError: refused before acceptance |
 
-`MessageTransport` owns partial-transfer bookkeeping. Its queue/flush/receive
-methods progress nonblocking I/O; `exchange_message` uses the same methods to
-provide a synchronous Frontend exchange. The Backend services each connection
-incrementally, so a slow or large transfer does not block other connections.
-A 64 KiB per-poll I/O budget is an implementation scheduling choice, never a wire
-boundary. A complete message may require any number of OS reads/writes.
+`MessageTransport` owns partial-transfer bookkeeping. `send_message` and
+`receive_message` drive it using OS waits, not recurring sleeps. Linux/macOS use
+`poll()` readiness with a close-on-exec wake pipe; Windows uses overlapped Named
+Pipe I/O and `WaitForMultipleObjects` on completion/wake events. Windows buffers
+and OVERLAPPED objects remain alive until completion or cancellation has drained.
+The 64 KiB OS-transfer buffer is not a wire boundary.
 
-The header is validated before payload accumulation. Buffers grow with received
-bytes, not a peer's advertised size. No request reaches a handler until the whole
-message has arrived and its payload has been decoded/validated. EOF during a
-message reports connection loss; malformed headers and unexpected trailing bytes
-report Protocol failure. The Backend enforces three-second inactivity and
-thirty-second total reception deadlines. Frontend exchanges have bounded deadlines.
-Empty Request payloads are malformed complete Application requests, not partial
-transport messages, and retain the existing confirmed ApplicationError behavior.
+Headers are validated before payload accumulation. At most 64 connection workers
+exist, with one stream owner per worker. The Backend accepts no more than four
+buffered Application exchanges concurrently: each reserves one maximum-sized
+64 MiB exchange **before** accumulating a Request body, and holds that reservation
+through queuing, execution and final delivery. An abandoned connection transfers
+its reservation obligation to its accepted job until execution completes. This is
+a conservative 256 MiB logical-buffer allowance, not an exact process-RSS cap:
+MessagePack/domain objects, transient encoding copies, executor state and thread
+stacks also use bounded resources. Lifecycle messages must be empty and cannot
+bypass this allowance with large payloads. No unbounded per-connection queues exist.
+
+A capacity rejection before the body can be buffered sends Rejected and closes
+that connection; an entirely received request rejected by queue admission keeps
+its connection usable. Malformed complete Query payloads also receive Rejected
+with InvalidQuery and remain usable. Invalid headers, lifecycle sequencing and
+pipelined requests receive Reject/closure, never a fabricated execution failure.
+
+Handshakes and stalled transfers have three-second bounds. Complete request
+reception has a thirty-second total bound. Idle established connections sleep
+until OS readiness or shutdown; there is no periodic IPC wakeup. A successful
+Accepted acknowledgment ends the Frontend's ordinary admission deadline: waiting
+for the final result has no short completion deadline, because earlier queued
+operations may legitimately take time. Once a final transfer begins, inactivity
+and complete-transfer bounds apply. EOF still reports connection loss. No
+liveness guarantee, heartbeat during an outstanding call, or cancellation is
+implied by acceptance. Startup discovery retains bounded launch/connect retries;
+those retries are separate from established connection progress.
 
 MessagePack collections are limited to 100,000 items, nesting to 32, and exact
 field counts, types, enum values, UUIDs and variant tags are checked. Truncation
@@ -71,18 +99,56 @@ and trailing MessagePack content are rejected. Evidence validation is structural
 per-operation semantic combinations await execution design. Publication is never
 interpreted as durability.
 
-The former chunk producer/assembler and all chunk/end message kinds are removed.
-There is no multiplexing, RequestId, replay or reconnection. The existing maximum
-of 64 peers also bounds concurrent buffers; the message limit is not a global
-process memory budget. Future incremental editing or streaming, if needed, needs
-explicit message semantics rather than assuming OS transfer boundaries are
-Application operations.
+The former chunk producer/assembler and all chunk/end message kinds remain
+removed. No RequestId, multiplexing, replay or automatic reconnection is added.
+Protocol version remains 1; admission changes this pre-release internal protocol,
+so running Frontends and Backend must come from the same build. Future streaming
+or incremental editing needs explicit operation semantics.
+
+## Scheduling and lifecycle
+
+```text
+Frontend connections -> bounded IPC workers -> admission -> one shared FIFO
+                                                        -> one executor
+                         originating connection <- final result/error
+```
+
+The complete request is decoded/validated before queue admission. A single
+`RequestScheduler` owns execution, with capacity 32 including its active job;
+the stricter exchange-buffer reservations may reject earlier. Both current Queries
+and future Mutations use this scheduling boundary. No connection worker accesses
+the Catalog. All operation execution is sequential for now; idle workers and the
+executor block on OS events or condition variables, independently of each other.
+A slow operation cannot prevent another connection's handshake, admission or Ping.
+
+Admission atomically refuses or enqueues work. Accepted is sent before the final
+response, even if execution finishes immediately. It promises responsibility only
+within this session, not durable queuing, execution after a crash, or delivery.
+The blocking Public API consumes this stage internally; no UI callback is added.
+The Backend records Queued/Executing/Finished facts for delivery diagnostics;
+these are historical scheduling facts, not authoritative persistence evidence.
+
+A connection that disconnects after acceptance loses delivery, not its queued
+work. Last-Frontend disconnection stops admission. Explicit shutdown/failure also
+stops admission; every accepted job drains before Catalog finalization. Idle reception wakes on admission closure; usable connections remain available
+through Report. Busy workers attempt final delivery with bounded deadlines.
+Finish cooperatively closes connections and joins remaining workers. No worker outlives Storage resources.
+The existing Bootstrap -> Serve -> Stopping -> Report -> Finish state machine
+remains the sole lifecycle controller. Report drains if a failure bypassed Stopping; Finish retains an exceptional
+drain fallback if earlier cleanup failed. See the detailed
+[Backend lifecycle call flow](application-design.md#backend-lifecycle-call-flow--implemented). Only then may `finish_session()` run, under RepositoryOwnership.
+No Marker/Index algorithm or finalization eligibility rule changes.
+
+Scheduling is in-memory session execution, **not Recovery**. Future Batch
+operations must durably prepare required Recovery information during execution,
+before their first dependent authoritative change; it need not precede Accepted.
+Frontend Draft Persistence is independent. No Recovery mechanism is implemented.
 
 ## Results and errors
 
-Current malformed Query payloads retain their existing confirmed ApplicationError
-behavior; malformed headers and invalid message sequencing reject the connection. Valid
-Application errors leave a connection usable. Transport errors, malformed responses
+Admission Rejected carries ApplicationError but is not a final execution failure.
+After Accepted, Response carries the existing confirmed Application result/error.
+Valid final Application errors leave a connection usable. Transport errors, malformed responses
 and response-type mismatches invalidate the public connection handle.
 
 Future Mutation exchanges must keep confirmed success, confirmed MutationFailure
@@ -93,21 +159,28 @@ proof, safe replay, deduplication or exactly-once execution.
 
 ## Deferred decisions
 
-### IPC-01 — OS event-driven waiting (Deferred Implementation; Phase 4 completion gate)
+### IPC-01 — Event-driven waiting (Implemented; native verification incomplete)
 
-TODO: Replace the Backend's five-millisecond connection polling and the
-Frontend exchange's one-millisecond polling with OS event-driven waits for
-read/write readiness, disconnection, deadlines, and shutdown wakeups. Sleeping
-between polls avoids busy-spinning but still wakes idle processes unnecessarily.
-Use appropriate Linux, macOS, and Windows mechanisms; preserve partial-transfer
-handling, bounded deadlines, multi-connection fairness, and lifecycle ordering.
-The specific native mechanism remains an implementation decision.
+Periodic Backend progress and Frontend response polling have been removed.
+macOS runtime tests cover readiness, disconnection, timeout and shutdown wakeups;
+Linux and Windows native execution remains required for release verification.
+The current welcome TUI's existing connection monitor remains separate from this
+transport; its replacement belongs to Frontend UI/IPC Worker integration below.
 
-This work is deferred from the current protocol simplification, but **must be
-implemented and verified before Phase 4 is declared complete**. Tests must cover
-idle waiting, readiness/disconnection wakeups, timeout expiry, and shutdown without
-depending on recurring short sleeps. This TODO does not authorize implementation now.
+| ID | Status | Missing capability / revisit condition |
+|---|---|---|
+| IPC-02 | Deferred Implementation | Concrete Mutation execution and operation-specific admission, including mapping admission rejection and accepted-but-unconfirmed submission into Mutation contracts: 4.3a. Existing MutationId correlation and final evidence must be preserved. |
+| IPC-03 | Deferred Implementation | Edit Locks in 4.3b; Push Notifications in 4.4a. Scheduling does not implement either protocol. |
+| IPC-04 | Deferred Implementation | Frontend UI/IPC Worker ownership and completion events, connection monitor replacement, bounded reconnection and ordinary state initialization on a new connection: 4.4b. Blocking methods must run off the UI thread; no extra manual Refresh is required solely by reconnecting. |
+| IPC-05 | Deferred Implementation | Durable Batch Recovery preparation before protected authoritative changes; revisit Batch/Recovery design. Acceptance does not require persistence. Frontend Draft Persistence remains separate in Recovery phases. |
+| IPC-06 | Open Design Decision | Concurrent Read execution requires a demonstrated need and Catalog access policy; initially all execution is sequential. |
+| IPC-07 | Open Design Decision | Request cancellation semantics need operation-specific safety rules. Ceasing to wait or disconnecting does not cancel accepted work. |
+| IPC-08 | Deferred Verification | Linux/Windows runtime, access controls, overlapped I/O cancellation and shutdown must run on native CI before claiming support is verified. |
 
-The traceable MUT entries in [mutation contracts](application-mutations.md#traceable-follow-up-work)
-track concrete payloads/dispatch in 4.3a, concurrency and Recovery, and the versioning
-review after Minimum TUI. These are dependencies, not implementation authorization.
+The existing MUT TODOs in [mutation contracts](application-mutations.md#traceable-follow-up-work)
+remain authoritative for RequestId/multiplexing, schema-versioning review after
+Minimum TUI, receipts/cross-restart lookup, deduplication/idempotency, revision
+checking, Draft Recovery and compound-operation Recovery. Exactly-once execution,
+safe automatic replay and execution proof from MutationId alone are **Not
+Guaranteed**. A hung operation can delay orderly draining indefinitely; Accepted
+is not a liveness guarantee and there is no safe forced-operation cancellation.

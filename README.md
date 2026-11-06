@@ -2,6 +2,18 @@
 
 Folio is a cross-platform personal logging application with a terminal user interface. Its core library is independent of the TUI so other frontends can reuse it. Log, Memo, Todo, and Directory are four first-class Folio Entries with independent Core models. Directory organizes Memo or Todo Entries within one level; Subtask belongs to Todo, and Tag is a shared value type.
 
+## Project layout
+
+- `app/`: Frontend interfaces and implementation (TUI, Backend connection and launching).
+- `server/`: Backend entry point, lifecycle, IPC serving, operation execution and private Storage.
+- `lib/`: shared Core, Configuration, Logging, I/O, Application contracts and IPC facilities.
+- `tests/`: isolated unit/integration tests, with opt-in resource-limit coverage.
+
+Each code module owns its `include/` headers and `src/` implementations. Only lib/include is shared; app/include and server/include remain role-private. The shared dispatcher is
+`app/src/main.cpp`. One executable links the `folio_frontend` and `folio_backend`
+static libraries, which both depend on `folio_shared`; runtime Frontends still
+communicate with the separate Backend process through IPC.
+
 ## Technology
 
 - C++20 and CMake 3.20 or newer

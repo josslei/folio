@@ -1,5 +1,5 @@
-#include "tui.hpp"
-#include <folio/application/backend_connection_handle.hpp>
+#include "tui/tui.hpp"
+#include "backend_connection_handle.hpp"
 #include <folio/logging/logging.hpp>
 #include "folio/core/version.hpp"
 #include <atomic>

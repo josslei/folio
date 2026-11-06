@@ -1,8 +1,8 @@
-#include "application/internal/process.hpp"
-#include <folio/application/backend.hpp>
-#include <folio/application/backend_connection_handle.hpp>
-#include <folio/application/ipc.hpp>
-#include "application/internal/repository_ownership.hpp"
+#include "process.hpp"
+#include "backend.hpp"
+#include "backend_connection_handle.hpp"
+#include <folio/ipc/ipc.hpp>
+#include "runtime/repository_ownership.hpp"
 #include "storage/catalog_coordinator.hpp"
 #include "storage/index_codec.hpp"
 #include <gtest/gtest.h>
@@ -37,8 +37,8 @@ std::string read(const fs::path& p) {
 }
 
 template <class F>
-bool until(F predicate) {
-  auto deadline = std::chrono::steady_clock::now() + 8s;
+bool until(F predicate, std::chrono::seconds timeout = 8s) {
+  auto deadline = std::chrono::steady_clock::now() + timeout;
   do {
     if (predicate())
       return true;
@@ -87,7 +87,10 @@ class Backend : public testing::Test {
 
   void TearDown() override {
     for (auto& child : children) {
-      if (!child.killed && !until([&] { return fs::exists(child.result); })) {
+      // A delayed competing candidate can acquire ownership just after the
+      // connected session exits. Its documented zero-Frontend grace is 10s.
+      // Keep operation assertions at 8s, but allow that bounded cleanup window.
+      if (!child.killed && !until([&] { return fs::exists(child.result); }, 12s)) {
         terminate(child.id);
         child.killed = true;
         ADD_FAILURE() << "Backend did not exit: " << child.id;

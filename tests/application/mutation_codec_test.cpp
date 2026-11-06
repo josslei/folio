@@ -1,4 +1,4 @@
-#include "application/internal/application_codec.hpp"
+#include <folio/ipc/application_codec.hpp>
 #include <gtest/gtest.h>
 
 namespace {

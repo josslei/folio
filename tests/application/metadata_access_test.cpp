@@ -1,4 +1,4 @@
-#include "application/internal/metadata_access.hpp"
+#include "metadata_access.hpp"
 #include "storage/catalog_coordinator.hpp"
 #include <gtest/gtest.h>
 #include <fstream>

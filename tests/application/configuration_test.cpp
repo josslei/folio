@@ -1,5 +1,5 @@
 #include <folio/config/configuration.hpp>
-#include "application/internal/backend_states.hpp"
+#include "runtime/backend_states.hpp"
 
 #include <folio/core/types.hpp>
 #include <gtest/gtest.h>

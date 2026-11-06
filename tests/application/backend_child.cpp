@@ -1,10 +1,10 @@
-#include "application/internal/process.hpp"
+#include "process.hpp"
 // Test-only process entry point with injected paths and bounded file barriers.
-#include <folio/application/backend.hpp>
+#include "backend.hpp"
 #include <folio/logging/logging.hpp>
-#include "application/internal/backend_states.hpp"
-#include <folio/application/backend_connection_handle.hpp>
-#include <folio/application/ipc.hpp>
+#include "runtime/backend_states.hpp"
+#include "backend_connection_handle.hpp"
+#include <folio/ipc/ipc.hpp>
 #include <fstream>
 #include <thread>
 namespace fs = std::filesystem;

@@ -1,5 +1,5 @@
-#include "application/internal/message_transport.hpp"
-#include "application/internal/application_codec.hpp"
+#include <folio/ipc/message_transport.hpp>
+#include <folio/ipc/application_codec.hpp>
 #include <gtest/gtest.h>
 
 namespace {

@@ -1,9 +1,10 @@
 # Internal File I/O — Implemented
 
-`lib/src/io/` owns data-format-independent file operations. It is private to the
-existing `folio_backend` static library, not exported to the executable. It has
-no Config, Application, Storage, or Core Domain Model dependency. Native OS APIs,
-C++20 facilities, and libsodium randomness supply its implementation.
+`lib/src/io/` implements data-format-independent file operations in
+`folio_shared`. Cross-module filesystem/path interfaces live under
+`lib/include/folio/io/`, consumed by Config, Logging and Backend Storage without
+exposing `lib/src/`. Atomic-write implementation seams and test hooks remain
+private. I/O has no dependency on Core models, Config, Storage or Application.
 
 ## Files and interfaces
 

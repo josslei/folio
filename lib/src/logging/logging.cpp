@@ -1,6 +1,6 @@
 #include <folio/logging/logging.hpp>
 #include "logging/internal/session_file_test_access.hpp"
-#include "io/filesystem.hpp"
+#include <folio/io/filesystem.hpp>
 
 #include <spdlog/pattern_formatter.h>
 #include <spdlog/sinks/basic_file_sink.h>

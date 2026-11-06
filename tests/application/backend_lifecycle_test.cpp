@@ -1,4 +1,4 @@
-#include "application/internal/backend_state_machine.hpp"
+#include "runtime/backend_state_machine.hpp"
 
 #include <gtest/gtest.h>
 #include <algorithm>

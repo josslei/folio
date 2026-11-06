@@ -1,9 +1,11 @@
-#include "application/internal/backend_states.hpp"
+#include "runtime/backend_states.hpp"
 
 #include <gtest/gtest.h>
 #include <folio/logging/logging.hpp>
 #include <spdlog/sinks/base_sink.h>
 #include <fstream>
+#include <future>
+#include "backend_connection_handle.hpp"
 #include <stdexcept>
 
 namespace folio::application::internal {
@@ -29,6 +31,7 @@ class BackendStates : public ::testing::Test {
   }
 
   void TearDown() override {
+    context.runtime.reset();
     context.coordinator.reset();
     context.repository.reset();
     context.ownership.reset();
@@ -96,6 +99,64 @@ TEST_F(BackendStates, NormalFinishPersistsAndReleasesResources) {
   EXPECT_TRUE(context.diagnostics.empty());
   EXPECT_FALSE(fs::exists(marker()));
   EXPECT_TRUE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+  expect_released();
+}
+
+TEST_F(BackendStates, AcceptedWorkDrainsBeforeCatalogFinalizationAndOwnershipRelease) {
+  using namespace std::chrono_literals;
+  ASSERT_EQ(bootstrap(), BackendActionOutcome::Success);
+  std::promise<void> entered, release, stopping;
+  auto gate = release.get_future().share();
+  auto in_stopping = stopping.get_future();
+  std::stop_source shutdown;
+  std::jthread lifecycle, frontend;
+  bool released = false;
+  std::optional<BackendConnectionHandle> handle;
+  std::optional<ApplicationResult<core::Memo::Snapshot>> response;
+  BackendActionOutcome stopped{}, finished{};
+  struct Cleanup {
+    std::function<void()> action;
+    ~Cleanup() { action(); }
+  } cleanup{[&] {
+    shutdown.request_stop();
+    if (!released) release.set_value();
+    if (lifecycle.joinable()) lifecycle.join();
+    if (frontend.joinable()) frontend.join();
+  }};
+  context.runtime = std::make_unique<IpcServer>(*context.ownership,
+      [&](const AccessRequest&) -> AccessResponse {
+        entered.set_value();
+        gate.wait();
+        return ApplicationError{ErrorCategory::TargetUnavailable, ErrorReason::NotFound,
+                                "Synthetic missing Memo", {ErrorAction::Dismiss}};
+      });
+  lifecycle = std::jthread([&] {
+    context.runtime->run(shutdown.get_token());
+    stopping.set_value();
+    stopped = Stopping(context);
+    finished = Finish(context);
+  });
+  auto settings = std::get<ConnectionSettings>(connection_settings(paths));
+  auto connected = BackendConnectionHandle::connect(settings);
+  ASSERT_TRUE(std::holds_alternative<BackendConnectionHandle>(connected));
+  handle.emplace(std::get<BackendConnectionHandle>(std::move(connected)));
+  frontend = std::jthread([&] { response = handle->load_memo(core::Id::generate()); });
+  ASSERT_EQ(entered.get_future().wait_for(3s), std::future_status::ready);
+  shutdown.request_stop();
+  ASSERT_EQ(in_stopping.wait_for(3s), std::future_status::ready);
+  EXPECT_TRUE(fs::exists(marker()));
+  auto competing = RepositoryOwnership::acquire(paths);
+  EXPECT_TRUE(std::holds_alternative<ProcessError>(competing));
+  release.set_value();
+  released = true;
+  lifecycle.join();
+  frontend.join();
+  EXPECT_EQ(stopped, BackendActionOutcome::Success);
+  EXPECT_EQ(finished, BackendActionOutcome::Success);
+  EXPECT_FALSE(fs::exists(marker()));
+  ASSERT_TRUE(response);
+  ASSERT_TRUE(std::holds_alternative<ApplicationError>(*response));
+  EXPECT_EQ(std::get<ApplicationError>(*response).reason, ErrorReason::NotFound);
   expect_released();
 }
 

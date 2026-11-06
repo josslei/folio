@@ -1,7 +1,7 @@
 #include "storage/normal_repository.hpp"
-#include "io/filesystem.hpp"
+#include <folio/io/filesystem.hpp>
 #include "storage/common.hpp"
-#include "io/atomic_write.hpp"
+#include "io/internal/atomic_write.hpp"
 
 #include <gtest/gtest.h>
 
