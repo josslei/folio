@@ -1,12 +1,13 @@
 # Coding and maintenance conventions
 
-**Status:** existing repository conventions, consolidated without selecting a new
-formatter or linter. Both humans and agents use these rules. Architecture-specific
+**Status:** existing repository conventions, with check-only formatter and static-analysis configuration. Both humans and agents use these rules. Architecture-specific
 requirements remain in their [contract owners](../architecture/principles.md).
 
 ## C++ conventions
 
-Use standard C++20 without compiler extensions. Follow existing two-space indentation, `snake_case` functions and files, `PascalCase` test suites, and `folio::core` namespaces. No formatter or linter is configured.
+Use standard C++20 without compiler extensions. Follow existing two-space indentation, `snake_case` functions and files, `PascalCase` test suites, and `folio::core` namespaces. Mechanical formatting is defined by `.clang-format`; selected correctness checks
+are defined by `.clang-tidy`. Run `$validate` explicitly before committing; see
+[harness coverage](harness.md#explicit-validation-command).
 
 Prefer RAII, standard library facilities, explicit ownership and lifetimes, and composition over unnecessary inheritance. Avoid raw owning pointers. Keep public interfaces minimal and implementation details out of public headers where practical. Use English identifiers, comments, diagnostics, and error messages. Keep CMake target-based, with explicit dependency relationships and appropriate visibility.
 

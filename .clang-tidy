@@ -1,0 +1,6 @@
+# Deliberately focused correctness checks; no naming/modernization rewrite policy.
+Checks: '-*,bugprone-use-after-move,bugprone-dangling-handle,bugprone-sizeof-expression,bugprone-suspicious-memset-usage,bugprone-undefined-memory-manipulation,clang-analyzer-core.*,clang-analyzer-cplusplus.*'
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*(app|server|lib)/(include|src)/.*'
+SystemHeaders: false
+FormatStyle: file

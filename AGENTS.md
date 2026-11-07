@@ -35,6 +35,8 @@ limits from the [future roadmap](docs/development/roadmap.md). The
 
 ## Validation and unresolved information
 
+For explicitly requested pre-commit validation, use `$validate` or
+`python3 scripts/validate.py`; see [coverage and limits](docs/engineering/harness.md#explicit-validation-command).
 Use parallel incremental compilation and task-relevant tests; the
 [testing guide](docs/engineering/testing.md#commands-and-concurrency) supplies commands.
 Run the full relevant suite when scope/instructions require it; run resource-limit
