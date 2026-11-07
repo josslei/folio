@@ -1,22 +1,31 @@
-# Storage & Persistence Architecture v0.1
+# Storage and persistence contract
 
-This document records the agreed direction for Folio persistence and the implemented milestones. Remaining design decisions are listed at the end.
+**Status:** implemented Normal persistence, with planned Vault/Recovery extensions
+marked in their sections. This is the owner for file layouts, Repository/Catalog
+coordination, Index and Session Marker safety. The Application
+[mutation contract](mutations.md) owns public outcomes and editing rules;
+[Backend lifecycle](backend-lifecycle.md) owns runtime sequencing.
+No format or durability policy is changed by documentation reorganization.
 
 ## Principles and Boundaries
 
-Internal operations use `folio::core::internal::Result<T, E>` from `src/core/internal/result.hpp`, represented by `std::variant<T, E>`. Signatures specify both the success and subsystem error types directly, without specialized result aliases. The utility remains internal to Core.
+Shared `folio::core::Result<T, E>` from `lib/include/folio/core/result.hpp` is
+`std::variant<T, E>`. StorageResult and RepositoryMutationError retain distinct
+Storage/I/O error alternatives; see [I/O ownership and adapters](io.md#ownership-and-adapters).
+The public Application contracts do not expose these private Storage results.
 
 - Folio uses independent file-based persistence; there is no database.
 - Persisted Folio Entries are authoritative; the MetadataCatalog and its binary index are rebuildable projections.
 - Every persistent structured format has a version. Newer Folio versions may migrate older formats; older versions need not read newer formats.
 - Storage, Vault, and future Git synchronization are separate concerns. Synchronization algorithms are outside this design phase.
-- Startup configuration supplies `normal_root`, `vault_root`, `state_root`, and `cache_root` explicitly. No storage paths are hard-coded or defaulted by the filesystem layer. The state root is separate from the data roots.
+- Startup supplies effective StoragePaths with `normal_root`, `vault_root` and
+  ApplicationPaths for config/data/state/cache/logs/optional runtime explicitly. No storage paths are hard-coded or defaulted by the filesystem layer. The state root is separate from the data roots.
 
 An Entry is an independently identifiable persistent Folio object. The four current Entry types are Log, Memo, Todo, and Directory. All four are conceptually at the same level. Directory membership is a relationship between Entries, not a domain hierarchy. This terminology does not require identical fields, APIs, or persistence layouts, and does not itself change existing program behavior. Record means specifically Log, Memo, or Todo. Directory is also an Entry. Use Record only for operations that actually have this narrower scope; shared Entry behavior must not be split merely because this term exists. This naming refactor preserves existing search results, listings, validation rules, and persistence formats. The historical MessagePack `entries` key remains unchanged.
 
 ## Normal Data Formats and Layout
 
-Normal entries use `logs/`, `memos/`, and `todos/`, plus a logical Trash. Logs stay flat. Memo and Todo may be organized into one level of physical folders corresponding to their logical Directories. Directory is a first-class Entry alongside Log, Memo, and Todo, with organizational behavior. Its stable UUID and UTF-8 logical display name are stored in `.folio-dir.toml`. Folio-managed physical Directory names are ASCII UUIDs (`<uuid>/`); renaming a Directory changes only its logical name and does not change its physical path.
+Normal Entries use `logs/`, `memos/`, and `todos/`. Logical Trash is planned, not implemented. Logs stay flat. Memo and Todo may be organized into one level of physical folders corresponding to their logical Directories. Directory is a first-class Entry alongside Log, Memo, and Todo, with organizational behavior. Its stable UUID and UTF-8 logical display name are stored in `.folio-dir.toml`. Folio-managed physical Directory names are ASCII UUIDs (`<uuid>/`); renaming a Directory changes only its logical name and does not change its physical path.
 
 Normal Logs and Memos are Markdown files with TOML front matter delimited by `+++`. Normal Todos and directory metadata are TOML. toml++ is pinned as a Git submodule under `thirdparty/` and is used by the in-memory TOML codec. Encoding and decoding produce/consume text and do not perform file I/O, encryption, or storage operations. Every structured document starts with `schema_version = 1`; unsupported versions are rejected.
 
@@ -42,7 +51,7 @@ New Normal Log, Memo, and Todo Entries receive filenames `YYYY-MM-DD_HHMMSS_<uui
 
 ### Normal repository
 
-The Normal repository stores only `Normal` privacy snapshots. Logs live directly in `normal_root/logs/`. Memos and Todos live directly in their module root or in a single `<directory-uuid>/` child. Each child has `.folio-dir.toml` metadata whose ID must match the physical UUID directory name. The UUID stored in an entry is its identity; a path or filename is only a locator and cannot establish that two files are the same entry. A filename whose UUID or timestamp differs from the stored values is valid and is preserved during updates and moves. The official entry scan reads `.md` files for Logs and Memos and `.toml` files for Todos; `.folio-dir.toml` is read separately as Directory metadata. Other extensions are outside this scan. Across Entry and Directory enumeration, parse only recognized formal Entry files and Directory metadata. Exclude reserved atomic temporary files; unrelated objects may produce nonfatal diagnostics. During discovery, two formal entry files with the same stored UUID are reported as an error even when discovery requested a different UUID. Atomic-write temporary files are outside the official entry scan, so their staged copy may contain the same UUID as the destination. Inspecting and resolving pending temporary files belongs to the planned recovery service; the entry scan does not parse, delete, or repair them. Recovery artifacts will likewise remain separate from formal entries when their format and location are defined. The repository still validates module placement, Directory references, and safe paths. Directory display names never determine physical paths. A future index is only a rebuildable lookup cache that maps stored UUIDs to actual paths; entry files remain authoritative.
+The Normal repository stores only `Normal` privacy snapshots. Logs live directly in `normal_root/logs/`. Memos and Todos live directly in their module root or in a single `<directory-uuid>/` child. Each child has `.folio-dir.toml` metadata whose ID must match the physical UUID directory name. The UUID stored in an entry is its identity; a path or filename is only a locator and cannot establish that two files are the same entry. A filename whose UUID or timestamp differs from the stored values is valid and is preserved during updates and moves. The official entry scan reads `.md` files for Logs and Memos and `.toml` files for Todos; `.folio-dir.toml` is read separately as Directory metadata. Other extensions are outside this scan. Across Entry and Directory enumeration, parse only recognized formal Entry files and Directory metadata. Exclude reserved atomic temporary files; unrelated objects may produce nonfatal diagnostics. During discovery, two formal entry files with the same stored UUID are reported as an error even when discovery requested a different UUID. Atomic-write temporary files are outside the official entry scan, so their staged copy may contain the same UUID as the destination. Inspecting and resolving pending temporary files belongs to the planned recovery service; the entry scan does not parse, delete, or repair them. Recovery artifacts will likewise remain separate from formal entries when their format and location are defined. The repository still validates module placement, Directory references, and safe paths. Directory display names never determine physical paths. The implemented Index is only a rebuildable lookup cache that maps stored UUIDs to actual paths; entry files remain authoritative.
 
 Record load, update, and move methods accept an optional `relative_path` supplied from Catalog metadata. Move places this optional source locator after the existing mutation callback parameter, preserving existing call sites. With no path, the repository discovers the entry by its stored UUID using the full formal-file scan. With a path, it validates the relative path and module layout, reads that exact file, and checks its stored UUID against the requested ID or Snapshot ID without a full scan. A missing target or a different stored UUID returns `StaleLocator`; an unsafe path, malformed document, or other filesystem failure retains its own error. The repository does not automatically fall back from a supplied path to discovery. The caller can request discovery and refresh its cache after a stale result. Supplied-path operations validate their target but do not detect duplicates elsewhere; explicit discovery and authoritative full reconstruction provide that global check. Directory load and rename directly read `<module>/<uuid>/.folio-dir.toml`, validating its internal UUID, DirectoryKind, and safe physical path. They do not scan unrelated Records or detect identities duplicated elsewhere. Directory paths remain fixed by kind and UUID under the single-level layout.
 
@@ -50,7 +59,7 @@ Creation accepts an optional `CreationCheck` after its mutation callback. Manage
 
 A supplied creation check replaces the filesystem UUID uniqueness scan; a success mutation callback alone does not. Without a creation check, standalone creation preserves its existing `unique_id()`/`scan_for_id()` discovery cost and checks against on-disk Records and Directory UUID folders. Both paths retain atomic destination creation and targeted path, privacy, and Directory reference validation. A stale Catalog can miss an externally introduced duplicate at a different path; this is an accepted managed-path limitation, detected by explicit full scanning/reconstruction. Atomic creation still rejects an occupied destination even when its UUID is absent from Catalog.
 
-The creation check only checks availability; it does not reserve IDs or provide synchronization. The future Backend must provide single-writer execution across the creation check, persistence, and Catalog update, use the same initialized Catalog/Repository root, supply both creation hooks, and supply known source locators for normal load/update/move. Callbacks remain separate by purpose: creation check authorizes UUID availability before mutation, while the existing single typed mutation callback handles saved metadata or classified failure afterward. A custom creation check must uphold this contract; an empty creation check intentionally selects standalone discovery. Repository never depends on a concrete Catalog.
+The creation check only checks availability; it does not reserve IDs or provide synchronization. Managed Backend execution provides single-writer execution across the creation check, persistence, and Catalog update, use the same initialized Catalog/Repository root, supply both creation hooks, and supply known source locators for normal load/update/move. Callbacks remain separate by purpose: creation check authorizes UUID availability before mutation, while the existing single typed mutation callback handles saved metadata or classified failure afterward. A custom creation check must uphold this contract; an empty creation check intentionally selects standalone discovery. Repository never depends on a concrete Catalog.
 
 An update atomically replaces the existing file found by its stored UUID and preserves its actual filename. A move serializes the entry with its new Directory ID and modification timestamp, atomically creates that payload at the destination using the same filename, then removes the source and syncs its parent on POSIX. If destination publication fails, the source remains; a post-publication failure may leave both paths, while a source removal sync failure leaves uncertain crash durability. Creation may first make the Normal root and module folder; a later failure can leave empty folders, and their directory entries are not separately synced. Directory creation may leave a UUID folder without valid metadata if its metadata write fails. These states require explicit reconciliation. **TODO:** journal and recover multi-file moves and Directory creation, including interrupted root/module/folder creation. The repository does not implement a transaction or silently resolve partial states.
 
@@ -64,19 +73,19 @@ Privacy levels are `Normal`, `Protected`, and `Hidden`. Normal entries are plain
 
 Protected Logs expose their Log date publicly. Protected Memo and Todo entries expose existence only, not titles or other sensitive metadata. Public metadata must never disclose private titles, locations, timezones, tags, or logical directories. Privacy cannot be changed after persistent creation in the MVP.
 
-Vault stores encrypted entries as independent binary files named `<uuid>.enc`, under flat `logs/`, `memos/`, `todos/`, and `trash/` directories. Logical directories are represented in encrypted metadata rather than physical Vault directories. Encrypted files use a versioned authenticated-encryption envelope containing magic, format version, algorithm and key identifiers, nonce, and authenticated ciphertext. The decrypted payload has its own schema version.
+**Planned, not implemented:** the earlier Storage direction proposes encrypted entries as independent binary files named `<uuid>.enc`, under flat `logs/`, `memos/`, `todos/`, and `trash/` directories. Vault Directory representation and locked visibility remain open; this candidate layout is not a finalized Directory contract. See the [Vault plan](../development/plans/vault.md). Encrypted files use a versioned authenticated-encryption envelope containing magic, format version, algorithm and key identifiers, nonce, and authenticated ciphertext. The decrypted payload has its own schema version.
 
 The planned cryptography is libsodium XChaCha20-Poly1305, with a random master key protected by a password-derived Argon2id key. Exact parameters and key lifecycle remain to be designed. Do not treat a GitHub Private repository as end-to-end encryption.
 
 ## Indexes and In-Memory Metadata
 
-Persisted Folio Entries, including Directory metadata, are the source of truth. The primary working index is a rebuildable, non-authoritative in-memory Metadata Catalog. Normal Storage and the future Vault share its logical metadata and query model; the catalog does not impose Normal filenames or physical Directory layouts. Its implementation headers remain private under `src/storage/` in `folio_core`, with namespace `folio::core::storage`. Domain Snapshots contain no index-specific fields.
+Persisted Folio Entries, including Directory metadata, are the source of truth. The primary working index is a rebuildable, non-authoritative in-memory Metadata Catalog. Normal Storage and the future Vault share its logical metadata and query model; the catalog does not impose Normal filenames or physical Directory layouts. Its headers remain Backend-private under server/include/storage/ in folio_backend, with namespace `folio::core::storage`. Domain Snapshots contain no index-specific fields.
 
-Typed Log, Memo, Todo, and Directory metadata retain internal UUIDs and relative physical locators. Record metadata includes its type, privacy, and complete created/modified TimestampContexts. Directory has its own name/kind fields and remains first-class Entry metadata. Logs retain title, tags, and complete Log DateContext; Memos retain title, tags, and optional Directory ID; Todos retain title, status, priority, optional DueDate, and optional Directory ID. Directory metadata retains its UUID, UTF-8 logical name, module kind, and relative locator. Body and subtask content are excluded. Snapshot conversion copies metadata without I/O, generating IDs, or consulting a clock.
+Canonical Core metadata is locator-free. Private Storage uses Located<Metadata> to pair each metadata value with its relative physical locator. Record metadata includes its type, privacy, and complete created/modified TimestampContexts. Directory has its own name/kind fields and remains first-class Entry metadata. Logs retain title, tags, and complete Log DateContext; Memos retain title, tags, and optional Directory ID; Todos retain title, status, priority, optional DueDate, and optional Directory ID. Directory metadata retains its UUID, UTF-8 logical name and module kind; its private Located wrapper supplies the relative locator. Body and subtask content are excluded. Snapshot conversion copies metadata without I/O, generating IDs, or consulting a clock.
 
 The catalog provides explicit insert, update, and remove operations with separate typed containers sharing one UUID identity namespace across Log, Memo, Todo, and Directory. Duplicate insertion across any of these types fails; a locator never establishes identity. Directory references must exist in the correct module. Queries return copies and never consult the filesystem. Module-root listing returns root Records in `RootListing::records` and Directories in `RootListing::directories`, while a Directory listing includes only Records with that Directory ID; child Directories are listed separately by module. Record search spans Directory memberships unless explicitly constrained; its results remain Log/Memo/Todo metadata. Queries support indexed fields and deterministic sorting with UUID tie-breaking. Text matching folds ASCII case only; non-ASCII UTF-8 bytes are preserved and compared exactly without Unicode normalization or locale-dependent folding.
 
-The internal interface is `src/storage/metadata_catalog.hpp`. `RecordMetadata` is a `std::variant<LogMetadata, MemoMetadata, TodoMetadata>`; `record_type()` derives the RecordType from its alternative, preventing inconsistent type/payload pairs. `metadata_from()` overloads extract metadata from each Snapshot. `MetadataCatalog` offers `insert_record`, `update_record`, `remove_record`, `find_record`, `contains_entry` across all four types, the corresponding Directory operations, `list_root`, `list_directory`, `list_directories`, and `query`. Explicit Entry updates preserve the registered type but can replace stale projected fields, including creation context and privacy. Updating locator and Directory ID together is the catalog's relocation operation. Occupied locators are reported as metadata conflicts rather than establishing identity. Referenced Directories cannot be removed or moved to another module.
+The internal interface is server/include/storage/metadata_catalog.hpp. `RecordMetadata` is a `std::variant<LogMetadata, MemoMetadata, TodoMetadata>`; `record_type()` derives the RecordType from its alternative, preventing inconsistent type/payload pairs. `metadata_from()` overloads extract metadata from each Snapshot. `MetadataCatalog` offers `insert_record`, `update_record`, `remove_record`, `find_record`, `contains_entry` across all four types, the corresponding Directory operations, `list_root`, `list_directory`, `list_directories`, and `query`. Explicit Entry updates preserve the registered type but can replace stale projected fields, including creation context and privacy. Updating locator and Directory ID together is the catalog's relocation operation. Occupied locators are reported as metadata conflicts rather than establishing identity. Referenced Directories cannot be removed or moved to another module.
 
 `RecordQuery` combines optional type, privacy, Directory membership, text/tag substring, created/modified timestamp ranges, Log-date range, and Todo status, priority, due-presence, due-kind, and due-range constraints. Constraints combine with AND. An absent membership constraint searches every Directory; an engaged empty optional selects roots, and an ID selects that Directory. Ranges are inclusive. Todo-specific constraints exclude other Entry types, and Log-date bounds exclude non-Logs. Due bounds match only the same Date/Datetime alternative; calendar dates and absolute timestamps are not implicitly converted using a timezone. Sorting supports UUID, type, created/modified time, title, Log date, due date, status, priority, and privacy. String sorting uses exact byte order; absent/inapplicable values remain last in both directions, and UUID ties remain ascending. Ascending due sorting puts calendar dates before datetimes. Root/Directory listings sort by UUID.
 
@@ -88,9 +97,9 @@ Successful mutations that change indexed metadata set `unpersisted()` until `mar
 
 ### Binary metadata codec
 
-The private `src/storage/index_codec.hpp` interface exposes `index_codec::encode_index(const MetadataCatalog&)` and `index_codec::decode_index(std::string_view)`. Results are variants containing bytes/a fresh MetadataCatalog or an `IndexCodecError` with a code, logical field path, and diagnostic. Encoding reads a stable catalog snapshot through existing copy-returning query/list APIs; no new mutable export interface is needed. The codec performs no filesystem I/O and does not change Entry formats.
+The private server/include/storage/index_codec.hpp interface exposes `index_codec::encode_index(const MetadataCatalog&)` and `index_codec::decode_index(std::string_view)`. Results are variants containing bytes/a fresh MetadataCatalog or an `IndexCodecError` with a code, logical field path, and diagnostic. Encoding reads a stable catalog snapshot through existing copy-returning query/list APIs; no new mutable export interface is needed. The codec performs no filesystem I/O and does not change Entry formats.
 
-The codec uses the existing official msgpack-cxx submodule, pinned at `e1b8bc889d0c16714fc9236af4b954cbfa182be4` from `msgpack/msgpack-c`. Its CMake target is linked privately to `folio_core`, with Boost, dependency tests, examples, and documentation disabled. MessagePack types do not appear in public Core headers or the codec interface.
+The codec uses the existing official msgpack-cxx submodule, pinned at `e1b8bc889d0c16714fc9236af4b954cbfa182be4` from `msgpack/msgpack-c`. Its CMake target is linked privately to folio_backend, with Boost, dependency tests, examples, and documentation disabled. MessagePack types do not appear in public Core headers or the codec interface.
 
 The version-1 wire representation is a single MessagePack map, with string keys and these fields:
 
@@ -118,13 +127,13 @@ Decoding never receives a mutable live catalog. It restores Directory records be
 
 ### Persistent cache policy and reconstruction
 
-Persistent indexes are low-priority, rebuildable caches, rather than authoritative databases. The Normal cache belongs under configurable `state_root`, outside `normal_root`, and must not be committed or pushed to Git. The persistence lifecycle is strict: attempt to load the persisted index at most once at application startup, use the in-memory catalog for the entire session, and normally save the complete index during orderly shutdown when necessary. Saving once is a caller policy, not an enforced attempt limit. There are no index disk reads or writes during ordinary application operations. The internal coordinator guards repeated startup loading but permits repeated save calls; application lifecycle wiring and navigation consistency policy remain future work. Missing, unsupported, or corrupted caches must never modify authoritative Entries. Ordinary listing, filtering, and metadata search use the loaded catalog without parsing Entry files again.
+Persistent indexes are low-priority, rebuildable caches, rather than authoritative databases. The Normal cache is <application.cache>/index/normal.msgpack, outside authoritative roots, and must not be committed or pushed to Git. The persistence lifecycle is strict: attempt to load the persisted index at most once at application startup, use the in-memory catalog for the entire session, and normally save the complete index during orderly shutdown when necessary. Saving once is a caller policy, not an enforced attempt limit. There are no index disk reads or writes during ordinary application operations. The internal coordinator guards repeated startup loading but permits repeated save calls; Backend lifecycle wiring is implemented; public Refresh/count-check integration remains deferred. Missing, unsupported, or corrupted caches must never modify authoritative Entries. Ordinary listing, filtering, and metadata search use the loaded catalog without parsing Entry files again.
 
 External editing, renaming, replacement, or deletion of Entry files is allowed, but is an exceptional workflow rather than ordinary Folio usage. These low-probability external changes and abnormal termination may leave the Index or Catalog stale. Folio deliberately avoids routine overhead to detect every such change: a successfully decoded Index is accepted without additional full filesystem validation, and ordinary Catalog queries perform no filesystem I/O. Explicit full Refresh provides authoritative reconstruction when needed; known-locator reads still validate the requested Entry identity and report stale locators for explicit caller-directed discovery.
 
-Future directory navigation will use a lightweight count check of immediate formal Entry files against Catalog membership. Matching counts are accepted as a practical, high-confidence indication of consistency, without parsing every Entry. They are not proof: external content edits and one-for-one replacements may remain undetected. A mismatch will support explicit reconciliation. Count checking remains deferred; no watchers, periodic scans, or abnormal-exit detection are introduced.
+Future directory navigation will use a lightweight count check of immediate formal Entry files against Catalog membership. Matching counts are accepted as a practical, high-confidence indication of consistency, without parsing every Entry. They are not proof: external content edits and one-for-one replacements may remain undetected. A mismatch will support explicit reconciliation. Count checking remains deferred; no watchers or periodic scans are introduced. Abandoned-session detection uses the implemented Session Marker.
 
-The Normal index is deliberately local-only: placing it under `state_root` rather than `normal_root` keeps this rebuildable cache out of the data tree synchronized to the Git remote. Its metadata is complete plaintext. Entry locators inside the index remain relative to the associated repository's data root, not to the index file's location.
+The Normal index is deliberately local-only: placing it under application.cache rather than normal_root keeps this rebuildable cache out of the data tree synchronized to the Git remote. Its metadata is complete plaintext. Entry locators inside the index remain relative to the associated repository's data root, not to the index file's location.
 
 ### Catalog-centric persistence coordination
 
@@ -300,13 +309,13 @@ A failed write, file sync, or publication attempt triggers removal of the operat
 
 Use atomic replacement for individual-file writes, with appropriate durability measures. Expand a batch operation into its complete plan before executing it. Normal and Vault each have a recovery journal; corresponding journals share a transaction ID. Both journals must be durably prepared before any data modification. Record each completed sub-operation and recover interrupted or partially completed transactions.
 
-Recovery journals live under the configurable persistent state root and are distinct from any future Audit Log. Trash is one logical feature with separate Normal and Vault physical storage; Vault Trash remains encrypted.
+Planned Recovery journals live under persistent State, outside Cache and are distinct from any future Audit Log. Trash is one logical feature with separate Normal and Vault physical storage; Vault Trash remains encrypted.
 
 ## Core Model Implications
 
 ### Primary Entry Models
 
-Log, Memo, Todo, and Directory are Folio's four first-class Entry models. Each owns its own identity and domain data. Directory currently has an ID, kind, and name, without body content, privacy, or timestamps. Privacy levels are `Normal`, `Protected`, and `Hidden`; ordinary post-creation privacy mutation is not exposed. Tag rename and deletion update references in Log and Memo.
+Log, Memo, Todo, and Directory are Folio's four first-class Entry models. Each owns its own identity and domain data. Directory currently has an ID, kind, and name, without body content, privacy, or timestamps. Privacy levels are `Normal`, `Protected`, and `Hidden`; ordinary post-creation privacy mutation is not exposed. A future shared Tag rename/delete operation would need to update Log and Memo references; it is not implemented.
 
 ### Organization and Embedded Data
 
@@ -320,29 +329,128 @@ Typed in-memory snapshots and static restore factories are available for Log, Me
 
 Use one Git repository with separate Normal and Vault branches checked out through Git worktrees. Vault history compaction and cross-device semantic merge belong to a later Sync subsystem; this phase does not specify or implement those algorithms.
 
-## Current Core Discrepancies
+## Current Core and Storage boundaries
 
-The public headers under `include/folio/core/` currently describe in-memory models and differ from this design in these ways:
+Public headers under lib/include/folio/core/ describe the in-memory models. Current
+boundaries and limitations are:
 
 - `types.hpp` now defines `Privacy { Normal, Protected, Hidden }`, matching the design.
 - `Memo` and `Todo` now store optional Directory IDs; `Log` has no Directory field. Directory remains an in-memory logical model with no filesystem access or physical path mapping in Core; its v1 TOML metadata codec is in-memory only.
 - Time data is represented by `TimestampContext` and `DateContext`; the in-memory codec serializes them as RFC 3339 UTC timestamp strings and `YYYY-MM-DD` date strings, with timezone and optional location stored separately.
 - `Log`, `Memo`, `Todo`, and `Directory` expose typed in-memory snapshots, static restore factories, and v1 in-memory codecs. Privacy remains immutable after construction.
-- The internal Storage subsystem in `folio_core` provides path validation, Normal entry filename generation, single-file atomic writing, and a Normal repository for plaintext entries and Directory metadata. Storage implementation headers live under `src/storage/` and are not part of the public Core API. It does not load configuration, create Vault storage, or provide journals, migrations, or automated filesystem reconciliation. Binary index encoding and explicit Catalog lifecycle persistence are available internally. Its in-memory Metadata Catalog is a separate projection; explicit full rebuild is coordinated through NormalRepository, with ordinary mutation coordination supported by optional metadata callbacks on Repository operations. `Subtask` is currently embedded in `Todo`, consistent with the design.
+- The private Storage subsystem in folio_backend provides Repository path/layout validation, Normal Entry naming and persistence, reusing shared I/O atomic operations. Storage declarations live under server/include/storage/ with implementations in server/src/storage/, outside the public Core API. It does not load configuration, create Vault storage, or provide journals, migrations, or automated filesystem reconciliation. Binary index encoding and explicit Catalog lifecycle persistence are available internally. Its in-memory Metadata Catalog is a separate projection; explicit full rebuild is coordinated through NormalRepository, with ordinary mutation coordination supported by optional metadata callbacks on Repository operations. `Subtask` is currently embedded in `Todo`, consistent with the design.
 - `Tag` is a value type, but there is no shared tag rename/delete operation that updates Log and Memo references.
 - `DateContext` includes a calendar date, timezone, and optional location; `TimestampContext` includes an absolute timestamp, timezone, and optional location. Privacy rules for these fields in indexes and public metadata remain defined by the Vault/index design.
 
-## Decisions Needed Before the First Storage Milestone
+## Open and deferred persistence decisions
 
-The architecture establishes boundaries and formats but does not yet define enough detail for interoperable persistence. Before implementing the first storage milestone, decide:
+Normal Storage milestones are implemented. These remaining decisions concern
+future public integration, reconciliation, migration and Vault/Recovery work; they
+are not prerequisites retroactively blocking existing formats:
 
-- Explicit authoritative enumeration and atomic in-memory Catalog reconstruction are available. Startup initialization with authoritative fallback and explicit full Refresh are available; application-level targeted correction policy, navigation consistency checks, and lifecycle wiring remain to be implemented.
+- Explicit authoritative enumeration and atomic in-memory Catalog reconstruction are available. Startup initialization with authoritative fallback and explicit full Refresh are available; Backend lifecycle wiring is implemented; public Full Refresh, targeted correction policy and navigation consistency checks remain deferred.
 - How unknown fields are preserved or handled during future migration; the current Log/Memo v1 decoder rejects them.
-- The exact Normal and Vault directory tree, including safe-relative-locator rules beyond the ASCII UUID Directory naming and filename patterns.
+- Future Vault directory representation and any new locator rules; current Normal layout and safe-relative-locator checks are implemented.
 - How invalid or duplicate Directory metadata is reconciled during filesystem scanning.
 - The transaction journal record format, sub-operation states, recovery decision rules, and platform-specific durability guarantees for atomic replacement.
 - What conditions trigger consistency checks and how callers observe/resolve the explicit recovery state.
 - The complete public-index visibility vocabulary and rules for each privacy level, including Hidden entries and locked/unlocked views.
 - The first migration policy and supported source schema versions.
 
-The exact cryptographic parameters, master-key lifecycle, Vault history handling, and cross-device merge remain deferred designs; they are not assumptions for this storage milestone.
+The exact cryptographic parameters, master-key lifecycle, Vault history handling, and cross-device merge remain deferred designs; they are not assumptions of the implemented Normal Storage contract.
+
+## Catalog-centric flows — Implemented internal capabilities
+
+```text
+Backend owner / standalone internal caller
+    → NormalRepository: validate and persist authoritative Entry
+    → typed MutationResultCallback: saved metadata + actual locator
+    → MetadataCatalog: explicit insert/update + derived membership
+    → unpersisted = true
+
+Catalog query → memory only
+CatalogCoordinator → IndexCodec / I/O → application.cache/index/normal.msgpack
+Explicit refresh_all → Repository.scan → typed metadata → Catalog.rebuild
+```
+
+The owner must supply matching callbacks; standalone Repository use does not synchronize Catalog. Managed creation additionally supplies `creation_check()` to check all four Catalog identity maps before publication. It reserves no ID; single-writer execution is enforced by the shared Backend executor. Without that check, standalone creation retains global on-disk uniqueness discovery. Omitted Record locators intentionally request UUID discovery. Known locator operations never silently rediscover after StaleLocator. Directory load/rename use kind/UUID-derived paths directly.
+
+Publication followed by failure is not rollback. Typed failure notifications distinguish BeforeAuthoritativeChange, AuthoritativeStateMayHaveChanged, and CatalogSynchronizationFailed. Coordinator callbacks mark Inconsistent for the latter two; original diagnostics survive. No automatic scan, rollback, or Index I/O follows. Optional/custom callbacks cannot certify consistency by themselves.
+
+`unpersisted` means projected metadata differs from its last acknowledged Index snapshot, not that Entries are unsaved. Inserts, changed updates/relocations, removals, and successful full rebuilds set it. Identical updates and queries do not. `CatalogStatus::Inconsistent` independently blocks Index saving. Full Refresh succeeds atomically and restores Ready; failed Refresh preserves contents/status/persistence state.
+
+Current startup_load checks the durable State Session Marker first. A previous Marker bypasses Index loading and forces authoritative rebuilding. Without a Marker it attempts the Index once; missing/corrupt/unsupported/over-limit caches trigger reconstruction, while other I/O/path failures are reported. Valid Index startup performs no authoritative verification. Rebuild never immediately saves. shutdown_save acknowledges persistence only after successful atomic writing; repeated calls/retries are permitted. Once at orderly shutdown is caller policy, with explicit error handling, not destructor work or a once-only guard.
+
+Current MessagePack schema is version 1. Its historical `entries` array contains Records, and `directories` contains Directory metadata; terminology alignment does not rename wire keys or require a schema bump. It stores primary typed metadata only, never reverse membership, Markdown bodies, Todo notes, or subtasks. Decoding validates a temporary Catalog and returns it marked persisted. Encoding is read-only and does not acknowledge a successful disk save. Detailed field representations and resource limits remain in [Storage's binary metadata codec section](#binary-metadata-codec).
+
+Snapshot-to-metadata coverage guards in [metadata tests](../../tests/storage/metadata_catalog_test.cpp) intentionally require explicit user approval before changing their field classifications. A requested model change alone is not permission to weaken the guards.
+
+## Performance and future boundaries
+
+**Implemented:** ordinary supplied-locator operations avoid global discovery; queries are memory-only; full scan detects malformed formal data and duplicate UUIDs across all four types. Tests cover these contracts in [Storage tests](../../tests/storage). Atomic writes can leave partial multi-file operations requiring reconciliation.
+
+**Decided/Planned:** full scans are reserved for startup fallback, previous Session Marker recovery, and explicit Full Refresh. Explicit targeted discovery and standalone creation discovery remain deliberate API choices. Navigation may enumerate/count immediate formal objects without parsing them; equal counts are a practical indicator, never proof. No watchers, hashes, or periodic verification are required for uncommon external edits.
+
+**Implemented:** Backend owns Catalog, Coordinator and Repository instances; Frontends use the public connection API over IPC. Storage stays private. Cache relocation, Session Marker, ownership and Backend lifecycle integration are implemented. Fuller CLI/TUI integration remains deferred. Follow the [roadmap](../development/roadmap.md), not speculative APIs.
+## Effective storage paths — Implemented
+
+Internal `StoragePaths` separates configurable `normal_root` and `vault_root` from an `ApplicationPaths application` value containing `config`, `data`, `state`, `cache`, `logs`, and optional `runtime`. Internal callers supply these effective absolute paths; tests inject temporary locations. Application bootstrap resolves platform defaults and loads validated optional configuration overrides. See [Configuration](configuration.md) for the implemented Phase 4.1c contract; tests inject temporary paths.
+
+`validate_storage_paths()` creates nothing, checks required absolute paths and existing directory types, and resolves existing filesystem aliases for overlap checks. Normal and Vault must be disjoint from each other and application support directories. Data may be their strict ancestor, allowing the default authoritative roots beneath Data. Application categories may share a location or nest beneath a common parent; this permits native platform layouts without prescribing one. Path validation does not establish ownership, permissions, or a secure IPC location; the implemented ownership/IPC setup establishes its own access and endpoint constraints. Cache and runtime must not be used to store durable recovery data.
+
+The Normal Index uses `<application.cache>/index/normal.msgpack`. Former State indexes are ignored, without reading, migrating, or deleting them. Missing Cache triggers authoritative rebuilding; saving occurs only on an explicit shutdown save when required, never immediately after rebuilding. Cache parents are created only during save. Durable Session Marker is implemented in Phase 3.4.3 and Backend lifecycle in 4.1b. Platform resolution and Configuration loading are implemented through 4.1c. Missing configuration is atomically created from the factory template; existing files are not automatically rewritten.
+
+## Session lifecycle — Implemented internal support
+
+The centralized Marker location is `<application.state>/session.marker`, a regular
+file whose presence alone is significant; no payload schema or PID check exists.
+It must be outside Cache and Runtime (shared durable application parents remain
+valid). State and Marker symlinks/unsafe file types are rejected. Startup does
+not delete or replace a previous Marker. A validated candidate Catalog is adopted
+only after Marker establishment succeeds. `InitializationOutcome` distinguishes
+previous-session recovery from a rejected Cache through
+`previous_session_incomplete` and `index_error` respectively.
+
+The Backend acquires an exclusive OS lock **before** `startup_load()`,
+accepts work only after success, stops admissions and finishes accepted work, then calls
+`finish_session()` with explicit error handling/retry before releasing the lock.
+OS ownership and its integration with Catalog startup/finalization and Backend connections are implemented. See the [lifecycle call flow](backend-lifecycle.md#backend-lifecycle-call-flow--implemented).
+
+`finish_session()` calls retryable `shutdown_save()` when necessary, checks that
+a regular persisted Index exists, synchronizes the Index and its parent links,
+and only then removes the Marker and synchronizes State. An unchanged Index is
+not rewritten. Missing Cache during an otherwise clean session prevents successful
+finalization: retain the Marker and use explicit Refresh/retry or report failure.
+`shutdown_save()` alone leaves the Marker in place; it is a lower-level save
+checkpoint, not a clean-session certificate. No destructor saves or removes it.
+
+Successful finalization sets `CatalogStatus::Stopped`; no more authoritative
+operations are allowed. Failed saving or Inconsistent/Unavailable Catalog state
+cannot authorize cleanup. If unlink succeeds but its directory sync fails, the
+Index is already safe; return the original error, disable managed work, and allow
+a cleanup retry (which syncs State even if the Marker is now absent). Alternatively,
+a successful explicit Refresh reestablishes the Marker before restoring Ready.
+A failed Refresh preserves the previous Catalog and state. Runtime Refresh and
+CRUD do not rewrite the Marker or access the Index.
+
+### Durability scope
+
+POSIX helpers use no-follow path checks, file fsync and parent-directory fsync.
+New directory links, including Cache/State ancestors, are synced before lifecycle
+success; existing links are synced again on retry. Index publication reuses
+the existing atomic primitives. Presence-only Marker creation uses exclusive
+empty-file creation and file/parent sync, avoiding staged payloads or orphan
+temporary files; sync failure retains the published Marker conservatively. These are filesystem-contract guarantees, not universal
+power-loss guarantees: macOS uses fsync, not F_FULLFSYNC, and device caches and
+filesystem support still matter ([Apple fsync documentation](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fsync.2.html)).
+
+Windows uses Unicode paths, file flushing and the existing atomic publication
+primitive. File contents use [FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers);
+publication uses [MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)
+with WRITE_THROUGH. Directory creation and DeleteFileW cleanup have no explicit
+parent-directory flush in this implementation, so Windows power-loss ordering is
+weaker than the POSIX contract. Process-abandonment recovery remains supported.
+Windows/Linux execution and actual power-loss tests require platform validation.
+The Marker does not repair partially completed authoritative multi-file operations;
+scan conflicts remain errors for later Recovery design.
+

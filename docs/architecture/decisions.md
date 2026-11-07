@@ -1,6 +1,6 @@
 # Design decision register
 
-Status distinguishes implemented contracts from agreed future direction. This register records rationale, not new APIs. See [architecture](architecture.md), [roadmap](roadmap.md), [Application](application-design.md), [Recovery](recovery-design.md), [Vault](vault-design.md), and [Git](git-sync-design.md).
+Status distinguishes implemented contracts from agreed future direction. This register records rationale, not new APIs. See [architecture](system.md), [roadmap](../development/roadmap.md), [Application](../contracts/backend-lifecycle.md), [Recovery](../development/plans/recovery.md), [Vault](../development/plans/vault.md), and [Git](../development/plans/git-sync.md).
 
 ## D01 — Entry terminology
 
@@ -17,62 +17,62 @@ Status distinguishes implemented contracts from agreed future direction. This re
 - **Decision:** Files are authoritative; Catalog projects metadata, reverse membership and queries. Coordinator borrows owner-supplied Catalog.
 - **Motivation:** Fast queries without making a cache authoritative.
 - **Alternatives considered:** Repository-owned Catalog, duplicate active Catalogs, CRUD wrapper/service hierarchy.
-- **Consequences:** Future Backend owns instances; explicit Repository hooks synchronize saved metadata.
-- **Open/Deferred:** Public operation/error representations.
+- **Consequences:** BackendContext owns instances; peer orchestrators borrow them and matching Repository/Coordinator hooks synchronize saved metadata.
+- **Open/Deferred:** Vault and later operation/error extensions; Normal public contracts are implemented.
 
 ## D03 — Single-user configuration
 
-- **Status:** Decided/Planned.
+- **Status:** Implemented baseline; future extensions remain open.
 - **Decision:** One configuration per OS user with configurable Normal/Vault roots; no Multi-Workspace Manager.
 - **Motivation:** Personal application; OS accounts separate users.
 - **Alternatives considered:** Named Workspace registry, selector, management UUIDs.
 - **Consequences:** One Backend ownership scope for that configuration.
-- **Open/Deferred:** Config file format and path-change workflow.
+- **Open/Deferred:** Interactive configuration editing and migration; factory-template format and restart-based startup snapshots are implemented.
 
 ## D04 — One Backend and multiple Frontends
 
-- **Status:** Decided/Planned.
-- **Decision:** On-demand separate Backend owns shared state; many CLI/TUI clients.
+- **Status:** Implemented baseline; future extensions remain open.
+- **Decision:** On-demand separate Backend owns shared state; multiple Frontends connect through IPC.
 - **Motivation:** One coordinated authority avoids divergent state.
 - **Alternatives considered:** One Backend per Frontend or global daemon spanning OS users.
-- **Consequences:** OS lock and local per-user IPC required.
-- **Open/Deferred:** Transport, authorization and launch/shutdown races.
+- **Consequences:** OS ownership and per-user IPC are implemented; native Linux/Windows runtime verification remains pending.
+- **Open/Deferred:** Native platform access-control and launch/shutdown verification; see IPC-08.
 
 ## D05 — Single executable
 
-- **Status:** Decided/Planned.
+- **Status:** Implemented baseline; future extensions remain open.
 - **Decision:** Prefer folio CLI/TUI entry point plus internal Backend mode; default launches TUI.
 - **Motivation:** Share deployment and public operations.
 - **Alternatives considered:** Independent business logic per interface; running forked initialized Frontend as Backend.
 - **Consequences:** Use executable process launch; no private Storage calls from UI.
-- **Open/Deferred:** CLI grammar, internal mode and launcher handshake.
+- **Open/Deferred:** Fuller CLI grammar and TUI operation integration; internal mode and launcher handshake are implemented.
 
 ## D06 — Backend lifetime
 
-- **Status:** Decided/Planned.
-- **Decision:** Exit after last client disconnect and active work finishes.
+- **Status:** Implemented baseline; future extensions remain open.
+- **Decision:** Stop admission after the last Frontend disconnects, drain accepted work, then finalize and release resources.
 - **Motivation:** On-demand personal application without permanent background service.
 - **Alternatives considered:** Permanent daemon or idle grace period.
 - **Consequences:** CLI-only invocation may start and stop Backend immediately.
-- **Open/Deferred:** Admission races and active-operation cancellation.
+- **Open/Deferred:** Request cancellation and arbitrary operation-completion bounds; no cancellation guarantee exists.
 
 ## D07 — Serialized mutations
 
-- **Status:** Decided/Planned.
+- **Status:** Implemented baseline; future extensions remain open.
 - **Decision:** Backend queue serializes shared mutations including creation check through Catalog update.
 - **Motivation:** Preserve Repo/Catalog consistency without global class thread safety.
 - **Alternatives considered:** Independent simultaneous mutation of Storage objects.
 - **Consequences:** CreationCheck is availability only, not reservation.
-- **Open/Deferred:** Read scheduling and cancellation.
+- **Open/Deferred:** Concurrent Read execution and cancellation; all current Access and Mutation execution is sequential.
 
 ## D08 — Exclusive interactive Entry editing
 
-- **Status:** Decided/Planned.
+- **Status:** Implemented baseline; future extensions remain open.
 - **Decision:** Frontend requests Backend-owned per-Entry edit permission; readers continue.
 - **Motivation:** Prevent competing interactive edits.
 - **Alternatives considered:** Frontend-only lock state or making every mutation require edit locks.
-- **Consequences:** Disconnect invalidates permissions; CLI respects applicable locks; move/rename/create need not inherently lock.
-- **Open/Deferred:** Scoped edits, revision protection, exact protocol.
+- **Consequences:** Accepted actions retain connection ownership after disconnect. Full Update requires an owned lock; immediate Move/Rename/status rejects another owner but needs no temporary lock when unlocked. See the [lock contract](../contracts/mutations.md#edit-lock-ownership--implemented).
+- **Open/Deferred:** Revision protection and future mutation-specific concurrency rules; current lock protocol is implemented.
 
 ## D09 — Push events
 
@@ -85,30 +85,30 @@ Status distinguishes implemented contracts from agreed future direction. This re
 
 ## D10 — Platform-standard paths
 
-- **Status:** Effective-path model Implemented; platform defaults Decided/Planned.
-- **Decision:** Separate config/data/state/cache/runtime using platform semantics.
+- **Status:** Implemented effective paths and platform defaults.
+- **Decision:** Separate config/data/state/cache/logs/runtime using platform semantics.
 - **Motivation:** Respect OS lifecycle and cleanup rules.
 - **Alternatives considered:** Uniform forced folder hierarchy or configurable internal paths everywhere.
 - **Consequences:** Implemented StoragePaths separates configurable authoritative roots from explicitly supplied ApplicationPaths; tests inject temporary paths.
-- **Open/Deferred:** Exact platform paths and resolver APIs are deferred until configuration setup; the effective-path representation is implemented.
+- **Open/Deferred:** Native platform verification; exact paths and resolver APIs are documented in [Configuration](../contracts/configuration.md).
 
 ## D11 — Normal Index in Cache
 
-- **Status:** Implemented (Phase 3.4.2); platform defaults remain deferred.
+- **Status:** Implemented, including platform defaults.
 - **Decision:** Relocate rebuildable Normal Index to Cache; keep local-only, outside Git roots.
 - **Motivation:** Index loss is recoverable; durable recovery data is not.
 - **Alternatives considered:** Retaining rebuildable cache in persistent State.
 - **Consequences:** Current location is `<application.cache>/index/normal.msgpack`. Former State indexes are not read, migrated, or deleted. Missing/unusable Cache triggers authoritative rebuilding, with persistence deferred until orderly shutdown.
-- **Open/Deferred:** OS-specific Cache defaults are deferred to configuration setup; callers currently supply effective paths.
+- **Open/Deferred:** Native platform verification; current Cache location, defaults and injected effective paths are implemented.
 
 ## D12 — Durable Session Marker
 
-- **Status:** Internal Storage support Implemented (Phase 3.4.3); Backend/OS lock wiring deferred to Phase 4.
+- **Status:** Implemented Storage support and Backend/OS ownership integration.
 - **Decision:** Mark every Backend session durably before Ready; previous Marker forces rebuild.
 - **Motivation:** Crash safety independent of enumerating every Catalog mutation path.
 - **Alternatives considered:** Lazy first-mutation invalidation marker or trusting decoded Index after unclean exit.
 - **Consequences:** Read-only crash may cause rebuild; failed save/inconsistency keeps Marker; lock distinct. Marker is application.state/session.marker; finish_session orders Index saving/sync before durable cleanup. shutdown_save alone retains the Marker. Failed cleanup can be retried; successful finalization stops the session.
-- **Open/Deferred:** Backend/OS lock integration and platform power-loss validation; see [durability limits](architecture.md#durability-scope).
+- **Open/Deferred:** Platform power-loss validation; see [durability limits](../contracts/storage.md#durability-scope).
 
 ## D13 — Frontend recovery persistence
 
@@ -117,7 +117,7 @@ Status distinguishes implemented contracts from agreed future direction. This re
 - **Motivation:** Acknowledgment loss does not prove persistence failure.
 - **Alternatives considered:** Cache drafts, blind retry, or treating disconnect as failed write.
 - **Consequences:** Public API must support safe authoritative reconciliation.
-- **Open/Deferred:** Draft Recovery correlation using `MutationId`, revisions, acknowledgment algorithm and retention. Mutation identity naming is decided; persistent receipts and cross-restart lookup remain open. See [mutation follow-up work](application-mutations.md#traceable-follow-up-work).
+- **Open/Deferred:** Draft Recovery correlation using `MutationId`, revisions, acknowledgment algorithm and retention. Mutation identity naming is decided; persistent receipts and cross-restart lookup remain open. See [mutation follow-up work](../contracts/mutations.md#traceable-follow-up-work).
 
 ## D14 — Vault Frontend encrypt-only recovery
 
@@ -139,12 +139,12 @@ Status distinguishes implemented contracts from agreed future direction. This re
 
 ## D16 — Explicit internal Index shutdown saving
 
-- **Status:** Implemented primitive; future owner wiring planned.
+- **Status:** Implemented primitive and explicit Backend finalization wiring.
 - **Decision:** shutdown_save is explicitly called normally once at orderly shutdown, with error handling/retry.
 - **Motivation:** Saving needs observable errors; encoding alone is not persistence.
 - **Alternatives considered:** Throwing destructor/RAII save or runtime once-only shutdown guard.
 - **Consequences:** Successful atomic persistence acknowledges unpersisted; Inconsistent blocks save.
-- **Open/Deferred:** Backend lifecycle/Marker integration; no periodic or per-Entry writes.
+- **Open/Deferred:** Stronger platform durability verification; no periodic or per-Entry Index writes are introduced.
 
 ## D17 — Vault Index and Git domains
 

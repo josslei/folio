@@ -1,4 +1,4 @@
-# Mutation contracts — Phase 4.2b
+# Mutation and editing contracts
 
 Phase 4.3a implements Normal Create/Update/Move, Directory Create/Rename,
 immediate Todo status changes, and connection-owned Entry Edit Locks through
@@ -7,9 +7,16 @@ immediate Todo status changes, and connection-owned Entry Edit Locks through
 `MutationId` retain their Phase 4.2b ownership. The Backend implementation is
 `server/src/operations/mutation_orchestrator.cpp`. Query APIs, protocol version 1, bounded
 complete-message transport, admission, and the one sequential executor remain.
-See the [unified IPC protocol](ipc-protocol.md).
+See the [unified IPC protocol](ipc.md).
 
-## Application Operation taxonomy — Decided/Planned
+## Principles and invariants
+
+Failure cause, authoritative outcome, evidence and confirmation are independent.
+Preserve known facts and Draft content; no status alone authorizes replay. Check
+current state and ownership before writes, then reuse the existing persistence and
+Catalog synchronization path. Exact contracts and mappings follow below.
+
+## Application Operation taxonomy — Approved
 
 ```text
 Application Operation
@@ -47,7 +54,7 @@ Mutation IDs do not guarantee deduplication, idempotency, exactly-once execution
 or cross-restart status lookup. Concurrent requests or future Push Events may
 justify a separate Request ID; neither is introduced by this naming decision.
 
-## Mutation identity in code — Implemented for review
+## Mutation identity — Implemented
 
 `MutationId` is defined with editing data and result contracts in
 `folio/application/mutation.hpp`; its implementation is `lib/src/application/mutation.cpp`.
@@ -213,17 +220,7 @@ Session Marker/Index remain derived-state recovery mechanisms, not mutation rece
 | MUT-12 | Implemented for current Normal operations | Concrete payloads, correlated final results and dispatch are implemented in 4.3a through the existing protocol/queue. Unsupported or malformed wire tags are rejected before acceptance; no fake handler or speculative Delete/Trash payload exists. |
 | MUT-13 | Open design | Internal schema-versioning policy remains undecided before release. Version 1 is retained without negotiation or a separate Mutation version; revisit after Minimum TUI before defining compatibility promises. |
 
-## Verification — Phase 4.3a
-
-A clean Debug CMake configure/build and the full normal CTest suite passed on
-macOS: **399 tests**, including cross-process mutation/lock access, accepted-work
-ownership after disconnect, final-response loss/correlation and injected persistence
-failures. All **7 opt-in resource-limit tests** passed separately with parallelism
-capped at one, including oversized edit acquisition without an undisclosed lock.
-Linux and Windows runtime verification was not performed. No Git staging or commit
-was performed.
-
-### Public arguments and wire requests
+## Public arguments and wire requests
 
 Public mutation methods take explicit Entry identity, destination, timestamps,
 and descriptive `LogEditableFields`, `MemoEditableFields`, or
@@ -234,7 +231,7 @@ Operation-specific request structs belong to the implementation-facing IPC
 namespace in `application_protocol.hpp`; they are not public argument bundles.
 The wire field ordering and execution semantics are unchanged.
 
-### Overloaded public operations
+## Overloaded public operations
 
 Create and Update use overloaded `create()` and `update()` methods: editable-field
 types select the Record contract and typed metadata result. Directory creation
@@ -245,7 +242,7 @@ Move returns `core::RecordMetadata`. Typed Repository handlers and their existin
 persistence/evidence rules remain in place. No typed Entry IDs are introduced.
 
 
-### Application orchestration boundary — reviewed
+## Application orchestration boundary — reviewed
 
 `MutationOrchestrator` borrows Repository, Catalog and Coordinator and owns the
 executor-only Edit Lock map. It checks readiness, ownership and membership,
@@ -267,7 +264,7 @@ provide matching creation checks/callbacks and current locators; ordinary
 operations do not initiate scans, automatic repair, retries or shutdown.
 
 
-### Operation terminology
+## Operation terminology
 
 Application Operations distinguish read-only **Access Operations** (Browse,
 Metadata Query, Directory Listing and Record Loading) from **Mutation Operations**.

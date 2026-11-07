@@ -61,56 +61,19 @@ On a multi-configuration Windows generator, run `build\Debug\folio.exe` (or the 
 
 ## Tests
 
-Testing is enabled by default through CTest. Configure, build, and run:
-
 ```sh
-cmake -S . -B build -DBUILD_TESTING=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
 cmake --build build --config Debug --parallel
 ctest --test-dir build -C Debug --parallel --output-on-failure
 ```
 
-Resource-heavy boundary tests live separately under `tests/resource_limits/` and
-are excluded from the default build and CTest suite. Enable and run them explicitly:
-
-```sh
-cmake -S . -B build-resource-limits -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DFOLIO_BUILD_RESOURCE_LIMIT_TESTS=ON
-cmake --build build-resource-limits --config Debug --target folio_resource_limit_tests --parallel
-ctest --test-dir build-resource-limits -C Debug -L resource_limits --parallel 1 --output-on-failure
-```
-
-These check correctness at large input/resource boundaries, rather than benchmark
-execution speed. Small malformed-input and bounds checks remain in the regular suite.
-When the option is enabled, unfiltered CTest runs also include the resource-limit tests.
-
-To produce a Release build without tests:
-
-```sh
-cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
-cmake --build build-release --config Release --parallel
-```
-
-`--parallel` lets CMake use available CPU cores. To limit the number of concurrent build jobs, pass a number, such as `--parallel 4`.
-
-Run CTest with `--parallel` to select concurrency automatically (requires CTest 3.29+). Older CTest versions require `--parallel N`. If concurrent tests consume too much memory, especially resource-limit tests, use an explicit lower count.
-
-Use `-G "Visual Studio 17 2022"` or `-G Xcode` when selecting those generators. For single-configuration generators, set `CMAKE_BUILD_TYPE` to `Debug` or `Release`. The GoogleTest runtime is configured to match the MSVC runtime on Windows.
-
-### Serialized samples
-
-Generate serialized examples of all supported objects for visual review:
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build --config Debug --parallel
-ctest --test-dir build -C Debug -R CoreCodecSamplesTest --parallel --output-on-failure
-```
-
-Inspect `build/serialization-samples/Debug/`: `log.md`, `memo.md`, `todo-date.toml`, `todo-datetime.toml`, `todo-minimal.toml`, `directory.toml`, and `common-values.toml`. The test regenerates and replaces these files using the codecs; they contain synthetic data and are generated output rather than fixtures or manual templates. `Protected` and `Hidden` are metadata values in these plaintext samples; no encryption is performed.
-
-For Release, configure and build with tests enabled in Release and use `-C Release`; output goes to `<build-directory>/serialization-samples/Release/`.
+See the [testing guide](docs/engineering/testing.md) for focused tests, parallelism,
+serialized samples and the separately run opt-in resource-limit suite. Detailed
+[build and dependency instructions](docs/engineering/build.md) cover Release,
+multi-configuration generators and platform paths.
 
 ## Architecture and development status
 
-Core and internal Normal Storage are implemented; the executable currently shows a welcome screen. Backend/IPC, usable editing, Recovery, Vault encryption, and Git Sync are planned rather than available features.
+Core, Normal Storage, Backend/IPC, public Normal Access/Mutation operations and Entry Edit Locks are implemented. The executable currently shows a welcome screen; complete editing integration, persistent Recovery, Vault encryption and Git Sync remain deferred.
 
-Start with the [architecture overview](docs/architecture.md), [roadmap](docs/roadmap.md), and [decision register](docs/design-decisions.md). See [Storage contracts](docs/storage-design.md) for current persistence details, and the planned [Application](docs/application-design.md), [Recovery](docs/recovery-design.md), [Vault](docs/vault-design.md), and [Git Sync](docs/git-sync-design.md) designs for future boundaries.
+Start with the [documentation index](docs/README.md), [compact architectural baseline](docs/architecture/overview.md), [roadmap](docs/development/roadmap.md), and [decision register](docs/architecture/decisions.md). See [Storage contracts](docs/contracts/storage.md) for current persistence details, and [Application lifecycle](docs/contracts/backend-lifecycle.md) plus future [Recovery](docs/development/plans/recovery.md), [Vault](docs/development/plans/vault.md), and [Git Sync](docs/development/plans/git-sync.md) designs for future boundaries.

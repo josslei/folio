@@ -75,4 +75,4 @@ failure. `replacement_completed` remains publication only. Repository errors ret
 per-step observations for single-file writes and compound Move; these facts do not
 change the atomic publication algorithm or promise durability of unsynchronized
 bootstrap ancestors. Application maps evidence rather than inferring outcomes from
-error codes. See [mutation evidence](application-mutations.md).
+error codes. See [mutation evidence](mutations.md).

@@ -138,7 +138,7 @@ Finish cooperatively closes connections and joins remaining workers. No worker o
 The existing Bootstrap -> Serve -> Stopping -> Report -> Finish state machine
 remains the sole lifecycle controller. Report drains if a failure bypassed Stopping; Finish retains an exceptional
 drain fallback if earlier cleanup failed. See the detailed
-[Backend lifecycle call flow](application-design.md#backend-lifecycle-call-flow--implemented). Only then may `finish_session()` run, under RepositoryOwnership.
+[Backend lifecycle call flow](backend-lifecycle.md#backend-lifecycle-call-flow--implemented). Only then may `finish_session()` run, under RepositoryOwnership.
 No Marker/Index algorithm or finalization eligibility rule changes.
 
 Scheduling is in-memory session execution, **not Recovery**. Future Batch
@@ -181,7 +181,7 @@ transport; its replacement belongs to Frontend UI/IPC Worker integration below.
 | IPC-07 | Open Design Decision | Request cancellation semantics need operation-specific safety rules. Ceasing to wait or disconnecting does not cancel accepted work. |
 | IPC-08 | Deferred Verification | Linux/Windows runtime, access controls, overlapped I/O cancellation and shutdown need native verification before claiming support for that platform is verified. Linux testing awaits an environment; Windows may be deferred to release preparation and omitted from the first release if not verified. |
 
-The existing MUT TODOs in [mutation contracts](application-mutations.md#traceable-follow-up-work)
+The existing MUT TODOs in [mutation contracts](mutations.md#traceable-follow-up-work)
 remain authoritative for RequestId/multiplexing, schema-versioning review after
 Minimum TUI, receipts/cross-restart lookup, deduplication/idempotency, revision
 checking, Draft Recovery and compound-operation Recovery. Exactly-once execution,
@@ -189,7 +189,7 @@ safe automatic replay and execution proof from MutationId alone are **Not
 Guaranteed**. A hung operation can delay orderly draining indefinitely; Accepted
 is not a liveness guarantee and there is no safe forced-operation cancellation.
 
-See the [agreed unpredictable-hang boundary](application-design.md#unpredictable-hangs--agreed-limitation).
+See the [agreed unpredictable-hang boundary](backend-lifecycle.md#unpredictable-hangs--agreed-limitation).
 A stalled executor must not be bypassed by unsafe Catalog finalization or forced
 thread termination. No watchdog, progress tracking, automatic termination, or
 new operation timeout policy is introduced; existing transport deadlines remain.
@@ -198,3 +198,35 @@ Request and response payloads use shared `codec::encode<T>()` and
 `codec::decode<T>()` directly. Their distinct types enforce message direction;
 there are no separate access encode/decode wrappers. Mutation response correlation
 validation remains separate from structural decoding.
+## Connection readiness and startup
+
+Frontend discovery/launching and Backend readiness are separate: successful process
+creation does not prove ownership or Ready. [Process startup and ownership](backend-lifecycle.md#process-startup-and-ownership)
+defines launching and locking. Frontend BackendConnectionHandle owns one established
+connection; current welcome-TUI disconnection handling is not the future UI worker
+or reconnection design.
+
+Unix uses a user-owned 0700 directory and 0600 Unix socket, with OS peer UID
+verification. Runtime is preferred; a private State/ipc directory is the fallback.
+Windows uses duplex local Named Pipes with a current-user SID DACL and remote
+clients rejected. Endpoint names are not authentication. RepositoryOwnership is
+required before stale endpoint cleanup, binding, Catalog startup, or finalization.
+Only stale sockets are reclaimed; live endpoints are preserved.
+
+Handshake and transfer-inactivity bounds remain three seconds; total request
+reception is bounded to thirty seconds. A ten-second initial registration window
+permits launching Frontends to connect. Acceptance is session-only and waiting in
+the queue has no short operation-completion deadline. The final disconnection
+stops admission and drains accepted work, including work whose connection is lost.
+Admission closure wakes idle reception without closing usable connections.
+On normal shutdown, accepted work and bounded final delivery settle before Report;
+a failure that bypasses Stopping drains accepted work in Report; Finish closes
+remaining connections and joins workers before Catalog finalization.
+
+The endpoint is bound under ownership before Storage initialization so startup
+errors can be returned, but no successful handshake is processed until
+`CatalogCoordinator::startup_load()` succeeds. No Ready precedes the durable
+Marker. Shutdown closes admission/connections, explicitly calls `finish_session()`,
+and releases ownership last. Failed finalization returns failure and retains the
+Marker according to Storage's existing contract. Backend crashes release locks,
+break connections and leave Marker-based reconstruction for the next session.

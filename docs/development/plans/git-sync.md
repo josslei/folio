@@ -1,6 +1,6 @@
 # Git synchronization direction
 
-**Status: Decided/Planned. No Git integration is implemented.** See [roadmap](roadmap.md), [Vault](vault-design.md), and [Recovery](recovery-design.md).
+**Status: Decided/Planned. No Git integration is implemented.** See [roadmap](../roadmap.md), [Vault](vault.md), and [Recovery](recovery.md).
 
 ```text
 One Git repository
@@ -8,7 +8,7 @@ One Git repository
 └── Vault branch / worktree: encrypted authoritative Entries and synchronized Vault indexes
 ```
 
-UUIDs remain Entry identities; Git paths and renames are locators. Normal Index remains local-only and is planned to move to Cache. Recovery state, process locks, runtime resources, drafts, and configuration are not automatically Git content. Define exclusions explicitly during setup.
+UUIDs remain Entry identities; Git paths and renames are locators. Normal Index is local-only in Cache. Recovery state, process locks, runtime resources, drafts, and configuration are not automatically Git content. Define exclusions explicitly during setup.
 
 Sync will own repository/worktree setup, branch management, status, synchronization, conflict detection/resolution, and Vault history maintenance/compaction. It must coordinate with Backend serialized operations, Catalog refresh, and recovery safety, without moving business logic into Frontends.
 

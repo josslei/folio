@@ -1,11 +1,17 @@
-# Public read access — Phase 4.2a
+# Access operation contract
 
 Mutation result and Mutation ID contracts are documented separately in
-[Mutation contracts](application-mutations.md); mutation execution remains deferred.
+[Mutation contracts](mutations.md); Normal Mutation execution and Edit Locks are implemented in Phase 4.3a.
 
 Implemented for Normal Entries. Frontends use `BackendConnectionHandle` through
 IPC; they never own a Catalog or pass physical Entry locators. Business methods
 return `ApplicationResult<T>`, without private Storage or transport errors.
+
+## Principles and invariants
+
+Metadata navigation reuses the Catalog without body reads or implicit verification
+scans. Complete content loading remains separate and uses current known locators.
+Logical Root navigation does not expose filesystem paths or fabricate identities.
 
 ## Operations
 
@@ -49,7 +55,7 @@ choice; it never triggers a retry or filesystem modification itself.
 
 The three questions remain: what failed, what happened to the operation, and
 what can the user do? This read-only phase implements causes/actions. Mutation
-outcomes and reconciliation contracts remain Phase 4.2b work.
+outcomes are implemented in the [Mutation contract](mutations.md#results-and-evidence); persistent reconciliation remains Recovery work.
 
 ## Transport and limits
 
@@ -66,13 +72,14 @@ schemas. The transport handles partial OS reads/writes internally; there are no
 protocol chunks. A message body is bounded to 64 MiB (including version/kind),
 with collections limited to 100,000 elements. Exceeding limits returns an explicit
 error rather than partial results. No public pagination is introduced. See the
-[unified IPC protocol](ipc-protocol.md) for limits and transfer handling.
-The single Backend loop executes reads and owns all live Catalog state.
+[unified IPC protocol](ipc.md) for limits and transfer handling.
+The shared sequential executor performs Access and Mutation operations; IPC workers do not access live Catalog state.
 
 ## Deferred
 
-Vault, locked placeholders and Directory visibility, Recovery, mutation outcomes,
-edit permission, revisions, push events and full-text search are not implemented.
+Vault, locked placeholders and Directory visibility, persistent Recovery, revision
+checking, Push Events and full-text search are not implemented. Normal Mutation
+outcomes and Edit Locks are implemented separately from read access.
 Complete unlocked Vault metadata may eventually use the same complete types;
 locked fields must never be faked with defaults. Snapshot loading does not grant
 permission to save or imply conflict-free editing. Frontend buffer preservation

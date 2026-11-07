@@ -1,6 +1,6 @@
 # Vault design boundaries
 
-**Status: Decided/Planned; Vault persistence and encryption are not implemented.** Libsodium currently supplies UUID randomness. Core privacy enum values and plaintext codec fixtures are not security features. See [architecture](architecture.md) and [Storage's existing direction](storage-design.md).
+**Status: Decided/Planned; Vault persistence and encryption are not implemented.** Libsodium currently supplies UUID randomness. Core privacy enum values and plaintext codec fixtures are not security features. See [architecture](../../architecture/system.md) and [Storage's existing direction](../../contracts/storage.md).
 
 ## Privacy contract
 
@@ -20,7 +20,7 @@ Unlike local-only Normal Cache, Vault Public and encrypted Private Indexes are i
 
 ## Frontend security boundary
 
-Backend owns Vault decryption capabilities. Frontend may display/edit plaintext but must not own decryption keys. Durable Vault drafts must be encrypted before writing, including while Backend is unavailable. Encrypt-only Frontend recovery capability is mandatory; asymmetric scheme, distribution, rotation, and decryption protocol are deferred. See [Recovery](recovery-design.md).
+Backend owns Vault decryption capabilities. Frontend may display/edit plaintext but must not own decryption keys. Durable Vault drafts must be encrypted before writing, including while Backend is unavailable. Encrypt-only Frontend recovery capability is mandatory; asymmetric scheme, distribution, rotation, and decryption protocol are deferred. See [Recovery](recovery.md).
 
 ## Required later review
 

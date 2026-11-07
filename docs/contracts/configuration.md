@@ -7,7 +7,7 @@ Vault data, move existing data, or read Entries.
 
 ## Factory template and user configuration
 
-The authoritative defaults are [templates/folio_config.toml](../templates/folio_config.toml).
+The authoritative defaults are [templates/folio_config.toml](../../templates/folio_config.toml).
 CMake embeds its TOML in the library; no source-tree or working-directory access
 is needed at runtime. `configuration_defaults()` parses that resource and returns
 a result rather than duplicating default settings in C++.
