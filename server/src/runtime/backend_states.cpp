@@ -1,5 +1,5 @@
 #include "runtime/backend_states.hpp"
-#include "metadata_access.hpp"
+#include "operations/access_orchestrator.hpp"
 #include <folio/ipc/application_codec.hpp>
 #include <folio/ipc/message_transport.hpp>
 #include <folio/ipc/ipc.hpp>
@@ -65,9 +65,17 @@ BackendActionOutcome Bootstrap(BackendContext& context) {
 }
 
 BackendActionOutcome Serve(BackendContext& context) {
+  context.access = std::make_unique<AccessOrchestrator>(
+      context.catalog, *context.repository, *context.coordinator);
+  context.mutations = std::make_unique<MutationOrchestrator>(
+      context.catalog, *context.repository, *context.coordinator);
   context.runtime = std::make_unique<IpcServer>(*context.ownership,
-      [&](const AccessRequest& request) {
-        return handle_access(request, context.catalog, *context.repository, *context.coordinator);
+      [&](const OperationRequest& request, const Session& session) {
+        if (std::holds_alternative<MutationRequest>(request) ||
+            std::holds_alternative<AcquireEditRequest>(request) ||
+            std::holds_alternative<ReleaseEditRequest>(request))
+          return context.mutations->handle(request, session);
+        return context.access->handle(request);
       });
   auto result = context.runtime->run();
   if (auto* error = std::get_if<IpcError>(&result)) {

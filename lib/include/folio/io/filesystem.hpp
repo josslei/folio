@@ -15,6 +15,8 @@ struct FileError {
   std::string message;
   std::error_code system_error;
   bool replacement_completed = false;
+  // Required destination publication sync succeeded; later artifact cleanup may fail.
+  bool durability_confirmed = false;
 };
 enum class ReadErrorCode { IoError, LimitExceeded };
 struct ReadError {

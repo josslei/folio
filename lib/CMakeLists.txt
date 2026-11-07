@@ -19,9 +19,8 @@ add_library(folio_shared STATIC
   src/io/filesystem.cpp
   src/io/path.cpp
   src/ipc/ipc.cpp
-  src/application/mutation/mutation_id.cpp
+  src/application/mutation.cpp
   src/ipc/message_transport.cpp
-  src/ipc/application_codec.cpp
 )
 target_include_directories(folio_shared
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>

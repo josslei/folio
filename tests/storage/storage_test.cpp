@@ -490,6 +490,7 @@ TEST_F(StorageDurabilityTest, ReplacePublicationSyncFailureDoesNotUndoRename) {
   const auto& failure = std::get<folio::io::FileError>(result);
   EXPECT_EQ(failure.code, folio::io::FileErrorCode::DurabilityFailure);
   EXPECT_TRUE(failure.replacement_completed);
+  EXPECT_FALSE(failure.durability_confirmed);
   EXPECT_EQ(read_bytes(target()), "new bytes");
   EXPECT_EQ(children(temporary.path()), std::set<fs::path>{"entry.md"});
 }
@@ -515,6 +516,7 @@ TEST_F(StorageDurabilityTest, CleanupSyncFailureReportsPublishedCreation) {
   const auto& failure = std::get<folio::io::FileError>(result);
   EXPECT_EQ(failure.code, folio::io::FileErrorCode::DurabilityFailure);
   EXPECT_TRUE(failure.replacement_completed);
+  EXPECT_TRUE(failure.durability_confirmed);
   EXPECT_EQ(read_bytes(target()), "new bytes");
   EXPECT_EQ(children(temporary.path()), std::set<fs::path>{"entry.md"});
 }

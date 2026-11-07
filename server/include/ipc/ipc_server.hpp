@@ -2,7 +2,8 @@
 
 #include <folio/ipc/application_protocol.hpp>
 #include "runtime/repository_ownership.hpp"
-#include "request_scheduler.hpp"
+#include "operations/request_scheduler.hpp"
+#include "ipc/connection_session.hpp"
 
 #include <atomic>
 
@@ -23,7 +24,7 @@ struct RuntimeLimits {
 class IpcServer {
  public:
   using Failure = std::variant<IpcError, std::exception_ptr>;
-  using Handler = std::function<AccessResponse(const AccessRequest&)>;
+  using Handler = std::function<OperationResponse(const OperationRequest&, const Session&)>;
   IpcServer(RepositoryOwnership& ownership, Handler handler,
             std::string startup_failure = {}, RuntimeLimits limits = {});
   ~IpcServer();

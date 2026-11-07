@@ -84,7 +84,7 @@ target_link_libraries(folio_backend_child PRIVATE folio_frontend folio_backend)
 if(MINGW)
   target_link_options(folio_backend_child PRIVATE -municode)
 endif()
-add_executable(folio_application_tests application/runtime_test.cpp application/message_transport_test.cpp application/mutation_codec_test.cpp application/mutation_contract_test.cpp application/access_codec_test.cpp application/metadata_access_test.cpp application/metadata_access_integration_test.cpp application/logging_test.cpp application/configuration_test.cpp application/backend_states_test.cpp application/backend_lifecycle_test.cpp application/process_test.cpp application/backend_test.cpp)
+add_executable(folio_application_tests application/runtime_test.cpp application/mutation_orchestrator_test.cpp application/message_transport_test.cpp application/mutation_codec_test.cpp application/mutation_contract_test.cpp application/access_codec_test.cpp application/metadata_access_test.cpp application/metadata_access_integration_test.cpp application/logging_test.cpp application/configuration_test.cpp application/backend_states_test.cpp application/backend_lifecycle_test.cpp application/process_test.cpp application/backend_test.cpp)
 target_include_directories(folio_application_tests PRIVATE
   "${PROJECT_SOURCE_DIR}/server/include" "${PROJECT_SOURCE_DIR}/app/include"
   "${PROJECT_SOURCE_DIR}/lib/src")

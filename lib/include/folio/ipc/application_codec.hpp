@@ -8,19 +8,10 @@
 
 namespace folio::application::internal {
 
-core::Result<std::string, IpcError> encode_access_request(const AccessRequest& request);
-core::Result<AccessRequest, IpcError> decode_access_request(std::string_view bytes);
-core::Result<std::string, IpcError> encode_access_response(const AccessResponse& response);
-core::Result<AccessResponse, IpcError> decode_access_response(std::string_view bytes);
 
-// No business success/request payload is fixed here. These templates reuse the
-// same codec once concrete payloads are approved. NoMutationResponse and
-// SubmissionState deliberately have no wire fields.
-template<class T>
-core::Result<std::string, IpcError> encode_mutation_response(const MutationResponse<T>& response) {
-  return codec::encode(response);
-}
-
+// Confirmed mutation envelopes use the same codec as Query and concrete Normal
+// requests/results. NoMutationResponse and SubmissionState are local Frontend
+// observations and deliberately have no wire fields.
 template<class T>
 core::Result<MutationResponse<T>, IpcError> decode_mutation_response(
     std::string_view bytes, const MutationId& expected) {

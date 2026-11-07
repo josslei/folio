@@ -6,6 +6,7 @@ Status vocabulary throughout these documents: **Implemented** means present in t
 
 - [Storage specification](storage-design.md): existing codecs, physical layout, atomic writes, Catalog, and Index contracts. Preserved during this consolidation; some future-facing statements require separately approved amendments.
 - [Application](application-design.md): public boundary, processes, IPC, and editing.
+  Start with the [Backend responsibility overview](application-design.md#backend-responsibility-overview) for its module hierarchy.
 - [Configuration](configuration.md): implemented defaults, user overrides, and startup snapshots.
 - [File I/O](io.md): internal byte-oriented filesystem operations and atomic publication.
 - [Recovery](recovery-design.md): Session Marker, Journals, Trash, and pending drafts.
@@ -16,13 +17,13 @@ Status vocabulary throughout these documents: **Implemented** means present in t
 
 ## Application Operation taxonomy — Decided/Planned
 
-Application Operation is the umbrella for Query Operations (Browse, Metadata
+Application Operation is the umbrella for Access Operations (Browse, Metadata
 Query, Directory Listing, Record Loading) and Mutation Operations (Create,
 Update, Move, and future Delete/Trash). These classifications require no C++
-base classes. Normal Query Operations are implemented in Phase 4.2a; public
-mutation execution remains deferred.
+base classes. Normal Access Operations are implemented in Phase 4.2a; Normal Mutation execution and Edit Locks are implemented in Phase 4.3a;
+Delete/Trash, Vault, Push and Recovery remain deferred.
 
-Query Operations do not modify authoritative business data and can generally be
+Access Operations do not modify authoritative business data and can generally be
 issued afresh after connection loss. Mutation Operations may already have changed
 data, so they retain one logical `MutationId` across submission and future Recovery.
 The strong `MutationId` type is implemented as a public Application contract.
@@ -227,9 +228,20 @@ preserves the pending runtime implementation without expanding its behavior.
 
 The existing BackendStateMachine owns lifecycle. Bounded IPC workers own individual
 connections and OS waits; one Backend-owned queue and executor own all operation
-execution. Query and future Mutation Operations share admission and scheduling.
+execution. Access and Mutation Operations share admission and scheduling.
 Accepted is session-only responsibility, followed by a final result/error.
 Disconnection does not retract accepted work. Stopping/Finish drain and join
 runtime resources before explicit Catalog finalization under RepositoryOwnership.
 Public methods remain synchronous; UI/IPC Worker integration is deferred to 4.4b.
 See [IPC runtime contracts and TODOs](ipc-protocol.md).
+
+## Normal Mutations — Phase 4.3a implemented
+
+BackendConnectionHandle submits Normal Create/Update/Move, Directory Create/Rename
+and immediate Todo status changes through the existing shared MessagePack protocol,
+admission and sequential executor. Backend-owned Entry Edit Locks are connection-
+scoped, including ownership retained by already Accepted work after disconnection.
+Full Editable Fields exclude identity, creation, privacy and membership; Backend
+loads current authoritative state before Update. Move manages membership/location;
+Frontend Modification Context is shared by both and is not a version token.
+See [mutation contracts, evidence and deferred guarantees](application-mutations.md).

@@ -41,16 +41,16 @@ TEST(AccessCodec, EveryRequestAlternativeAndCompleteFiltersRoundtrip) {
   q.filters.due_kind = app::DueKind::Date;
   q.filters.due_from = date();
   q.filters.due_through = timestamp();
-  const std::vector<wire::AccessRequest> requests{
+  const std::vector<wire::OperationRequest> requests{
       wire::BrowseRequest{core::RecordType::Memo, {app::MetadataSort::Title, true}},
       wire::BrowseRequest{id, {}}, wire::QueryRecordsRequest{q},
       wire::ListDirectoriesRequest{core::DirectoryKind::Todo}, wire::LoadLogRequest{id},
       wire::LoadMemoRequest{id}, wire::LoadTodoRequest{id}};
   for (const auto& request : requests)
-    roundtrip(request, wire::encode_access_request, wire::decode_access_request);
+    roundtrip(request, wire::codec::encode<wire::OperationRequest>, wire::codec::decode<wire::OperationRequest>);
   for (const auto& scope : {app::RecordScope{app::RootScope{}}, app::RecordScope{app::AllScope{}}}) {
     q.scope = scope;
-    roundtrip(wire::AccessRequest{wire::QueryRecordsRequest{q}}, wire::encode_access_request, wire::decode_access_request);
+    roundtrip(wire::OperationRequest{wire::QueryRecordsRequest{q}}, wire::codec::encode<wire::OperationRequest>, wire::codec::decode<wire::OperationRequest>);
   }
 }
 
@@ -66,7 +66,7 @@ TEST(AccessCodec, MetadataWarningsErrorsAndFullSnapshotsPreserveEveryField) {
       core::TodoMetadata{id, core::Privacy::Normal, timestamp(), timestamp(), "todo", core::TodoStatus::Completed,
           core::TodoPriority::High, core::DueDate{timestamp()}, directory_id}};
   const std::vector<core::DirectoryMetadata> directories{{directory_id, core::DirectoryKind::Memo, "name"}};
-  const std::vector<wire::AccessResponse> responses{
+  const std::vector<wire::OperationResponse> responses{
       app::ApplicationResponse<app::BrowseResult>{{metadata, directories}, warnings},
       app::ApplicationResponse<std::vector<core::RecordMetadata>>{metadata, warnings},
       app::ApplicationResponse<std::vector<core::DirectoryMetadata>>{directories, warnings},
@@ -78,11 +78,11 @@ TEST(AccessCodec, MetadataWarningsErrorsAndFullSnapshotsPreserveEveryField) {
           {app::ErrorAction::Retry, app::ErrorAction::ReloadView, app::ErrorAction::Reconnect,
            app::ErrorAction::ResolveExternally, app::ErrorAction::Dismiss}}};
   for (const auto& response : responses)
-    roundtrip(response, wire::encode_access_response, wire::decode_access_response);
+    roundtrip(response, wire::codec::encode<wire::OperationResponse>, wire::codec::decode<wire::OperationResponse>);
 }
 
 TEST(AccessCodec, MalformedTruncatedTrailingDeepAndOversizedDeclarationsAreRejected) {
-  const auto good_result = wire::encode_access_request(wire::LoadMemoRequest{core::Id::generate()});
+  const auto good_result = wire::codec::encode<wire::OperationRequest>(wire::LoadMemoRequest{core::Id::generate()});
   ASSERT_TRUE(std::holds_alternative<std::string>(good_result));
   const auto good = std::get<std::string>(good_result);
   std::vector<std::string> malformed{
@@ -91,15 +91,15 @@ TEST(AccessCodec, MalformedTruncatedTrailingDeepAndOversizedDeclarationsAreRejec
       good.substr(0, good.size() - 1), good + std::string("\xc0", 1)};
   malformed.push_back(std::string(40, static_cast<char>(0x91)) + std::string("\xc0", 1));
   for (const auto& bytes : malformed) {
-    auto request = wire::decode_access_request(bytes);
+    auto request = wire::codec::decode<wire::OperationRequest>(bytes);
     EXPECT_TRUE(std::holds_alternative<wire::IpcError>(request));
-    auto response = wire::decode_access_response(bytes);
+    auto response = wire::codec::decode<wire::OperationResponse>(bytes);
     EXPECT_TRUE(std::holds_alternative<wire::IpcError>(response));
   }
 }
 
 TEST(AccessCodec, TransportDiagnosticsNeverExposeArbitraryPeerText) {
-  const auto translated = wire::access_connection_error(
+  const auto translated = wire::operation_connection_error(
       {wire::IpcErrorCode::ConnectionLost, "sensitive peer text"});
   EXPECT_EQ(translated.category, app::ErrorCategory::ConnectionFailure);
   EXPECT_EQ(translated.reason, app::ErrorReason::ConnectionLost);

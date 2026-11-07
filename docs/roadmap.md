@@ -148,11 +148,12 @@ remain deferred. See [mutation contracts and follow-up decisions](application-mu
 
 ## Phase 4.2c — Unified IPC protocol extension implemented
 
-Shared Query/Mutation codec components and bounded complete-message transport are
+Shared Access/Mutation codec components and bounded complete-message transport are
 implemented with Protocol Version 1. Read payloads/API semantics are preserved.
-No concrete Mutation request/success payload, dispatch or execution is enabled;
-these belong to 4.3a using the shared sequential executor. Edit Locks remain 4.3b,
-Push Events 4.4a, and Frontend integration/reconnection 4.4b.
+This phase introduced no concrete Mutation request/success payload, dispatch or
+execution. These are now implemented in 4.3a using the shared sequential executor,
+with Edit Locks brought forward into that approved scope. Push Events remain
+4.4a, and Frontend integration/reconnection 4.4b.
 See [IPC implementation scope](ipc-protocol.md) and traceable
 [MUT follow-ups](application-mutations.md#traceable-follow-up-work), including the
 internal schema-versioning review after Minimum TUI.
@@ -167,8 +168,9 @@ finalization and ownership release. macOS is verified; Linux/Windows execution
 remains IPC-08 native verification work.
 
 This supplies scheduling infrastructure before 4.3a, without implementing
-Mutations. Concrete payloads, handlers and operation-specific admission remain
-4.3a; Edit Locks 4.3b; Push Notifications 4.4a; Frontend UI/IPC Worker and
+Mutations in that refactor. Concrete payloads, handlers, operation-specific
+preconditions and Edit Locks are subsequently implemented in 4.3a. Push Notifications
+remain 4.4a; Frontend UI/IPC Worker and
 reconnection integration 4.4b. Batch/Draft Recovery remain independent later work.
 Concurrent Reads and cancellation are open decisions. See
 [IPC-01 through IPC-08](ipc-protocol.md#deferred-decisions) and existing
@@ -186,10 +188,10 @@ See the [audit report](backend-failure-containment-audit.md) for reviewed state
 transitions, exception boundaries and limitations. Persistence and Session Marker
 algorithms are unchanged; no generic executor health check was introduced.
 
-**Deferred Implementation — Phase 4.3a:** Apply pre-write readiness checks and
-failure/evidence mapping to new Mutation handlers. Post-persistence callbacks do
-not replace admission/execution preconditions, and managed creation checks do
-not cover future Update/Move handlers. Verify these new paths when implemented.
+**Implemented — Phase 4.3a:** Normal Mutation handlers apply pre-write readiness,
+current-state, membership and lock checks and structured failure/evidence mapping.
+Post-persistence callbacks do not replace these preconditions. New operations must
+extend the same failure-containment checks and tests.
 
 ## Runtime-role project structure — Implemented
 
@@ -226,3 +228,33 @@ a gate for claiming Windows support, not a requirement to delay every platform's
 first release. If Windows cannot be verified and corrected in time, omit Windows
 support from the first release. No platform code is removed by this decision;
 macOS results and cross-compilation do not establish native Windows correctness.
+
+## Phase 4.3a — Normal Mutations and Edit Locks implemented
+
+This approved scope brings Edit Locks forward from the earlier 4.3b plan. Normal
+Create/Update/Move, Directory Create/Rename and immediate Todo status changes now
+execute through the shared bounded queue. Full Editable Fields preserve current
+identity, creation, privacy and membership; Move manages membership/location;
+Frontend-supplied Modification Context is shared operation context. Backend creates
+Entry UUIDs; Frontend supplies MutationId. Confirmed successes return Core metadata.
+
+Connection-owned Edit Locks and authoritative acquisition share the executor.
+Accepted requests retain ownership after disconnect; cleanup cannot jump ahead of
+queued work. Per-step persistence evidence distinguishes NotApplied, Applied,
+PartiallyApplied and Unknown. Catalog/Marker finalization and runtime states are
+unchanged. See [contracts and remaining TODOs](application-mutations.md).
+
+- **Deferred Implementation — remaining 4.3b:** explicit Full Refresh and Directory
+  Count Consistency Checks; locks themselves are now implemented, without authorizing
+  the rest of that phase.
+- **Deferred Implementation — 4.4a/4.4b:** Push/shared lifecycle notifications and
+  Frontend UI/IPC worker integration, bounded reconnection and presentation.
+- **Deferred Implementation — Recovery/Trash phases:** persistent drafts, compound
+  Move resolution, bootstrap artifact reconciliation, Delete/Trash and Vault-safe
+  Recovery. Scheduling and weak lock lifetime are not persistent Recovery.
+- **Open Design Decision:** revision checking, concurrent execution, mutation
+  receipts/cross-restart lookup, deduplication/idempotency and stronger platform
+  durability remain tracked by MUT/IPC TODOs; no new guarantees are implied.
+- **Not Guaranteed:** exactly-once execution, automatic replay safety or proof of
+  execution from MutationId. Windows location-changing Moves cannot currently
+  confirm source-removal durability and report Unknown rather than durable success.

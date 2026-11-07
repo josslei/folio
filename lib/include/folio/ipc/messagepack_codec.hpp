@@ -2,7 +2,7 @@
 
 #include <folio/ipc/application_protocol.hpp>
 #include <folio/ipc/ipc.hpp>
-#include <folio/application/mutation/mutation_result.hpp>
+#include <folio/application/mutation.hpp>
 #include <msgpack.hpp>
 
 #include <chrono>
@@ -47,6 +47,26 @@ FIELDS(ListDirectoriesRequest, v.kind)
 FIELDS(LoadLogRequest, v.id)
 FIELDS(LoadMemoRequest, v.id)
 FIELDS(LoadTodoRequest, v.id)
+FIELDS(core::Directory::Snapshot, v.id, v.kind, v.name)
+FIELDS(std::monostate)
+FIELDS(LogEditableFields, v.title, v.content, v.log_date, v.tags)
+FIELDS(MemoEditableFields, v.title, v.content, v.tags)
+FIELDS(TodoEditableFields, v.title, v.notes, v.status, v.priority, v.due_date, v.subtasks)
+FIELDS(CreateLogRequest, v.fields, v.created, v.modified)
+FIELDS(CreateMemoRequest, v.fields, v.created, v.modified, v.directory_id)
+FIELDS(CreateTodoRequest, v.fields, v.created, v.modified, v.directory_id)
+FIELDS(UpdateLogRequest, v.id, v.fields, v.modified)
+FIELDS(UpdateMemoRequest, v.id, v.fields, v.modified)
+FIELDS(UpdateTodoRequest, v.id, v.fields, v.modified)
+FIELDS(MoveRecordRequest, v.id, v.directory_id, v.modified)
+FIELDS(MoveMemoRequest, v.id, v.directory_id, v.modified)
+FIELDS(MoveTodoRequest, v.id, v.directory_id, v.modified)
+FIELDS(CreateDirectoryRequest, v.kind, v.name)
+FIELDS(RenameDirectoryRequest, v.id, v.name)
+FIELDS(SetTodoStatusRequest, v.id, v.status, v.modified)
+FIELDS(MutationRequest, v.mutation_id, v.payload)
+FIELDS(AcquireEditRequest, v.id)
+FIELDS(ReleaseEditRequest, v.id)
 FIELDS(MutationStepEvidence, v.step, v.observation)
 FIELDS(MutationEvidence, v.entry_id, v.source, v.destination, v.steps)
 FIELDS(MutationFailure, v.error, v.status, v.evidence)
@@ -75,10 +95,14 @@ struct Failure : std::exception {
 inline void require(bool condition) { if (!condition) throw Failure{}; }
 
 struct Buffer {
+  explicit Buffer(bool count_only = false) : count_only(count_only) {}
   std::string bytes;
-  void write(const char* data, std::size_t size) {
-    if (size > max_application_bytes - bytes.size()) throw Failure{true};
-    bytes.append(data, size);
+  std::size_t size = 0;
+  bool count_only;
+  void write(const char* data, std::size_t count) {
+    if (count > max_application_bytes - size) throw Failure{true};
+    if (!count_only) bytes.append(data, count);
+    size += count;
   }
 };
 using Packer = msgpack::packer<Buffer>;
@@ -94,7 +118,7 @@ constexpr auto last(core::TodoPriority) { return core::TodoPriority::High; }
 constexpr auto last(DueKind) { return DueKind::Datetime; }
 constexpr auto last(MetadataSort) { return MetadataSort::Privacy; }
 constexpr auto last(ErrorCategory) { return ErrorCategory::ApplicationUnavailable; }
-constexpr auto last(ErrorReason) { return ErrorReason::NotImplemented; }
+constexpr auto last(ErrorReason) { return ErrorReason::CatalogSynchronizationFailed; }
 constexpr auto last(ErrorAction) { return ErrorAction::Dismiss; }
 constexpr auto last(AuthoritativeChangeStatus) { return AuthoritativeChangeStatus::Unknown; }
 constexpr auto last(MutationStep) { return MutationStep::RemoveSource; }
@@ -212,6 +236,21 @@ T read(const Object& o) {
     constexpr auto size = std::tuple_size_v<decltype(fields(std::declval<const T&>()))>;
     array_size(o, size);
     return read_fields<T>(o, std::make_index_sequence<size>{});
+  }
+}
+
+// Check the same wire bound without allocating/copying an encoded Record body.
+// Edit acquisition uses this before committing a new lock so an oversized
+// Snapshot cannot produce a failed response with an undisclosed owned lock.
+template<class T>
+bool fits_message(const T& value) {
+  try {
+    Buffer buffer(true);
+    Packer packer(buffer);
+    pack(packer, value);
+    return true;
+  } catch (...) {
+    return false;
   }
 }
 

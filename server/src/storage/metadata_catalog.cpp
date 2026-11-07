@@ -301,6 +301,22 @@ DirectoryMetadata metadata_from(const Directory::Snapshot& s,
   return DirectoryMetadata{core::DirectoryMetadata{s.id, s.kind, s.name}, std::move(path)};
 }
 
+bool metadata_matches(const RecordMetadata& left, const RecordMetadata& right) {
+  return equal(left, right);
+}
+
+core::Result<std::monostate, StorageError> validate_metadata(const RecordMetadata& metadata) {
+  if (!valid_entry(metadata))
+    return failure(StorageErrorCode::InvalidMetadata, entry_path(metadata), "Invalid entry metadata");
+  return std::monostate{};
+}
+core::Result<std::monostate, StorageError> validate_metadata(const DirectoryMetadata& metadata) {
+  if (!valid_kind(metadata.metadata.kind) || !valid_path(metadata.relative_path) ||
+      !valid_utf8(metadata.metadata.name))
+    return failure(StorageErrorCode::InvalidMetadata, metadata.relative_path, "Invalid Directory metadata");
+  return std::monostate{};
+}
+
 bool MetadataCatalog::record_path_occupied(const std::filesystem::path& path,
                                           std::optional<Id> except) const {
   auto occupied = [&](const auto& collection) {
@@ -329,7 +345,7 @@ std::set<std::string>& MetadataCatalog::members_for(RecordType type,
 }
 
 ::folio::core::Result<std::monostate, StorageError> MetadataCatalog::insert_record(RecordMetadata m) {
-  if (!valid_entry(m)) return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Invalid entry metadata");
+  if (auto checked = validate_metadata(m); std::holds_alternative<StorageError>(checked)) return checked;
   const Id id = entry_id(m);
   const auto key = id.to_string();
   if (directories_.contains(key) || find_record(id)) return failure(StorageErrorCode::DuplicateId, entry_path(m), "Entry UUID already exists");
@@ -364,7 +380,7 @@ std::set<std::string>& MetadataCatalog::members_for(RecordType type,
 }
 
 ::folio::core::Result<std::monostate, StorageError> MetadataCatalog::update_record(RecordMetadata m) {
-  if (!valid_entry(m)) return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Invalid entry metadata");
+  if (auto checked = validate_metadata(m); std::holds_alternative<StorageError>(checked)) return checked;
   const Id id = entry_id(m);
   const auto key = id.to_string();
   const auto existing = find_record(id);
@@ -425,8 +441,7 @@ std::set<std::string>& MetadataCatalog::members_for(RecordType type,
 }
 
 ::folio::core::Result<std::monostate, StorageError> MetadataCatalog::insert_directory(DirectoryMetadata m) {
-  if (!valid_kind(m.metadata.kind) || !valid_path(m.relative_path) || !valid_utf8(m.metadata.name))
-    return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Invalid Directory metadata");
+  if (auto checked = validate_metadata(m); std::holds_alternative<StorageError>(checked)) return checked;
   const auto key = m.metadata.id.to_string();
   if (directories_.contains(key) || find_record(m.metadata.id))
     return failure(StorageErrorCode::DuplicateId, m.relative_path, "Entry UUID already exists");
@@ -447,8 +462,7 @@ std::set<std::string>& MetadataCatalog::members_for(RecordType type,
 }
 
 ::folio::core::Result<std::monostate, StorageError> MetadataCatalog::update_directory(DirectoryMetadata m) {
-  if (!valid_kind(m.metadata.kind) || !valid_path(m.relative_path) || !valid_utf8(m.metadata.name))
-    return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Invalid Directory metadata");
+  if (auto checked = validate_metadata(m); std::holds_alternative<StorageError>(checked)) return checked;
   const auto key = m.metadata.id.to_string();
   auto it = directories_.find(key);
   if (it == directories_.end())

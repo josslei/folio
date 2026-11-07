@@ -2,8 +2,63 @@
 
 **Status: Implemented baseline with planned extensions.** Processes, ownership,
 local IPC, lifecycle, public Normal reads and shared sequential request scheduling
-are implemented. Mutation execution, Edit Locks and Push Events remain deferred.
+are implemented. Phase 4.3a adds Normal Mutations and Entry Edit Locks; Push Events remain deferred.
 See [architecture](architecture.md), [decisions](design-decisions.md) and [roadmap](roadmap.md).
+
+## Backend responsibility overview
+
+**Implemented.** This tree groups responsibilities, not runtime order,
+ownership or strict dependency layers. Parentheses identify classes/structs;
+brackets identify logical modules. The executor callback routes Access requests
+to AccessOrchestrator::handle() and mutation/editing requests to MutationOrchestrator.
+
+```text
+[Backend]
+|
++-- [Lifecycle and exclusive ownership]
+|   +-- Backend entry: run_backend() -- free function
+|   +-- Lifecycle transition enforcement (BackendStateMachine)
+|   +-- [Lifecycle state actions]
+|   |     Bootstrap / Serve / Stopping / Report / Finish
+|   +-- Resource ownership and lifecycle data (BackendContext)
+|   +-- Exclusive Repo and IPC listener ownership (RepositoryOwnership)
+|
++-- [IPC and scheduling]
+|   +-- Connections, admission and response delivery (IpcServer)
+|   +-- Connection identity and lifetime (ConnectionSession)
+|   +-- Shared bounded queue and sequential executor (RequestScheduler)
+|
++-- [Operation handling]
+|   +-- [Operation dispatch]
+|   |     Routes to the appropriate peer below; no dispatcher class required
+|   +-- Access orchestration (AccessOrchestrator)
+|   |     Browse / Metadata Query / Directory Listing / Record Loading
+|   +-- Mutation orchestration and editing (MutationOrchestrator)
+|         Create / Update / Move / Directory Rename / Todo status changes
+|         Edit Lock acquisition, release and ownership checks
+|         Owns Edit Lock map; selects Repository calls/Coordinator callbacks
+|
++-- [Storage]
+    +-- Authoritative Normal Entry persistence (NormalRepository)
+    +-- Metadata projection and queries (MetadataCatalog)
+    +-- Catalog/session consistency coordination (CatalogCoordinator)
+    +-- [Persistence support]
+          Entry codecs / Index codec / locators / path validation
+```
+
+Access and Mutation handling are peers and both use Storage. AccessOrchestrator borrows its Storage dependencies and owns no mutable editing
+state; MutationOrchestrator owns editing state.
+Edit Lock requests are editing-control operations supporting mutation workflows,
+rather than authoritative data mutations or ordinary read-only Access.
+
+BackendContext owns the resource instances; BackendStateMachine enforces
+lifecycle transitions. IpcServer owns its RequestScheduler. Operation handlers
+borrow Catalog, Repository and Coordinator through C++ references. Coordinator
+borrows Catalog. Repository retains persistence sequencing and reports results
+through matching Coordinator callbacks; Coordinator synchronizes Catalog.
+ConnectionSession is Backend-private and is retained by workers/accepted work,
+while Edit Locks reference it weakly. No additional controller or lifecycle
+framework is implied.
 
 ## User configuration and executable
 
@@ -25,7 +80,7 @@ Backend (one active owner for this user's configuration)
     ├── CatalogCoordinator (borrows that Catalog)
     ├── NormalRepository / future VaultRepository
     ├── shared request queue / one sequential executor
-    └── future Entry Edit Lock registry
+    └── connection-owned Entry Edit Lock registry
 ```
 
 Backend owns operations, lifecycle, metadata, event publication, and later Recovery/Trash/Vault/Git integration. Frontends own navigation, tabs, focus, and editing buffers. They do not own the authoritative Catalog or invoke private Storage APIs.
@@ -60,7 +115,14 @@ decisions; domain/Storage classes need no speculative thread-safety changes. Ack
 
 Backend enforces Frontend-requested exclusive interactive Edit Locks per Entry. Other clients may read. Disconnect releases/invalidates locks; restart/reconnect requires reacquisition before modification. CLI mutations respect applicable locks. Serialization remains necessary.
 
-Creating an independent Record, moving a Record, or renaming a Directory does not inherently require an Edit Lock. Content editing must not overwrite newer membership/locator changes; design scoped updates/revision protection before implementing saves. Exact lock API is deferred.
+Content Update requires a long-lived owned Edit Lock. Immediate Move, Directory
+Rename and Todo status changes check ownership and execute together on the single
+executor: reject another owner's lock; proceed when unlocked or owned, preserving
+an existing owner's lock. Create has no existing Entry to lock. Acquire obtains
+the authoritative Snapshot with ownership in one action. Disconnect expires locks
+only after that connection's already Accepted work settles. Update reconstructs
+from current authoritative state, preserving membership/locator and immutable
+fields. Revision checking remains open. See [Normal mutation contracts](application-mutations.md).
 
 Push events are decided; event names, payloads, revisions, subscriptions, ordering, and reconnection rules are not. Notify relevant Frontends of changes without filesystem polling; keep Backend business logic out of TUI.
 
@@ -210,7 +272,7 @@ The lifecycle owner accepts connections and creates bounded IPC workers (at most
 overlapped Named Pipes and completion/wake events. There are no recurring sleep
 loops for established IPC progress. Workers decode complete requests and admit
 through one Backend-owned RequestScheduler. One executor performs all current
-Query and future Mutation execution sequentially; it alone accesses live Storage.
+Access and Mutation execution sequentially; it alone accesses live Storage.
 Accepted acknowledgment is distinct from final Response; Rejected is distinct
 from execution failure. See [runtime/protocol limits](ipc-protocol.md).
 
@@ -230,7 +292,7 @@ Marker. Shutdown closes admission/connections, explicitly calls `finish_session(
 and releases ownership last. Failed finalization returns failure and retains the
 Marker according to Storage's existing contract. Backend crashes release locks,
 break connections and leave Marker-based reconstruction for the next session.
-The runtime now drains queued/active Query Operations through this lifecycle
+The runtime now drains queued/active Access Operations through this lifecycle
 boundary. Concrete Mutation execution remains Phase 4.3a.
 
 ### Backend module failure containment — Decided; current paths audited
@@ -256,7 +318,7 @@ Application error contracts to the requesting Frontend; do not broadcast a
 request-specific error to unrelated Frontends. For example, a Save failure for
 Frontend B belongs to B's final response, not to Frontend A's browsing session.
 The request/response path already routes current Query results to their
-originating connection; Mutation delivery remains future work.
+originating connection; Normal Mutation final results follow the same routing.
 
 If a failure also changes shared service availability, affected Frontends may
 need a separate availability notification. That notification must contain only
@@ -354,16 +416,17 @@ Browse, scoped metadata queries, Directory listing, and typed Snapshot loading
 are now available on BackendConnectionHandle through IPC. See
 [Public read access](application-access.md) for current contracts, warnings,
 errors, transport limits, and deferred work. This supersedes earlier statements
-in this document that all Public Application operations are absent. Mutations,
-Recovery, Edit Locks, events, and Vault remain deferred.
+in this document that all Public Application operations are absent. Phase 4.3a
+subsequently adds Normal Mutations and Edit Locks; Recovery, events and Vault
+remain deferred.
 
 ## Phase 4.2c — unified protocol components implemented
 
-Query and future Mutation Operations share one IPC transport and MessagePack
+Access and Mutation Operations share one IPC transport and MessagePack
 codec architecture. Complete length-prefixed messages use shared nonblocking transfer handling
 without separate protocol chunks. Mutation identity, failure/evidence and confirmed envelopes have codecs,
-including ID correlation checks; complete business payloads and dispatch remain
-deferred to 4.3a. Protocol version remains 1. See [protocol boundaries and limits](ipc-protocol.md).
+including ID correlation checks. Phase 4.3a subsequently supplies concrete Normal
+business payloads and dispatch using those same facilities. Protocol version remains 1. See [protocol boundaries and limits](ipc-protocol.md).
 Backend lifecycle, ownership, Catalog and Marker behavior are unchanged.
 
 ## Runtime refactor before Normal Mutations — Implemented
@@ -401,7 +464,7 @@ run_backend()
        ▼ Success
 [Serve]
   Serve(context)
-    ├─ Construct IpcServer; store handle_access(...) callback
+    ├─ Construct IpcServer; store operation dispatch callback
     │    └─ Construct RequestScheduler ──────────────────────────────────► Start executor
     │                                                                      └─ Wait for work
     └─ IpcServer::run() [blocks main thread]
@@ -416,13 +479,13 @@ run_backend()
          │                             Request loop
          │                               ├─ Wait / receive complete message
          │                               ├─ Validate framing/version/bounds
-         │                               ├─ decode_access_request()
+         │                               ├─ codec::decode<OperationRequest>()
          │                               └─ scheduler.admit(action)
          │                                    ├─ Reject → send Rejected
          │                                    └─ Enqueue ───────────────► Wake executor
          │                                         │                         ├─ Pop action
          │                                    Send Accepted                  ├─ handler_(request)
-         │                                         │                         │   └─ handle_access(...)
+         │                                         │                         │   └─ access->handle(...)
          │                                    Wait for result                │       └─ Catalog / Repository
          │                                         │                         ├─ Encode response
          │                                         │                         ├─ Retain result/exception
@@ -529,3 +592,16 @@ particular Mutation's outcome, and does not promise Draft Recovery.
 
 Revisit additional hang-handling mechanisms only for a concrete requirement
 through design review. No such mechanism is currently scheduled.
+
+## Phase 4.3a — Normal Mutations and Edit Locks implemented
+
+The authoritative description of inputs, modification context, independent
+membership/content responsibilities, lock lifetime and failure evidence is
+[Normal mutation contracts](application-mutations.md#normal-execution-and-field-semantics--implemented).
+MutationOrchestrator owns the executor-only lock registry and handlers. IpcServer passes
+an opaque shared session token to each accepted action; workers never manipulate
+locks or Storage. Weak registry ownership expires after disconnect and accepted
+work completion. No extra cleanup queue or lifecycle state was added. Stopping /
+Report drain accepted work; Finish closes workers before Coordinator finalization.
+Backend Entry UUID generation and Frontend MutationId generation remain distinct.
+Full Refresh, count checks, Push, Recovery and UI worker integration remain deferred.

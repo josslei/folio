@@ -81,6 +81,14 @@ struct RootListing {
 [[nodiscard]] DirectoryMetadata metadata_from(const Directory::Snapshot& snapshot,
                                               std::filesystem::path relative_path);
 
+// Reuse Catalog field validation before authoritative publication. These checks
+// perform no I/O and do not insert/update metadata or validate live membership.
+[[nodiscard]] core::Result<std::monostate, StorageError> validate_metadata(const RecordMetadata& metadata);
+[[nodiscard]] core::Result<std::monostate, StorageError> validate_metadata(const DirectoryMetadata& metadata);
+
+// Compare existing projected fields/locators without reading authoritative data.
+[[nodiscard]] bool metadata_matches(const RecordMetadata& left, const RecordMetadata& right);
+
 // In-memory metadata only. All four Entry types share one UUID identity namespace.
 // Locators are lexically safe relative paths; physical layout belongs to the
 // repository. Lookups return copies, so callers cannot mutate catalog state

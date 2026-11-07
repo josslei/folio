@@ -22,7 +22,7 @@ Read [architecture](docs/architecture.md), [design decisions](docs/design-decisi
 
 Preserve Catalog-centric ownership: the future Backend owns Catalog, Coordinator, and Repositories; Coordinator borrows Catalog. `unpersisted` means metadata is not saved to the Index, never that Entries are unsaved. Inconsistent is separate and blocks Index publication. Managed mutations use creation checks, known locators, and matching result callbacks; do not add implicit global scans. Shutdown saving is explicitly called by the lifecycle owner with error handling/retry, not a destructor or once-only guard.
 
-Future direction is one configuration per OS user and one on-demand Backend with multiple Frontends using public Application APIs. Internal StoragePaths separates authoritative roots from explicitly supplied ApplicationPaths (config/data/state/cache/logs/optional runtime). Bootstrap platform resolution and folio_config.toml loading are implemented; tests inject effective paths. Phase 4.1c configuration combines defaults (<application.data>/normal and /vault) with optional absolute root overrides; missing files are atomically created from templates/folio_config.toml, malformed/unknown settings fail. See docs/configuration.md. Loading creates missing configuration only; configuration is fixed for a Backend session; Process Logging uses spdlog; initialize before TOML loading and flush after lifecycle cleanup. See docs/logging.md. Normal Index uses application.cache/index/normal.msgpack; former State indexes are ignored without migration or deletion. Durable Session Marker is implemented at application.state/session.marker. Startup/Refresh cannot establish Ready without it. The future owner must stop work and call finish_session() to save safely and durably clear the Marker; shutdown_save() alone leaves it intact. OS ownership and same-executable process launching are implemented in Phase 4.1a; IPC and Backend lifecycle integration are implemented in 4.1b; public Normal read operations are implemented in Phase 4.2a; mutations remain deferred. See docs/application-access.md. Ownership must precede Catalog startup and outlive explicit session finalization. Never unlink lock targets or equate a spawned process with Ready. Recovery state/drafts must not live in Cache. Vault drafts require encrypt-only Frontend capability without decryption keys. Resolve deferred protocols and cryptography through design review.
+Future direction is one configuration per OS user and one on-demand Backend with multiple Frontends using public Application APIs. Internal StoragePaths separates authoritative roots from explicitly supplied ApplicationPaths (config/data/state/cache/logs/optional runtime). Bootstrap platform resolution and folio_config.toml loading are implemented; tests inject effective paths. Phase 4.1c configuration combines defaults (<application.data>/normal and /vault) with optional absolute root overrides; missing files are atomically created from templates/folio_config.toml, malformed/unknown settings fail. See docs/configuration.md. Loading creates missing configuration only; configuration is fixed for a Backend session; Process Logging uses spdlog; initialize before TOML loading and flush after lifecycle cleanup. See docs/logging.md. Normal Index uses application.cache/index/normal.msgpack; former State indexes are ignored without migration or deletion. Durable Session Marker is implemented at application.state/session.marker. Startup/Refresh cannot establish Ready without it. The future owner must stop work and call finish_session() to save safely and durably clear the Marker; shutdown_save() alone leaves it intact. OS ownership and same-executable process launching are implemented in Phase 4.1a; IPC and Backend lifecycle integration are implemented in 4.1b; public Normal read operations are implemented in Phase 4.2a; Normal mutations and Entry Edit Locks are implemented in Phase 4.3a. See docs/application-access.md. Ownership must precede Catalog startup and outlive explicit session finalization. Never unlink lock targets or equate a spawned process with Ready. Recovery state/drafts must not live in Cache. Vault drafts require encrypt-only Frontend capability without decryption keys. Resolve deferred protocols and cryptography through design review.
 
 An Entry is an independently identifiable persistent Folio object: Log, Memo, Todo, or Directory. Use Entry to describe all four conceptually; terminology alignment must preserve existing program behavior and does not require every API to support all four types. Distinguish a type only when its fields, membership rules, or persistence layout require it; never use “Entry” to implicitly exclude Directory. Record is shorthand for Log, Memo, and Todo only. Use it for genuinely narrower APIs; do not introduce separate behavior for Records and Directories when their behavior is shared. Directory membership is a relationship between Entries, not a domain hierarchy. Keep independent classes without a common Entry base class. Directory has no parent ID: only Memo/Todo single-level organization is supported. Persisted Folio Entries are authoritative; the Catalog and binary Index are rebuildable projections.
 
@@ -110,3 +110,26 @@ not a final result or a durability promise. Disconnecting does not cancel accept
 work. Stop admission, drain accepted work and join workers before explicit Catalog
 finalization; retain RepositoryOwnership until afterward. Public methods remain
 blocking and must eventually run off the UI thread. See docs/ipc-protocol.md.
+
+Mutation identity, editing data and result contracts live in
+lib/include/folio/application/mutation.hpp.
+Backend MutationOrchestrator handlers and the weak connection-owned edit-lock registry
+run only on the sequential executor. Resolve current Catalog locators, verify
+Ready and lock/membership preconditions before writes, and reconstruct Update
+Snapshots from authoritative state plus Full Editable Fields. Move owns membership
+and location; Frontend Modification Context is shared by Update/Move, never a
+version token. Backend generates Entry UUIDs; Frontend generates MutationId.
+Accepted actions retain their connection session token after disconnect, so lock
+ownership expires only when the worker and accepted actions release it. Immediate
+Rename/Move/status changes reject another owner's lock but need no temporary lock
+on unlocked Entries. Preserve structured publication/durability evidence; never
+infer NotApplied from lost confirmation. See docs/application-mutations.md.
+
+Backend operation handling and scheduling declarations live under server/include/operations/
+with matching server/src/operations/ implementations. IPC owns the Backend-private
+connection session token under server/include/ipc/. Access operations and mutation
+orchestration are peers; the executor callback routes between them.
+
+AccessOrchestrator and MutationOrchestrator are concrete executor-only peers under
+server/include/operations/ with matching sources; both borrow Storage dependencies.
+AccessOrchestrator handles read-only operations without owning mutable editing state.

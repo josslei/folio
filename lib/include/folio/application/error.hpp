@@ -16,7 +16,8 @@ enum class ErrorReason {
   InvalidQuery, WrongRecordType, NotFound, StaleLocation, InvalidData,
   UnsupportedVersion, IdentityConflict, UnsafePath, AccessDenied, IoFailure,
   ConnectionLost, Timeout, BackendUnavailable, ProtocolError, IncompatibleProtocol,
-  MetadataUnavailable, ResourceLimit, UnexpectedFailure, NotImplemented
+  MetadataUnavailable, ResourceLimit, UnexpectedFailure, NotImplemented,
+  InvalidMutation, LockConflict, EditLockRequired, CatalogSynchronizationFailed
 };
 
 // Presentation choices, not automatic retries or guarantees of success.

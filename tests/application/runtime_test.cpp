@@ -118,6 +118,7 @@ class IpcServer : public testing::Test {
   bool released = false, stopped = false;
   bool hold_report = false, drained = false;
   bool fail_operations = false, expect_failures = false;
+  bool mismatch_mutation = false;
   ipc::RuntimeLimits limits;
   std::optional<ipc::IpcError> server_error;
   std::exception_ptr server_exception;
@@ -128,12 +129,21 @@ class IpcServer : public testing::Test {
     ASSERT_TRUE(std::holds_alternative<ipc::RepositoryOwnership>(acquired));
     ownership.emplace(std::get<ipc::RepositoryOwnership>(std::move(acquired)));
     runtime = std::make_unique<ipc::IpcServer>(*ownership,
-        [&](const ipc::AccessRequest& request) -> ipc::AccessResponse {
+        [&](const ipc::OperationRequest& request, const ipc::Session&) -> ipc::OperationResponse {
           std::unique_lock lock(mutex);
-          executed.push_back(std::get<ipc::LoadMemoRequest>(request).id);
+          if (const auto* load = std::get_if<ipc::LoadMemoRequest>(&request)) executed.push_back(load->id);
+          else executed.push_back(core::Id::generate());
           changed.notify_all();
           changed.wait(lock, [&] { return released; });
           if (fail_operations) throw std::runtime_error("synthetic operation exception");
+          if (const auto* mutation = std::get_if<ipc::MutationRequest>(&request)) {
+            return ipc::NormalMutationResponse{
+                mismatch_mutation ? app::MutationId::generate() : mutation->mutation_id,
+                app::MutationFailure{{app::ErrorCategory::InvalidRequest, app::ErrorReason::InvalidMutation,
+                    "Synthetic mutation failure", {app::ErrorAction::Dismiss}},
+                    app::AuthoritativeChangeStatus::NotApplied,
+                    {executed.back(), {}, {}, {{app::MutationStep::WriteEntry, app::StepObservation::NotAttempted}}}}};
+          }
           return app::ApplicationError{app::ErrorCategory::TargetUnavailable,
               app::ErrorReason::NotFound, "Synthetic missing Memo", {app::ErrorAction::Dismiss}};
         }, "", limits);
@@ -179,7 +189,7 @@ class IpcServer : public testing::Test {
     return std::get<ipc::Message>(std::move(message));
   }
   void submit(ipc::IpcStream& stream, const core::Id& id) {
-    const auto bytes = std::get<std::string>(ipc::encode_access_request(ipc::LoadMemoRequest{id}));
+    const auto bytes = std::get<std::string>(ipc::codec::encode<ipc::OperationRequest>(ipc::LoadMemoRequest{id}));
     ASSERT_TRUE(std::holds_alternative<std::monostate>(ipc::send_message(
         stream, {ipc::MessageKind::Request, ipc::payload_bytes(bytes)}, Clock::now() + 3s)));
   }
@@ -429,4 +439,67 @@ TEST_F(IpcServer, FailureDrainPreservesOtherConnectionsUntilFinish) {
   }
   ASSERT_TRUE(await_stop());
   EXPECT_FALSE(idle.connected());
+}
+
+TEST_F(IpcServer, MutationIdentityMismatchInvalidatesConnectionWithoutFabricatingFailure) {
+  mismatch_mutation = true;
+  start();
+  auto connected = app::BackendConnectionHandle::connect(settings());
+  ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(connected));
+  auto connection = std::get<app::BackendConnectionHandle>(std::move(connected));
+  core::TimestampContext time{core::Timestamp{}, "UTC", {}};
+  const auto id = app::MutationId::generate();
+  auto request = std::async(std::launch::async, [&] {
+    return connection.create(id, app::MemoEditableFields{"title", "body", {}}, time, time, {});
+  });
+  ASSERT_TRUE(await_count(1));
+  release();
+  auto result = request.get();
+  ASSERT_TRUE(std::holds_alternative<app::NoMutationResponse>(result));
+  const auto& missing = std::get<app::NoMutationResponse>(result);
+  EXPECT_EQ(missing.mutation_id, id);
+  EXPECT_EQ(missing.submission, app::SubmissionState::Accepted);
+  EXPECT_EQ(missing.error.reason, app::ErrorReason::ProtocolError);
+  EXPECT_FALSE(connection.connected());
+}
+
+TEST_F(IpcServer, MutationAdmissionRejectionRetainsIdentityAndIsNotFinalMutationFailure) {
+  limits.requests = 1;
+  start();
+  auto blocker = connect();
+  submit(blocker, core::Id::generate());
+  EXPECT_EQ(receive(blocker).kind, ipc::MessageKind::Accepted);
+  ASSERT_TRUE(await_count(1));
+  auto connected = app::BackendConnectionHandle::connect(settings());
+  ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(connected));
+  auto connection = std::get<app::BackendConnectionHandle>(std::move(connected));
+  core::TimestampContext time{core::Timestamp{}, "UTC", {}};
+  const auto id = app::MutationId::generate();
+  auto result = connection.create(id, app::MemoEditableFields{"title", "body", {}}, time, time, {});
+  ASSERT_TRUE(std::holds_alternative<app::NoMutationResponse>(result));
+  EXPECT_EQ(std::get<app::NoMutationResponse>(result).submission, app::SubmissionState::Rejected);
+  EXPECT_EQ(std::get<app::NoMutationResponse>(result).mutation_id, id);
+  EXPECT_TRUE(connection.connected());
+  release();
+  EXPECT_EQ(receive(blocker).kind, ipc::MessageKind::Response);
+}
+
+TEST_F(IpcServer, LostMutationFinalResponseRetainsAcceptedSubmissionWithoutBackendStatus) {
+  fail_operations = expect_failures = true;
+  start();
+  auto connected = app::BackendConnectionHandle::connect(settings());
+  ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(connected));
+  auto connection = std::get<app::BackendConnectionHandle>(std::move(connected));
+  core::TimestampContext time{core::Timestamp{}, "UTC", {}};
+  const auto id = app::MutationId::generate();
+  auto request = std::async(std::launch::async, [&] {
+    return connection.create(id, app::MemoEditableFields{"title", "body", {}}, time, time, {});
+  });
+  ASSERT_TRUE(await_count(1));
+  release();
+  auto result = request.get();
+  ASSERT_TRUE(std::holds_alternative<app::NoMutationResponse>(result));
+  EXPECT_EQ(std::get<app::NoMutationResponse>(result).mutation_id, id);
+  EXPECT_EQ(std::get<app::NoMutationResponse>(result).submission, app::SubmissionState::Accepted);
+  EXPECT_FALSE(connection.connected());
 }

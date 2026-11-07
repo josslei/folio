@@ -1,0 +1,11 @@
+#pragma once
+
+#include <memory>
+
+namespace folio::application::internal {
+// Lifetime identity, never a claimed PID or filesystem locator. A worker and
+// each of its accepted executor actions retain this token. Locks borrow it
+// weakly, so disconnect cannot revoke ownership before accepted work completes.
+struct ConnectionSession {};
+using Session = std::shared_ptr<ConnectionSession>;
+}  // namespace folio::application::internal

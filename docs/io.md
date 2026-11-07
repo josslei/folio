@@ -68,3 +68,11 @@ reads perform their path checks first.
 Dependency direction: Application → Config/Storage; Config → I/O;
 Storage → Config/I/O. I/O has no dependency back on these modules. No generic
 Infrastructure directory or filesystem interface hierarchy exists.
+
+Phase 4.3a adds `FileError::durability_confirmed` for atomic destination publication
+whose required synchronization completed before a later temporary-artifact cleanup
+failure. `replacement_completed` remains publication only. Repository errors retain
+per-step observations for single-file writes and compound Move; these facts do not
+change the atomic publication algorithm or promise durability of unsynchronized
+bootstrap ancestors. Application maps evidence rather than inferring outcomes from
+error codes. See [mutation evidence](application-mutations.md).

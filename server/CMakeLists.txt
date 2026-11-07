@@ -1,8 +1,9 @@
 # Backend-only implementation. Only its narrow execution entry point is exported.
 add_library(folio_backend STATIC
   src/backend.cpp
-  src/metadata_access.cpp
-  src/request_scheduler.cpp
+  src/operations/access_orchestrator.cpp
+  src/operations/mutation_orchestrator.cpp
+  src/operations/request_scheduler.cpp
   src/runtime/backend_state_machine.cpp
   src/runtime/backend_states.cpp
   src/runtime/repository_ownership.cpp

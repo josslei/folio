@@ -124,7 +124,7 @@ TEST_F(BackendStates, AcceptedWorkDrainsBeforeCatalogFinalizationAndOwnershipRel
     if (frontend.joinable()) frontend.join();
   }};
   context.runtime = std::make_unique<IpcServer>(*context.ownership,
-      [&](const AccessRequest&) -> AccessResponse {
+      [&](const OperationRequest&, const Session&) -> OperationResponse {
         entered.set_value();
         gate.wait();
         return ApplicationError{ErrorCategory::TargetUnavailable, ErrorReason::NotFound,

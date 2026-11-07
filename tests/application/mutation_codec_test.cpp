@@ -45,7 +45,7 @@ TEST(MutationCodec, ConfirmedEnvelopesPreserveSuccessFailureAndValidateIdentity)
   for (const auto& result : {core::Result<core::Id, app::MutationFailure>{core::Id::generate()},
                             core::Result<core::Id, app::MutationFailure>{failure(app::AuthoritativeChangeStatus::Unknown)}}) {
     const app::MutationResponse<core::Id> value{id, result};
-    auto encoded = ipc::encode_mutation_response(value);
+    auto encoded = ipc::codec::encode(value);
     ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
     const auto& bytes = std::get<std::string>(encoded);
     auto decoded = ipc::decode_mutation_response<core::Id>(bytes, id);
@@ -83,7 +83,7 @@ TEST(MutationCodec, MalformedIdsEnumsVariantsFieldsAndCollectionDeclarationsAreR
   evidence.source = app::DirectoryRef{static_cast<core::RecordType>(77)};
   bytes = std::get<std::string>(ipc::codec::encode(evidence));
   EXPECT_TRUE(std::holds_alternative<ipc::IpcError>(ipc::codec::decode<app::MutationEvidence>(bytes)));
-  auto response = std::get<std::string>(ipc::encode_mutation_response(app::MutationResponse<core::Id>{app::MutationId::generate(), core::Id::generate()}));
+  auto response = std::get<std::string>(ipc::codec::encode(app::MutationResponse<core::Id>{app::MutationId::generate(), core::Id::generate()}));
   // Envelope = [id, [result tag, value]]. Replace success tag with invalid tag.
   const auto tag = response.find('\x92', 1);
   ASSERT_NE(tag, std::string::npos);

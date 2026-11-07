@@ -1,4 +1,4 @@
-#include "metadata_access.hpp"
+#include "operations/access_orchestrator.hpp"
 #include "storage/catalog_coordinator.hpp"
 #include <gtest/gtest.h>
 #include <fstream>
@@ -19,6 +19,7 @@ class MetadataAccess : public testing::Test {
   storage::MetadataCatalog catalog;
   storage::NormalRepository repository{paths.normal_root};
   storage::CatalogCoordinator coordinator{paths, catalog};
+  access::AccessOrchestrator reader{catalog, repository, coordinator};
   core::Directory directory{core::DirectoryKind::Memo, "Projects"};
   core::Memo root{"Alpha", "root-body", time};
   core::Memo member{"Beta", "member-body", time};
@@ -40,10 +41,10 @@ class MetadataAccess : public testing::Test {
     ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(log.snapshot(), coordinator.log_creation_callback(), coordinator.creation_check())));
   }
   void TearDown() override { std::error_code ignored; fs::remove_all(base, ignored); }
-  access::AccessResponse call(access::AccessRequest request) {
-    return access::handle_access(request, catalog, repository, coordinator);
+  access::OperationResponse call(access::OperationRequest request) {
+    return reader.handle(request);
   }
-  template<class T> T value(access::AccessRequest request) {
+  template<class T> T value(access::OperationRequest request) {
     auto result = call(std::move(request));
     if (!std::holds_alternative<T>(result)) {
       ADD_FAILURE() << "Unexpected response alternative " << result.index();
@@ -153,7 +154,7 @@ TEST_F(MetadataAccess, InconsistentCatalogProducesWarningAndUnavailableIsAnError
   EXPECT_EQ(result.warnings[0].reason, app::WarningReason::CatalogInconsistent);
   storage::MetadataCatalog unloaded;
   storage::CatalogCoordinator not_started{paths, unloaded};
-  auto unavailable = access::handle_access(access::QueryRecordsRequest{{}}, unloaded, repository, not_started);
+  auto unavailable = access::AccessOrchestrator{unloaded, repository, not_started}.handle(access::QueryRecordsRequest{{}});
   ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(unavailable));
   EXPECT_EQ(std::get<app::ApplicationError>(unavailable).reason, app::ErrorReason::MetadataUnavailable);
 }

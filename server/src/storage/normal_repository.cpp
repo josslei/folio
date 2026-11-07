@@ -67,7 +67,8 @@ namespace fs = std::filesystem;
 namespace codec = ::folio::core::storage::codec;
 
 StorageResult<std::monostate> write_entry_file(
-    const fs::path& path, std::string_view bytes, bool create_only, bool& changed) {
+    const fs::path& path, std::string_view bytes, bool create_only, bool& changed, PersistenceObservation& observation) {
+  observation = PersistenceObservation::Unknown;
   try {
     auto result = internal::repository_test_hooks.write
         ? internal::repository_test_hooks.write(path, bytes, create_only)
@@ -79,6 +80,12 @@ StorageResult<std::monostate> write_entry_file(
     const auto* problem = std::get_if<io::FileError>(&result);
     if (std::holds_alternative<std::monostate>(result) || (problem && problem->replacement_completed))
       changed = true;
+    if (std::holds_alternative<std::monostate>(result))
+      observation = PersistenceObservation::DurabilityConfirmed;
+    else if (problem)
+      observation = problem->durability_confirmed ? PersistenceObservation::DurabilityConfirmed
+          : (problem->replacement_completed ? PersistenceObservation::Published
+                                            : PersistenceObservation::NotCompleted);
     return result;
   } catch (...) {
     // An unexpected exception escaping the writer cannot certify no publication.
@@ -598,9 +605,10 @@ template <class Callback, class Operation>
     const fs::path& root, const Callback& callback, Operation operation) {
   bool changed = false;
   bool callback_invoked = false;
+  RepositoryMutationEvidence evidence;
   auto result = [&]() -> StorageResult<std::monostate> {
     try {
-      return operation(changed, callback_invoked);
+      return operation(changed, callback_invoked, evidence);
     } catch (const std::exception& exception) {
       return fail(StorageErrorCode::OperationFailure, root,
                   std::string{"Repository mutation threw: "} + exception.what());
@@ -615,7 +623,7 @@ template <class Callback, class Operation>
         ? MutationFailureStage::CatalogSynchronizationFailed
         : (changed || published ? MutationFailureStage::AuthoritativeStateMayHaveChanged
                                 : MutationFailureStage::BeforeAuthoritativeChange);
-    RepositoryMutationError error{stage, std::move(problem->error)};
+    RepositoryMutationError error{stage, std::move(problem->error), evidence};
     if (callback && !callback_invoked) {
       // The original operation diagnostic wins over any notification failure.
       try { (void)callback(std::cref(error)); } catch (...) {}
@@ -667,7 +675,7 @@ StorageResult<std::monostate> notify_persisted(
 template <class Snapshot, class Callback>
 StorageResult<std::monostate> create_entry(const fs::path& root, RecordType type,
                                     const Snapshot& snapshot,
-    const Callback& on_result, const CreationCheck& check_creation, bool& changed, bool& callback_invoked) {
+    const Callback& on_result, const CreationCheck& check_creation, bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence) {
   auto name = filename(type, snapshot.id, snapshot.created);
   if (failure(name)) return *failure(name);
   fs::path parent = root / module_name(type);
@@ -693,7 +701,7 @@ StorageResult<std::monostate> create_entry(const fs::path& root, RecordType type
   // TODO(Phase 5): journal and sync root/module bootstrap. If the atomic
   // create fails, newly made empty parent directories may remain.
   if (auto checked = ensure_directory(root, parent); failure(checked)) return *failure(checked);
-  auto written = write_entry_file(path, std::get<std::string>(encoded), true, changed);
+  auto written = write_entry_file(path, std::get<std::string>(encoded), true, changed, evidence.write);
   if (failure(written)) return *failure(written);
   changed = true;
   return notify_persisted(snapshot, root, path, on_result, callback_invoked);
@@ -703,7 +711,7 @@ template <class Snapshot, class Callback>
 StorageResult<std::monostate> update_record(const fs::path& root, RecordType type,
                                     const Snapshot& snapshot,
                                     const std::optional<fs::path>& relative_path,
-    const Callback& on_result, bool& changed, bool& callback_invoked) {
+    const Callback& on_result, bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence) {
   auto path = resolve_entry_path(root, type, snapshot.id, relative_path);
   if (failure(path)) return *failure(path);
   const auto& destination = std::get<fs::path>(path);
@@ -739,7 +747,7 @@ StorageResult<std::monostate> update_record(const fs::path& root, RecordType typ
   }
   auto encoded = checked_encoding(snapshot, destination);
   if (failure(encoded)) return *failure(encoded);
-  auto written = write_entry_file(destination, std::get<std::string>(encoded), false, changed);
+  auto written = write_entry_file(destination, std::get<std::string>(encoded), false, changed, evidence.write);
   if (failure(written)) return *failure(written);
   changed = true;
   return notify_persisted(snapshot, root, destination, on_result, callback_invoked);
@@ -770,7 +778,7 @@ template <class Snapshot, class Callback>
 StorageResult<std::monostate> move_entry(const fs::path& root, RecordType type,
                                   const core::Id& id, std::optional<core::Id> directory_id,
                                   core::TimestampContext modified,
-    const Callback& on_result, const std::optional<fs::path>& relative_path, bool& changed, bool& callback_invoked) {
+    const Callback& on_result, const std::optional<fs::path>& relative_path, bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence) {
   auto source = resolve_entry_path(root, type, id, relative_path);
   if (failure(source)) return *failure(source);
   const auto old_path = std::get<fs::path>(source);
@@ -805,18 +813,22 @@ StorageResult<std::monostate> move_entry(const fs::path& root, RecordType type,
   if (auto checked = safe_path(root, destination, true); failure(checked)) return *failure(checked);
   // TODO(Phase 5): journal this two-path operation. Destination is created
   // first, so an interruption may leave both versions and needs recovery.
-  auto created = write_entry_file(destination, std::get<std::string>(encoded), true, changed);
+  auto created = write_entry_file(destination, std::get<std::string>(encoded), true, changed, evidence.destination);
   if (failure(created)) return *failure(created);
   changed = true;
   std::error_code ec;
   const auto remove_source = internal::repository_test_hooks.remove_source;
+  evidence.source_removal = PersistenceObservation::Unknown;
   if (!(remove_source ? remove_source(old_path, ec) : fs::remove(old_path, ec)) || ec) {
+    evidence.source_removal = PersistenceObservation::NotCompleted;
     return fail(io::FileErrorCode::IoError, old_path,
                 "Destination created but source removal failed; reconciliation required", ec, true);
   }
+  evidence.source_removal = PersistenceObservation::Published;
 #ifndef _WIN32
   auto synced = sync_parent(old_path);
   if (failure(synced)) return *failure(synced);
+  evidence.source_removal = PersistenceObservation::DurabilityConfirmed;
 #endif
   return notify_persisted(snapshot, root, destination, on_result, callback_invoked);
 }
@@ -827,23 +839,23 @@ NormalRepository::NormalRepository(fs::path normal_root) : root_(std::move(norma
 
 ::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::create_log(const core::Log::Snapshot& snapshot,
     const MutationResultCallback<LogMetadata>& on_result, const CreationCheck& check_creation) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked)
+  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
       -> StorageResult<std::monostate> {
-    return create_entry(root_, RecordType::Log, snapshot, on_result, check_creation, changed, callback_invoked);
+    return create_entry(root_, RecordType::Log, snapshot, on_result, check_creation, changed, callback_invoked, evidence);
   });
 }
 ::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::create_memo(const core::Memo::Snapshot& snapshot,
     const MutationResultCallback<MemoMetadata>& on_result, const CreationCheck& check_creation) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked)
+  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
       -> StorageResult<std::monostate> {
-    return create_entry(root_, RecordType::Memo, snapshot, on_result, check_creation, changed, callback_invoked);
+    return create_entry(root_, RecordType::Memo, snapshot, on_result, check_creation, changed, callback_invoked, evidence);
   });
 }
 ::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::create_todo(const core::Todo::Snapshot& snapshot,
     const MutationResultCallback<TodoMetadata>& on_result, const CreationCheck& check_creation) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked)
+  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
       -> StorageResult<std::monostate> {
-    return create_entry(root_, RecordType::Todo, snapshot, on_result, check_creation, changed, callback_invoked);
+    return create_entry(root_, RecordType::Todo, snapshot, on_result, check_creation, changed, callback_invoked, evidence);
   });
 }
 StorageResult<core::Log::Snapshot> NormalRepository::load_log(
@@ -861,32 +873,32 @@ StorageResult<core::Todo::Snapshot> NormalRepository::load_todo(
 ::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::update_log(
     const core::Log::Snapshot& snapshot, std::optional<fs::path> relative_path,
     const MutationResultCallback<LogMetadata>& on_result) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked)
+  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
       -> StorageResult<std::monostate> {
-    return update_record(root_, RecordType::Log, snapshot, relative_path, on_result, changed, callback_invoked);
+    return update_record(root_, RecordType::Log, snapshot, relative_path, on_result, changed, callback_invoked, evidence);
   });
 }
 ::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::update_memo(
     const core::Memo::Snapshot& snapshot, std::optional<fs::path> relative_path,
     const MutationResultCallback<MemoMetadata>& on_result) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked)
+  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
       -> StorageResult<std::monostate> {
-    return update_record(root_, RecordType::Memo, snapshot, relative_path, on_result, changed, callback_invoked);
+    return update_record(root_, RecordType::Memo, snapshot, relative_path, on_result, changed, callback_invoked, evidence);
   });
 }
 ::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::update_todo(
     const core::Todo::Snapshot& snapshot, std::optional<fs::path> relative_path,
     const MutationResultCallback<TodoMetadata>& on_result) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked)
+  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
       -> StorageResult<std::monostate> {
-    return update_record(root_, RecordType::Todo, snapshot, relative_path, on_result, changed, callback_invoked);
+    return update_record(root_, RecordType::Todo, snapshot, relative_path, on_result, changed, callback_invoked, evidence);
   });
 }
 
 ::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::create_directory(
     DirectoryKind kind, const core::Directory::Snapshot& snapshot,
     const MutationResultCallback<DirectoryMetadata>& on_result, const CreationCheck& check_creation) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked)
+  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
       -> StorageResult<std::monostate> {
     if (!valid_kind(kind)) {
       return fail(StorageErrorCode::InvalidRecordType, root_, "Invalid Directory kind");
@@ -918,7 +930,7 @@ StorageResult<core::Todo::Snapshot> NormalRepository::load_todo(
     changed = true;
     // TODO(Phase 5): journal folder creation and metadata publication. A
     // failed metadata write leaves an identifiable incomplete UUID folder.
-    auto written = write_entry_file(metadata, std::get<std::string>(encoded), true, changed);
+    auto written = write_entry_file(metadata, std::get<std::string>(encoded), true, changed, evidence.write);
     if (failure(written)) return *failure(written);
     changed = true;
     return notify_persisted(snapshot, root_, folder, on_result, callback_invoked);
@@ -936,7 +948,7 @@ StorageResult<core::Directory::Snapshot> NormalRepository::load_directory(
 ::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::rename_directory(
     DirectoryKind kind, const core::Id& id, std::string name,
     const MutationResultCallback<DirectoryMetadata>& on_result) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked)
+  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
       -> StorageResult<std::monostate> {
     if (!valid_kind(kind)) {
       return fail(StorageErrorCode::InvalidRecordType, root_, "Invalid Directory kind");
@@ -948,7 +960,7 @@ StorageResult<core::Directory::Snapshot> NormalRepository::load_directory(
     core::Directory::Snapshot snapshot{id, kind, std::move(name)};
     auto encoded = checked_encoding(snapshot, metadata);
     if (failure(encoded)) return *failure(encoded);
-    auto written = write_entry_file(metadata, std::get<std::string>(encoded), false, changed);
+    auto written = write_entry_file(metadata, std::get<std::string>(encoded), false, changed, evidence.write);
     if (failure(written)) return *failure(written);
     changed = true;
     return notify_persisted(snapshot, root_, folder, on_result, callback_invoked);
@@ -959,20 +971,20 @@ StorageResult<core::Directory::Snapshot> NormalRepository::load_directory(
     const core::Id& id, std::optional<core::Id> directory_id,
     core::TimestampContext modified,
     const MutationResultCallback<MemoMetadata>& on_result, std::optional<fs::path> relative_path) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked)
+  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
       -> StorageResult<std::monostate> {
     return move_entry<core::Memo::Snapshot>(root_, RecordType::Memo, id,
-                                             std::move(directory_id), std::move(modified), on_result, relative_path, changed, callback_invoked);
+                                             std::move(directory_id), std::move(modified), on_result, relative_path, changed, callback_invoked, evidence);
   });
 }
 ::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::move_todo(
     const core::Id& id, std::optional<core::Id> directory_id,
     core::TimestampContext modified,
     const MutationResultCallback<TodoMetadata>& on_result, std::optional<fs::path> relative_path) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked)
+  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
       -> StorageResult<std::monostate> {
     return move_entry<core::Todo::Snapshot>(root_, RecordType::Todo, id,
-                                             std::move(directory_id), std::move(modified), on_result, relative_path, changed, callback_invoked);
+                                             std::move(directory_id), std::move(modified), on_result, relative_path, changed, callback_invoked, evidence);
   });
 }
 

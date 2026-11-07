@@ -63,6 +63,7 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
   std::stop_callback closing(stop, [&] { reception.request_stop(); });
   std::stop_callback admission(admission_closed_.get_token(), [&] { reception.request_stop(); });
   const auto receive_stop = reception.get_token();
+  const auto session = std::make_shared<ConnectionSession>();
   bool registered = false;
   // Registration must be undone on every ordinary return and exception.
   struct Registration {
@@ -146,12 +147,12 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
       reject_protocol("Expected one Application request");
       return;
     }
-    auto request = decode_access_request(payload_text(request_message.payload));
+    auto request = codec::decode<OperationRequest>(payload_text(request_message.payload));
     // Malformed complete Application requests are rejected before acceptance;
     // their connection is still usable, as with prior Application errors.
     if (std::holds_alternative<IpcError>(request)) {
       if (!send_rejection(stream, {ErrorCategory::InvalidRequest, ErrorReason::InvalidQuery,
-          "The read request is malformed or contains invalid values.", {ErrorAction::Dismiss}}, stop)) return;
+          "The Application request is malformed or contains invalid values.", {ErrorAction::Dismiss}}, stop)) return;
       continue;
     }
     // Free the wire buffer before keeping the decoded request in the queue.
@@ -161,15 +162,21 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     {
       std::lock_guard lock(mutex_);
       if (!stopping_) {
-        ticket = scheduler_.admit([this, request = std::get<AccessRequest>(std::move(request)),
-                                   reservation]() -> RequestScheduler::Result {
+        ticket = scheduler_.admit([this, request = std::get<OperationRequest>(std::move(request)),
+                                   reservation, session]() -> RequestScheduler::Result {
           try {
-            auto result = handler_(request);
-            auto encoded = encode_access_response(result);
+            auto result = handler_(request, session);
+            auto encoded = codec::encode<OperationResponse>(result);
             if (std::holds_alternative<IpcError>(encoded)) {
-              encoded = encode_access_response(ApplicationError{
+              // Never replace an executed mutation with an uncorrelated error
+              // or claim NotApplied. Delivery is unconfirmed; service continues.
+              if (std::holds_alternative<MutationRequest>(request)) {
+                try { SPDLOG_ERROR("Mutation final response exceeded protocol limits; confirmation lost"); } catch (...) {}
+                return std::get<IpcError>(encoded);
+              }
+              encoded = codec::encode<OperationResponse>(ApplicationError{
                   ErrorCategory::ApplicationUnavailable, ErrorReason::ResourceLimit,
-                  "The read response exceeds the resource limit.", {ErrorAction::Dismiss}});
+                  "The Application response exceeds the resource limit.", {ErrorAction::Dismiss}});
             }
             if (auto* error = std::get_if<IpcError>(&encoded)) {
               failure(*error);

@@ -1,4 +1,4 @@
-#include "metadata_access.hpp"
+#include "operations/access_orchestrator.hpp"
 #include "storage/catalog_coordinator.hpp"
 #include <folio/logging/logging.hpp>
 
@@ -128,7 +128,7 @@ storage::RecordQuery storage_query(const RecordQuery& query) {
   return result;
 }
 
-AccessResponse query_records(RecordQuery query, storage::MetadataCatalog& catalog,
+OperationResponse query_records(RecordQuery query, storage::MetadataCatalog& catalog,
                              const std::vector<ApplicationWarning>& warnings) {
   if (auto invalid = validate_query(query)) return *invalid;
   auto native = storage_query(query);
@@ -190,7 +190,7 @@ ApplicationError map_load_error(const io::FileError& failure) {
 }
 
 template<class Request>
-AccessResponse load_record(const Request& request, storage::MetadataCatalog& catalog,
+OperationResponse load_record(const Request& request, storage::MetadataCatalog& catalog,
                            storage::NormalRepository& repository) {
   constexpr auto type = std::is_same_v<Request, LoadLogRequest> ? core::RecordType::Log
       : std::is_same_v<Request, LoadMemoRequest> ? core::RecordType::Memo : core::RecordType::Todo;
@@ -206,7 +206,7 @@ AccessResponse load_record(const Request& request, storage::MetadataCatalog& cat
     else if constexpr (std::is_same_v<Request, LoadMemoRequest>) return repository.load_memo(request.id, locator);
     else return repository.load_todo(request.id, locator);
   }();
-  return std::visit([](auto&& value) -> AccessResponse {
+  return std::visit([](auto&& value) -> OperationResponse {
     using T = std::decay_t<decltype(value)>;
     if constexpr (std::is_same_v<T, storage::StorageError> || std::is_same_v<T, io::FileError>) {
       return map_load_error(value);
@@ -216,7 +216,7 @@ AccessResponse load_record(const Request& request, storage::MetadataCatalog& cat
   }, std::move(loaded));
 }
 
-AccessResponse browse(RecordQuery query, storage::MetadataCatalog& catalog,
+OperationResponse browse(RecordQuery query, storage::MetadataCatalog& catalog,
                       const std::vector<ApplicationWarning>& warnings,
                       std::optional<core::RecordType> root_type) {
   auto response = query_records(std::move(query), catalog, warnings);
@@ -230,10 +230,10 @@ AccessResponse browse(RecordQuery query, storage::MetadataCatalog& catalog,
   return ApplicationResponse<BrowseResult>{std::move(result), warnings};
 }
 
-AccessResponse dispatch(const AccessRequest& request, storage::MetadataCatalog& catalog,
+OperationResponse dispatch(const OperationRequest& request, storage::MetadataCatalog& catalog,
                         storage::NormalRepository& repository,
                         const std::vector<ApplicationWarning>& warnings) {
-  return std::visit([&](const auto& value) -> AccessResponse {
+  return std::visit([&](const auto& value) -> OperationResponse {
     using R = std::decay_t<decltype(value)>;
     if constexpr (std::is_same_v<R, QueryRecordsRequest>) {
       return query_records(value.query, catalog, warnings);
@@ -253,29 +253,37 @@ AccessResponse dispatch(const AccessRequest& request, storage::MetadataCatalog& 
         query.scope = DirectoryScope{std::get<core::Id>(value.dir)};
       }
       return browse(query, catalog, warnings, root_type);
-    } else {
+    } else if constexpr (std::is_same_v<R, LoadLogRequest> ||
+                         std::is_same_v<R, LoadMemoRequest> ||
+                         std::is_same_v<R, LoadTodoRequest>) {
       return load_record(value, catalog, repository);
+    } else {
+      return ApplicationError{ErrorCategory::InvalidRequest, ErrorReason::NotImplemented,
+                              "Not an Access Operation", {ErrorAction::Dismiss}};
     }
   }, request);
 }
 }  // namespace
 
-AccessResponse handle_access(const AccessRequest& request, storage::MetadataCatalog& catalog,
-                            storage::NormalRepository& repository,
-                            storage::CatalogCoordinator& coordinator) {
+AccessOrchestrator::AccessOrchestrator(storage::MetadataCatalog& catalog,
+                                     storage::NormalRepository& repository,
+                                     storage::CatalogCoordinator& coordinator)
+    : catalog_(catalog), repository_(repository), coordinator_(coordinator) {}
+
+OperationResponse AccessOrchestrator::handle(const OperationRequest& request) const {
   try {
-    if (coordinator.status() != storage::CatalogStatus::Ready &&
-        coordinator.status() != storage::CatalogStatus::Inconsistent) {
+    if (coordinator_.status() != storage::CatalogStatus::Ready &&
+        coordinator_.status() != storage::CatalogStatus::Inconsistent) {
       return ApplicationError{ErrorCategory::ApplicationUnavailable, ErrorReason::MetadataUnavailable,
                               "Application metadata unavailable", {ErrorAction::Dismiss}};
     }
     std::vector<ApplicationWarning> warnings;
-    if (coordinator.status() == storage::CatalogStatus::Inconsistent) {
+    if (coordinator_.status() == storage::CatalogStatus::Inconsistent) {
       // TODO(Application): offer explicit Refresh only after that public capability exists.
       warnings.push_back({WarningReason::CatalogInconsistent,
                           "Metadata may disagree with persisted Entries", {ErrorAction::Dismiss}});
     }
-    return dispatch(request, catalog, repository, warnings);
+    return dispatch(request, catalog_, repository_, warnings);
   } catch (...) {
     // Catch at the request boundary so an unexpected read failure cannot unwind
     // the Backend lifecycle. Never log arbitrary exception text or Entry content.

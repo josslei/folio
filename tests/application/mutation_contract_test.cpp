@@ -1,4 +1,4 @@
-#include <folio/application/mutation/mutation_result.hpp>
+#include <folio/application/mutation.hpp>
 
 #include <gtest/gtest.h>
 

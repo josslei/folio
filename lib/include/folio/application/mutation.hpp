@@ -1,13 +1,65 @@
 #pragma once
 
+#include <folio/core/types.hpp>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <folio/core/directory.hpp>
+#include <folio/core/log.hpp>
+#include <folio/core/memo.hpp>
+#include <folio/core/todo.hpp>
+#include <variant>
+#include <vector>
 #include <folio/application/error.hpp>
-#include <folio/application/mutation/mutation_id.hpp>
 #include <folio/application/query.hpp>
 
-#include <optional>
-#include <vector>
-
 namespace folio::application {
+
+// Mutation identity
+
+// Identifies one mutation intention, not an Entry or Draft. Correlation alone
+// provides no deduplication, receipt, or cross-restart execution guarantee.
+class MutationId {
+ public:
+  [[nodiscard]] static MutationId generate();
+  [[nodiscard]] static std::optional<MutationId> parse(std::string_view text);
+  [[nodiscard]] std::string to_string() const;
+
+  bool operator==(const MutationId&) const = default;
+
+ private:
+  explicit MutationId(core::Id value) : value_(value) {}
+
+  core::Id value_;
+};
+
+// Editing data
+
+// Full editable fields. Identity, creation, privacy and membership are excluded.
+struct LogEditableFields {
+  std::string title;
+  std::string content;
+  core::DateContext log_date;
+  std::vector<core::Tag> tags;
+};
+struct MemoEditableFields {
+  std::string title;
+  std::string content;
+  std::vector<core::Tag> tags;
+};
+struct TodoEditableFields {
+  std::string title;
+  std::string notes;
+  core::TodoStatus status;
+  core::TodoPriority priority;
+  std::optional<core::DueDate> due_date;
+  std::vector<core::Subtask> subtasks;
+};
+
+using EditSnapshot = std::variant<core::Log::Snapshot, core::Memo::Snapshot,
+                                  core::Todo::Snapshot, core::Directory::Snapshot>;
+
+// Mutation outcomes and evidence
 
 // Describes the intended authoritative change, independently of failure cause.
 enum class AuthoritativeChangeStatus {
@@ -58,7 +110,9 @@ struct MutationResponse {
 
 enum class SubmissionState {
   NotSent,
-  MayHaveBeenSent  // Does not establish Backend receipt or acceptance.
+  MayHaveBeenSent, // Does not establish Backend receipt or acceptance.
+  Rejected,        // Admission explicitly rejected; no execution was accepted.
+  Accepted         // Session-only admission, still no confirmed final outcome.
 };
 
 // Frontend observation only: never fabricate a Backend MutationFailure from a

@@ -1,6 +1,7 @@
 #include <folio/ipc/message_transport.hpp>
 #include <folio/ipc/application_codec.hpp>
 #include <gtest/gtest.h>
+#include "operations/mutation_orchestrator.hpp"
 
 namespace {
 namespace ipc = folio::application::internal;
@@ -27,3 +28,37 @@ TEST(IpcResourceLimits, LogicalCodecRejectsOversizedInputAndOutput) {
   EXPECT_TRUE(std::holds_alternative<ipc::IpcError>(ipc::codec::decode<std::string>(oversized)));
 }
 }  // namespace
+
+TEST(IpcResourceLimits, OversizedEditSnapshotDoesNotInstallAnUndisclosedLock) {
+  namespace core = folio::core;
+  namespace app = folio::application;
+  namespace storage = core::storage;
+  namespace fs = std::filesystem;
+  const auto base = fs::weakly_canonical(fs::temp_directory_path()) / ("fedit-limit-" + core::Id::generate().to_string());
+  struct Cleanup {
+    fs::path path;
+    ~Cleanup() { std::error_code ignored; fs::remove_all(path, ignored); }
+  } cleanup{base};
+  storage::StoragePaths paths{base / "normal", base / "vault",
+      {base / "config", base / "data", base / "state", base / "cache", base / "logs", std::nullopt}};
+  fs::create_directories(paths.normal_root);
+  storage::MetadataCatalog catalog;
+  storage::NormalRepository repository{paths.normal_root};
+  storage::CatalogCoordinator coordinator{paths, catalog};
+  ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
+  core::TimestampContext time{core::Timestamp{}, "UTC", {}};
+  core::Memo record{"Oversized", std::string(ipc::max_application_bytes, 'x'), time};
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(
+      record.snapshot(), coordinator.memo_creation_callback(), coordinator.creation_check())));
+  ipc::MutationOrchestrator mutations(catalog, repository, coordinator);
+  auto first = std::make_shared<ipc::ConnectionSession>();
+  auto second = std::make_shared<ipc::ConnectionSession>();
+  auto acquired = mutations.handle(ipc::AcquireEditRequest{record.id()}, first);
+  ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(acquired));
+  EXPECT_EQ(std::get<app::ApplicationError>(acquired).reason, app::ErrorReason::ResourceLimit);
+  auto update = mutations.handle(ipc::MutationRequest{app::MutationId::generate(),
+      app::internal::UpdateMemoRequest{record.id(), {"title", "body", {}}, time}}, second);
+  const auto& failure = std::get<app::MutationFailure>(std::get<ipc::NormalMutationResponse>(update).result);
+  EXPECT_EQ(failure.error.reason, app::ErrorReason::EditLockRequired);
+  EXPECT_EQ(failure.status, app::AuthoritativeChangeStatus::NotApplied);
+}

@@ -9,12 +9,12 @@ and execution belong to server/. Implementation-facing protocol headers are unde
 Core values, never Backend handler or Storage headers. This physical separation
 does not change messages or runtime behavior.
 
-Query and Mutation are categories of Application Operation, not C++ base classes.
+Access and Mutation are categories of Application Operation, not C++ base classes.
 Both use the existing per-user IPC connection, version-1 messages, positional
 MessagePack encoding, bounded logical messages and sequential exchanges. The public
-access point remains `BackendConnectionHandle`. No Mutation execution, public
-Mutation submission methods, concrete request/success payloads or Mutation dispatch
-are enabled by this phase.
+access point remains `BackendConnectionHandle`. Phase 4.3a adds concrete Normal
+Mutation payloads/dispatch and Edit Lock requests to that same OperationRequest and
+OperationResponse architecture; existing Query tags and payload arrays are unchanged.
 
 The existing read payload arrays and alternative tags are unchanged. The former
 `access_codec` implementation is now `application_codec`, backed by one shared
@@ -25,13 +25,15 @@ and the templated confirmed MutationResponse. The template allows future approve
 success types without fixing a speculative business contract today.
 
 Mutation IDs are validated as UUIDs. Confirmed response decoding takes the expected
-MutationId and reports Protocol failure on mismatch. A future exchange must
-invalidate its connection on that error, just as current reads do for protocol
-failures. There is no enabled end-to-end Mutation exchange yet. NoMutationResponse
+MutationId and reports Protocol failure on mismatch. The Frontend exchange
+invalidates its connection on an ID mismatch or wrong success type, just as reads
+do for protocol failures. Normal Mutations now have end-to-end exchanges. NoMutationResponse
 and SubmissionState are local Frontend observations and have no wire codec.
-The common request ID component can be encoded independently; the complete shared
-Mutation request envelope remains deferred until its payload alternatives exist.
-No opaque payload or fake handler fills that gap.
+MutationRequest contains MutationId plus a concrete, tagged payload. Confirmed
+results contain canonical Core metadata or structured MutationFailure. AcquireEdit
+and ReleaseEdit use the same admission/queue and return EditSnapshot or an empty
+success. The Backend-private connection token is never encoded or supplied by a
+Frontend. No opaque payload, new RequestId or parallel transport is introduced.
 
 ## Complete messages and bounded transfers
 
@@ -116,7 +118,7 @@ Frontend connections -> bounded IPC workers -> admission -> one shared FIFO
 The complete request is decoded/validated before queue admission. A single
 `RequestScheduler` owns execution, with capacity 32 including its active job;
 the stricter exchange-buffer reservations may reject earlier. Both current Queries
-and future Mutations use this scheduling boundary. No connection worker accesses
+and Mutations use this scheduling boundary. No connection worker accesses
 the Catalog. All operation execution is sequential for now; idle workers and the
 executor block on OS events or condition variables, independently of each other.
 A slow operation cannot prevent another connection's handshake, admission or Ping.
@@ -151,7 +153,7 @@ After Accepted, Response carries the existing confirmed Application result/error
 Valid final Application errors leave a connection usable. Transport errors, malformed responses
 and response-type mismatches invalidate the public connection handle.
 
-Future Mutation exchanges must keep confirmed success, confirmed MutationFailure
+Mutation exchanges keep confirmed success, confirmed MutationFailure
 (including a possible authoritative Unknown), and a locally unconfirmed response
 separate. An ID mismatch is not a confirmed Mutation failure. Missing confirmation
 must never fabricate NotApplied. A MutationId provides correlation, not execution
@@ -171,8 +173,8 @@ transport; its replacement belongs to Frontend UI/IPC Worker integration below.
 
 | ID | Status | Missing capability / revisit condition |
 |---|---|---|
-| IPC-02 | Deferred Implementation | Concrete Mutation execution and operation-specific admission, including mapping admission rejection and accepted-but-unconfirmed submission into Mutation contracts: 4.3a. Existing MutationId correlation and final evidence must be preserved. |
-| IPC-03 | Deferred Implementation | Edit Locks in 4.3b; Push/lifecycle notifications in 4.4a and Frontend handling in 4.4b. Define recipients explicitly: request errors go to their originating Frontend; shared availability changes may notify affected Frontends without disclosing another Frontend's operation details. Scheduling does not implement these notification protocols. |
+| IPC-02 | Implemented for current Normal operations | Phase 4.3a adds execution, current-state/lock preconditions, final evidence and MutationId validation. Admission rejection remains local SubmissionState::Rejected; Accepted without final confirmation remains distinct. Future operations extend the same infrastructure. |
+| IPC-03 | Deferred Implementation | Edit Locks are implemented in 4.3a; Push/lifecycle notifications in 4.4a and Frontend handling in 4.4b. Define recipients explicitly: request errors go to their originating Frontend; shared availability changes may notify affected Frontends without disclosing another Frontend's operation details. Scheduling does not implement these notification protocols. |
 | IPC-04 | Deferred Implementation | Frontend UI/IPC Worker ownership and completion events, connection monitor replacement, bounded reconnection and ordinary state initialization on a new connection: 4.4b. Blocking methods must run off the UI thread; no extra manual Refresh is required solely by reconnecting. |
 | IPC-05 | Deferred Implementation | Durable Batch Recovery preparation before protected authoritative changes; revisit Batch/Recovery design. Acceptance does not require persistence. Frontend Draft Persistence remains separate in Recovery phases. |
 | IPC-06 | Open Design Decision | Concurrent Read execution requires a demonstrated need and Catalog access policy; initially all execution is sequential. |
@@ -191,3 +193,8 @@ See the [agreed unpredictable-hang boundary](application-design.md#unpredictable
 A stalled executor must not be bypassed by unsafe Catalog finalization or forced
 thread termination. No watchdog, progress tracking, automatic termination, or
 new operation timeout policy is introduced; existing transport deadlines remain.
+
+Request and response payloads use shared `codec::encode<T>()` and
+`codec::decode<T>()` directly. Their distinct types enforce message direction;
+there are no separate access encode/decode wrappers. Mutation response correlation
+validation remains separate from structural decoding.

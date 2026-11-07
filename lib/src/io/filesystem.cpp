@@ -362,14 +362,18 @@ std::variant<std::monostate, FileError> write_file_atomic(const fs::path& path,
                  "Publication completed but parent directory sync failed", sync_error, true);
   }
   if (create_only && unlinkat(directory.value, temporary.name.c_str(), 0) == -1) {
-    return error(FileErrorCode::IoError, path, "Created destination but could not remove temporary link",
-                 system_error(), true);
+    auto failure = error(FileErrorCode::IoError, path, "Created destination but could not remove temporary link",
+                         system_error(), true);
+    failure.durability_confirmed = true;
+    return failure;
   }
   temporary.owned = false;
   if (create_only && !sync(directory.value)) {
-    return error(FileErrorCode::DurabilityFailure, path,
-                 "Creation is durable but temporary link removal could not be synced",
-                 system_error(), true);
+    auto failure = error(FileErrorCode::DurabilityFailure, path,
+                         "Creation is durable but temporary link removal could not be synced",
+                         system_error(), true);
+    failure.durability_confirmed = true;
+    return failure;
   }
 #endif
   return std::monostate{};

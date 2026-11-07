@@ -226,7 +226,7 @@ TEST_F(MetadataAccessIntegration, LargeQueryRequestUsesOneMessageAndConnectionRe
 TEST_F(MetadataAccessIntegration, PartialRequestWaitsForCompletionWithoutBlockingOtherConnections) {
   auto keeper = connect();
   auto stream = raw_connection();
-  const auto request = std::get<std::string>(ipc::encode_access_request(ipc::LoadMemoRequest{memo.id()}));
+  const auto request = std::get<std::string>(ipc::codec::encode<ipc::OperationRequest>(ipc::LoadMemoRequest{memo.id()}));
   const auto bytes = ipc::encode_message({ipc::MessageKind::Request, ipc::payload_bytes(request)});
   ASSERT_TRUE(send_bytes(stream, std::string_view(bytes).substr(0, bytes.size() - 1)));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(keeper.ping()));
@@ -242,9 +242,9 @@ TEST_F(MetadataAccessIntegration, PartialRequestWaitsForCompletionWithoutBlockin
   auto response = receive(stream);
   ASSERT_TRUE(response);
   EXPECT_EQ(response->kind, ipc::MessageKind::Response);
-  auto decoded = ipc::decode_access_response(ipc::payload_text(response->payload));
-  ASSERT_TRUE(std::holds_alternative<ipc::AccessResponse>(decoded));
-  EXPECT_TRUE(std::holds_alternative<core::Memo::Snapshot>(std::get<ipc::AccessResponse>(decoded)));
+  auto decoded = ipc::codec::decode<ipc::OperationResponse>(ipc::payload_text(response->payload));
+  ASSERT_TRUE(std::holds_alternative<ipc::OperationResponse>(decoded));
+  EXPECT_TRUE(std::holds_alternative<core::Memo::Snapshot>(std::get<ipc::OperationResponse>(decoded)));
 }
 
 TEST_F(MetadataAccessIntegration, PrematureDisconnectAndInvalidMessagesDoNotAffectOtherConnections) {
@@ -284,3 +284,65 @@ TEST_F(MetadataAccessIntegration, MalformedCompleteRequestsKeepApplicationErrorS
   }
 }
 }  // namespace
+
+TEST_F(MetadataAccessIntegration, MutationOrchestratorAndEditLocksShareExistingConnectionAndBackend) {
+  {
+    auto first = connect();
+    auto second = connect();
+    auto dir_result = first.create(app::MutationId::generate(), core::DirectoryKind::Memo, "Projects");
+    ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::DirectoryMetadata>>(dir_result));
+    auto dir_response = std::get<app::MutationResponse<core::DirectoryMetadata>>(dir_result);
+    ASSERT_TRUE(std::holds_alternative<core::DirectoryMetadata>(dir_response.result));
+    auto directory = std::get<core::DirectoryMetadata>(dir_response.result);
+    auto create_id = app::MutationId::generate();
+    auto created = first.create(create_id, app::MemoEditableFields{"Created", "original body", {{"tag"}}}, time, time, {});
+    ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::MemoMetadata>>(created));
+    auto response = std::get<app::MutationResponse<core::MemoMetadata>>(created);
+    EXPECT_EQ(response.mutation_id, create_id);
+    ASSERT_TRUE(std::holds_alternative<core::MemoMetadata>(response.result));
+    const auto record = std::get<core::MemoMetadata>(response.result);
+    EXPECT_NE(record.id, memo.id());
+    auto editing = first.acquire_edit(record.id);
+    ASSERT_TRUE(std::holds_alternative<app::EditSnapshot>(editing));
+    EXPECT_EQ(std::get<core::Memo::Snapshot>(std::get<app::EditSnapshot>(editing)).content, "original body");
+    auto denied = second.move(app::MutationId::generate(), record.id, directory.id, time);
+    ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::RecordMetadata>>(denied));
+    auto rejected = std::get<app::MutationFailure>(std::get<app::MutationResponse<core::RecordMetadata>>(denied).result);
+    EXPECT_EQ(rejected.error.reason, app::ErrorReason::LockConflict);
+    EXPECT_EQ(rejected.status, app::AuthoritativeChangeStatus::NotApplied);
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(first.ping()));
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(second.ping()));
+    const core::TimestampContext changed{time.timestamp + 1h, "Asia/Shanghai", "frontend"};
+    auto moved = first.move(app::MutationId::generate(), record.id, directory.id, changed);
+#ifdef _WIN32
+    EXPECT_EQ(std::get<app::MutationFailure>(std::get<app::MutationResponse<core::RecordMetadata>>(moved).result).status,
+              app::AuthoritativeChangeStatus::Unknown);
+#else
+    ASSERT_TRUE(std::holds_alternative<core::RecordMetadata>(std::get<app::MutationResponse<core::RecordMetadata>>(moved).result));
+#endif
+    auto updated = first.update(app::MutationId::generate(), record.id, app::MemoEditableFields{"Edited", std::string(100 * 1024, 'e'), {{"edited"}}}, changed);
+    ASSERT_TRUE(std::holds_alternative<core::MemoMetadata>(std::get<app::MutationResponse<core::MemoMetadata>>(updated).result));
+    auto loaded = second.load_memo(record.id);
+    ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(loaded));
+    auto state = std::get<core::Memo::Snapshot>(loaded);
+    EXPECT_EQ(state.directory_id, directory.id);
+    EXPECT_EQ(state.content.size(), 100u * 1024u);
+    EXPECT_EQ(state.created.timestamp, time.timestamp);
+    EXPECT_EQ(state.modified.timezone, changed.timezone);
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(first.release_edit(record.id)));
+    EXPECT_TRUE(std::holds_alternative<app::EditSnapshot>(second.acquire_edit(record.id)));
+    // Directory rename uses the same ownership rules, without locking members.
+    EXPECT_TRUE(std::holds_alternative<app::EditSnapshot>(first.acquire_edit(directory.id)));
+    auto blocked = second.rename_directory(app::MutationId::generate(), directory.id, "Denied");
+    EXPECT_EQ(std::get<app::MutationFailure>(std::get<app::MutationResponse<core::DirectoryMetadata>>(blocked).result).error.reason,
+              app::ErrorReason::LockConflict);
+    auto renamed = first.rename_directory(app::MutationId::generate(), directory.id, "Renamed");
+    EXPECT_TRUE(std::holds_alternative<core::DirectoryMetadata>(std::get<app::MutationResponse<core::DirectoryMetadata>>(renamed).result));
+    auto root = second.browse(directory.id);
+    ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<app::BrowseResult>>(root));
+    EXPECT_EQ(std::get<app::ApplicationResponse<app::BrowseResult>>(root).value.records.size(), 1u);
+  }
+  ASSERT_TRUE(until([&] { return all_exited(); }));
+  EXPECT_FALSE(fs::exists(paths.application.state / "session.marker"));
+  EXPECT_TRUE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+}

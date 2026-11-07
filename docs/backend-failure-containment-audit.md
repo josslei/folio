@@ -18,7 +18,7 @@ for future Mutation handlers or arbitrary failures that prevent execution.
 Reviewed implementations: `server/src/storage/normal_repository.cpp`,
 `metadata_catalog.cpp`, `catalog_coordinator.cpp`, the callback template in
 `server/include/storage/catalog_coordinator.hpp`, and
-`server/src/metadata_access.cpp`, `request_scheduler.cpp`, `ipc/ipc_server.cpp`,
+`server/src/operations/access_orchestrator.cpp`, `request_scheduler.cpp`, `ipc/ipc_server.cpp`,
 `runtime/backend_states.cpp` and `runtime/backend_state_machine.cpp`.
 The reviewed module implementations contain no explicit process-exit, abort or
 terminate calls. This observation alone is not the containment guarantee:
@@ -81,3 +81,15 @@ verification remains pending under the platform release policy.
 
 These are integration obligations for unimplemented features, not evidence that
 the current Query API can mutate data or that future handlers have been audited.
+
+## Phase 4.3a integration follow-through
+
+The original audit above remains scoped to the paths reviewed at that time.
+Normal Mutation integration now adds explicit pre-write Ready, current Catalog
+location/membership, field validation and connection-owned lock checks in
+`server/src/operations/mutation_orchestrator.cpp`. Fault-injection tests cover pre-publication,
+post-publication uncertainty, durable persistence/Catalog failure and compound
+Move boundaries, retaining Marker safety. This completes the listed 4.3a integration
+obligation for the implemented Normal operations; future operations still require
+corresponding review. No blanket fatality mapping or generic executor health test
+was added.

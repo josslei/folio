@@ -39,9 +39,18 @@ enum class MutationFailureStage {
   CatalogSynchronizationFailed
 };
 
+enum class PersistenceObservation {
+  NotAttempted, NotCompleted, Published, DurabilityConfirmed, Unknown
+};
+struct RepositoryMutationEvidence {
+  PersistenceObservation write = PersistenceObservation::NotAttempted;
+  PersistenceObservation destination = PersistenceObservation::NotAttempted;
+  PersistenceObservation source_removal = PersistenceObservation::NotAttempted;
+};
 struct RepositoryMutationError {
   MutationFailureStage stage;
   RepositoryError cause;
+  RepositoryMutationEvidence evidence;
 };
 
 // Borrowed payloads are valid only during synchronous invocation. Each operation

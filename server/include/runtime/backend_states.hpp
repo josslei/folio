@@ -2,6 +2,8 @@
 
 #include "runtime/backend_state_machine.hpp"
 #include "ipc/ipc_server.hpp"
+#include "operations/mutation_orchestrator.hpp"
+#include "operations/access_orchestrator.hpp"
 #include <folio/ipc/ipc.hpp>
 #include "runtime/repository_ownership.hpp"
 #include "storage/catalog_coordinator.hpp"
@@ -38,6 +40,8 @@ struct BackendContext {
   storage::MetadataCatalog catalog;
   std::unique_ptr<storage::NormalRepository> repository;
   std::unique_ptr<storage::CatalogCoordinator> coordinator;
+  std::unique_ptr<AccessOrchestrator> access;
+  std::unique_ptr<MutationOrchestrator> mutations;
   std::unique_ptr<IpcServer> runtime;
   // Historical obligation: startup_load succeeded. Current consistency remains
   // Coordinator-owned; finish_session itself rejects unsafe Catalog states.
