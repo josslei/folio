@@ -41,13 +41,23 @@ void require(bool condition, IndexCodecErrorCode code, std::string path, std::st
 bool valid_utf8(std::string_view text) {
   for (std::size_t i = 0; i < text.size();) {
     const auto first = static_cast<unsigned char>(text[i]);
-    if (first < 0x80) { ++i; continue; }
+    if (first < 0x80) {
+      ++i;
+      continue;
+    }
     unsigned count = 0;
     std::uint32_t code = 0;
-    if ((first & 0xe0) == 0xc0) { count = 2; code = first & 0x1f; }
-    else if ((first & 0xf0) == 0xe0) { count = 3; code = first & 0x0f; }
-    else if ((first & 0xf8) == 0xf0) { count = 4; code = first & 0x07; }
-    else return false;
+    if ((first & 0xe0) == 0xc0) {
+      count = 2;
+      code = first & 0x1f;
+    } else if ((first & 0xf0) == 0xe0) {
+      count = 3;
+      code = first & 0x0f;
+    } else if ((first & 0xf8) == 0xf0) {
+      count = 4;
+      code = first & 0x07;
+    } else
+      return false;
     if (i + count > text.size()) return false;
     for (unsigned j = 1; j < count; ++j) {
       const auto next = static_cast<unsigned char>(text[i + j]);
@@ -55,8 +65,8 @@ bool valid_utf8(std::string_view text) {
       code = (code << 6) | (next & 0x3f);
     }
     if ((count == 2 && code < 0x80) || (count == 3 && code < 0x800) ||
-        (count == 4 && code < 0x10000) || code > 0x10ffff ||
-        (code >= 0xd800 && code <= 0xdfff)) return false;
+        (count == 4 && code < 0x10000) || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff))
+      return false;
     i += count;
   }
   return true;
@@ -65,8 +75,8 @@ bool valid_utf8(std::string_view text) {
 struct BoundedBuffer {
   std::string bytes;
   void write(const char* data, std::size_t size) {
-    require(size <= kMaxBytes - bytes.size(), IndexCodecErrorCode::LimitExceeded,
-            "", "Index exceeds 64 MiB");
+    require(size <= kMaxBytes - bytes.size(), IndexCodecErrorCode::LimitExceeded, "",
+            "Index exceeds 64 MiB");
     bytes.append(data, size);
   }
 };
@@ -77,15 +87,17 @@ void pack_string(Packer& packer, std::string_view text) {
   packer.pack_str(static_cast<std::uint32_t>(text.size()));
   packer.pack_str_body(text.data(), static_cast<std::uint32_t>(text.size()));
 }
-void pack_key(Packer& packer, std::string_view key) { pack_string(packer, key); }
+void pack_key(Packer& packer, std::string_view key) {
+  pack_string(packer, key);
+}
 std::string path_text(const std::filesystem::path& path) {
   const auto bytes = path.generic_u8string();
   return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
 }
 bool safe_path(std::string_view text) {
   if (text.empty() || text.find('\0') != std::string_view::npos ||
-      text.find('\\') != std::string_view::npos || text.front() == '/' ||
-      !valid_utf8(text)) return false;
+      text.find('\\') != std::string_view::npos || text.front() == '/' || !valid_utf8(text))
+    return false;
   const auto slash = text.find('/');
   if (text.substr(0, slash).find(':') != std::string_view::npos) return false;
   std::size_t begin = 0;
@@ -100,39 +112,50 @@ bool safe_path(std::string_view text) {
 }
 void pack_path(Packer& packer, const std::filesystem::path& path) {
   const auto value = path_text(path);
-  require(safe_path(value), IndexCodecErrorCode::InvalidMetadata,
-          "relative_path", "Unsafe relative locator");
+  require(safe_path(value), IndexCodecErrorCode::InvalidMetadata, "relative_path",
+          "Unsafe relative locator");
   pack_string(packer, value);
 }
 
 std::string privacy_text(Privacy value) {
   switch (value) {
-    case Privacy::Normal: return "Normal";
-    case Privacy::Protected: return "Protected";
-    case Privacy::Hidden: return "Hidden";
+  case Privacy::Normal:
+    return "Normal";
+  case Privacy::Protected:
+    return "Protected";
+  case Privacy::Hidden:
+    return "Hidden";
   }
   fail(IndexCodecErrorCode::InvalidMetadata, "privacy", "Invalid Privacy");
 }
 std::string kind_text(DirectoryKind value) {
   switch (value) {
-    case DirectoryKind::Memo: return "Memo";
-    case DirectoryKind::Todo: return "Todo";
+  case DirectoryKind::Memo:
+    return "Memo";
+  case DirectoryKind::Todo:
+    return "Todo";
   }
   fail(IndexCodecErrorCode::InvalidMetadata, "kind", "Invalid Directory kind");
 }
 std::string status_text(TodoStatus value) {
   switch (value) {
-    case TodoStatus::Pending: return "Pending";
-    case TodoStatus::Completed: return "Completed";
+  case TodoStatus::Pending:
+    return "Pending";
+  case TodoStatus::Completed:
+    return "Completed";
   }
   fail(IndexCodecErrorCode::InvalidMetadata, "status", "Invalid Todo status");
 }
 std::string priority_text(TodoPriority value) {
   switch (value) {
-    case TodoPriority::None: return "None";
-    case TodoPriority::Low: return "Low";
-    case TodoPriority::Medium: return "Medium";
-    case TodoPriority::High: return "High";
+  case TodoPriority::None:
+    return "None";
+  case TodoPriority::Low:
+    return "Low";
+  case TodoPriority::Medium:
+    return "Medium";
+  case TodoPriority::High:
+    return "High";
   }
   fail(IndexCodecErrorCode::InvalidMetadata, "priority", "Invalid Todo priority");
 }
@@ -140,16 +163,22 @@ std::string priority_text(TodoPriority value) {
 std::string date_text(std::chrono::year_month_day value) {
   require(value.ok(), IndexCodecErrorCode::InvalidMetadata, "date", "Invalid calendar date");
   const int year = static_cast<int>(value.year());
-  require(year >= 0 && year <= 9999, IndexCodecErrorCode::InvalidMetadata,
-          "date", "Calendar year outside ISO range");
+  require(year >= 0 && year <= 9999, IndexCodecErrorCode::InvalidMetadata, "date",
+          "Calendar year outside ISO range");
   char out[10];
   auto digit = [](int value) { return static_cast<char>('0' + value); };
-  out[0] = digit(year / 1000); out[1] = digit((year / 100) % 10);
-  out[2] = digit((year / 10) % 10); out[3] = digit(year % 10); out[4] = '-';
+  out[0] = digit(year / 1000);
+  out[1] = digit((year / 100) % 10);
+  out[2] = digit((year / 10) % 10);
+  out[3] = digit(year % 10);
+  out[4] = '-';
   const int month = static_cast<unsigned>(value.month());
-  out[5] = digit(month / 10); out[6] = digit(month % 10); out[7] = '-';
+  out[5] = digit(month / 10);
+  out[6] = digit(month % 10);
+  out[7] = '-';
   const int day = static_cast<unsigned>(value.day());
-  out[8] = digit(day / 10); out[9] = digit(day % 10);
+  out[8] = digit(day / 10);
+  out[9] = digit(day % 10);
   return {out, sizeof out};
 }
 
@@ -161,75 +190,117 @@ void pack_timestamp(Packer& p, const TimestampContext& value) {
   const auto ticks = value.timestamp.time_since_epoch().count();
   auto seconds_value = ticks / ticks_per_second;
   auto remainder = ticks % ticks_per_second;
-  if (remainder < 0) { --seconds_value; remainder += ticks_per_second; }
+  if (remainder < 0) {
+    --seconds_value;
+    remainder += ticks_per_second;
+  }
   const auto nanos = remainder * (1000000000 / ticks_per_second);
-  require(nanos >= 0 && nanos < 1000000000, IndexCodecErrorCode::InvalidMetadata,
-          "timestamp", "Invalid timestamp fraction");
+  require(nanos >= 0 && nanos < 1000000000, IndexCodecErrorCode::InvalidMetadata, "timestamp",
+          "Invalid timestamp fraction");
   p.pack_map(value.location ? 4 : 3);
-  if (value.location) { pack_key(p, "location"); pack_string(p, *value.location); }
-  pack_key(p, "nanoseconds"); p.pack_uint32(static_cast<std::uint32_t>(nanos));
-  pack_key(p, "seconds"); p.pack_int64(seconds_value);
-  pack_key(p, "timezone"); pack_string(p, value.timezone);
+  if (value.location) {
+    pack_key(p, "location");
+    pack_string(p, *value.location);
+  }
+  pack_key(p, "nanoseconds");
+  p.pack_uint32(static_cast<std::uint32_t>(nanos));
+  pack_key(p, "seconds");
+  p.pack_int64(seconds_value);
+  pack_key(p, "timezone");
+  pack_string(p, value.timezone);
 }
 void pack_date(Packer& p, const DateContext& value) {
   p.pack_map(value.location ? 3 : 2);
-  pack_key(p, "date"); pack_string(p, date_text(value.date));
-  if (value.location) { pack_key(p, "location"); pack_string(p, *value.location); }
-  pack_key(p, "timezone"); pack_string(p, value.timezone);
+  pack_key(p, "date");
+  pack_string(p, date_text(value.date));
+  if (value.location) {
+    pack_key(p, "location");
+    pack_string(p, *value.location);
+  }
+  pack_key(p, "timezone");
+  pack_string(p, value.timezone);
 }
 void pack_due(Packer& p, const DueDate& due) {
   p.pack_map(2);
-  pack_key(p, "kind"); pack_string(p, std::holds_alternative<DateContext>(due) ? "Date" : "Datetime");
+  pack_key(p, "kind");
+  pack_string(p, std::holds_alternative<DateContext>(due) ? "Date" : "Datetime");
   pack_key(p, "value");
-  if (const auto* date = std::get_if<DateContext>(&due)) pack_date(p, *date);
-  else pack_timestamp(p, std::get<TimestampContext>(due));
+  if (const auto* date = std::get_if<DateContext>(&due))
+    pack_date(p, *date);
+  else
+    pack_timestamp(p, std::get<TimestampContext>(due));
 }
 void pack_tags(Packer& p, const std::vector<Tag>& tags) {
   require(tags.size() <= kMaxArray, IndexCodecErrorCode::LimitExceeded, "tags", "Too many tags");
   p.pack_array(static_cast<std::uint32_t>(tags.size()));
-  for (const auto& tag : tags) pack_string(p, tag.value);
+  for (const auto& tag : tags)
+    pack_string(p, tag.value);
 }
 void pack_directory(Packer& p, const DirectoryMetadata& d) {
   p.pack_map(4);
-  pack_key(p, "id"); pack_string(p, d.metadata.id.to_string());
-  pack_key(p, "kind"); pack_string(p, kind_text(d.metadata.kind));
-  pack_key(p, "name"); pack_string(p, d.metadata.name);
-  pack_key(p, "relative_path"); pack_path(p, d.relative_path);
+  pack_key(p, "id");
+  pack_string(p, d.metadata.id.to_string());
+  pack_key(p, "kind");
+  pack_string(p, kind_text(d.metadata.kind));
+  pack_key(p, "name");
+  pack_string(p, d.metadata.name);
+  pack_key(p, "relative_path");
+  pack_path(p, d.relative_path);
 }
 void pack_entry(Packer& p, const RecordMetadata& e) {
-  std::visit([&](const auto& value) {
-    using T = std::decay_t<decltype(value)>;
-    constexpr bool log = std::is_same_v<T, LogMetadata>;
-    constexpr bool memo = std::is_same_v<T, MemoMetadata>;
-    if constexpr (log) p.pack_map(9);
-    else if constexpr (memo) p.pack_map(value.metadata.directory_id ? 9 : 8);
-    else p.pack_map(9 + (value.metadata.directory_id ? 1 : 0) + (value.metadata.due_date ? 1 : 0));
-    pack_key(p, "created"); pack_timestamp(p, value.metadata.created);
-    if constexpr (!log) if (value.metadata.directory_id) {
-      pack_key(p, "directory_id");
-      pack_string(p, value.metadata.directory_id->to_string());
-    }
-    if constexpr (!log && !memo) {
-      if (value.metadata.due_date) { pack_key(p, "due_date"); pack_due(p, *value.metadata.due_date); }
-    }
-    pack_key(p, "id"); pack_string(p, value.metadata.id.to_string());
-    if constexpr (log) {
-      pack_key(p, "log_date"); pack_date(p, value.metadata.log_date);
-    }
-    pack_key(p, "modified"); pack_timestamp(p, value.metadata.modified);
-    if constexpr (!log && !memo) {
-      pack_key(p, "priority"); pack_string(p, priority_text(value.metadata.priority));
-    }
-    pack_key(p, "privacy"); pack_string(p, privacy_text(value.metadata.privacy));
-    pack_key(p, "relative_path"); pack_path(p, value.relative_path);
-    if constexpr (log || memo) {
-      pack_key(p, "tags"); pack_tags(p, value.metadata.tags);
-    } else {
-      pack_key(p, "status"); pack_string(p, status_text(value.metadata.status));
-    }
-    pack_key(p, "title"); pack_string(p, value.metadata.title);
-    pack_key(p, "type"); pack_string(p, log ? "Log" : (memo ? "Memo" : "Todo"));
-  }, e);
+  std::visit(
+      [&](const auto& value) {
+        using T = std::decay_t<decltype(value)>;
+        constexpr bool log = std::is_same_v<T, LogMetadata>;
+        constexpr bool memo = std::is_same_v<T, MemoMetadata>;
+        if constexpr (log)
+          p.pack_map(9);
+        else if constexpr (memo)
+          p.pack_map(value.metadata.directory_id ? 9 : 8);
+        else
+          p.pack_map(9 + (value.metadata.directory_id ? 1 : 0) + (value.metadata.due_date ? 1 : 0));
+        pack_key(p, "created");
+        pack_timestamp(p, value.metadata.created);
+        if constexpr (!log)
+          if (value.metadata.directory_id) {
+            pack_key(p, "directory_id");
+            pack_string(p, value.metadata.directory_id->to_string());
+          }
+        if constexpr (!log && !memo) {
+          if (value.metadata.due_date) {
+            pack_key(p, "due_date");
+            pack_due(p, *value.metadata.due_date);
+          }
+        }
+        pack_key(p, "id");
+        pack_string(p, value.metadata.id.to_string());
+        if constexpr (log) {
+          pack_key(p, "log_date");
+          pack_date(p, value.metadata.log_date);
+        }
+        pack_key(p, "modified");
+        pack_timestamp(p, value.metadata.modified);
+        if constexpr (!log && !memo) {
+          pack_key(p, "priority");
+          pack_string(p, priority_text(value.metadata.priority));
+        }
+        pack_key(p, "privacy");
+        pack_string(p, privacy_text(value.metadata.privacy));
+        pack_key(p, "relative_path");
+        pack_path(p, value.relative_path);
+        if constexpr (log || memo) {
+          pack_key(p, "tags");
+          pack_tags(p, value.metadata.tags);
+        } else {
+          pack_key(p, "status");
+          pack_string(p, status_text(value.metadata.status));
+        }
+        pack_key(p, "title");
+        pack_string(p, value.metadata.title);
+        pack_key(p, "type");
+        pack_string(p, log ? "Log" : (memo ? "Memo" : "Todo"));
+      },
+      e);
 }
 
 // This bounded walk reads container headers before msgpack-cxx allocates its
@@ -239,64 +310,128 @@ struct Preflight {
   std::size_t position = 0;
   std::size_t nodes = 0;
   std::uint64_t number(unsigned width) {
-    require(width <= bytes.size() - position, IndexCodecErrorCode::Malformed,
-            "", "Truncated MessagePack value");
+    require(width <= bytes.size() - position, IndexCodecErrorCode::Malformed, "",
+            "Truncated MessagePack value");
     std::uint64_t result = 0;
     for (unsigned i = 0; i < width; ++i)
       result = (result << 8) | static_cast<unsigned char>(bytes[position++]);
     return result;
   }
   void skip(std::uint64_t size) {
-    require(size <= bytes.size() - position, IndexCodecErrorCode::Malformed,
-            "", "Truncated MessagePack payload");
+    require(size <= bytes.size() - position, IndexCodecErrorCode::Malformed, "",
+            "Truncated MessagePack payload");
     position += static_cast<std::size_t>(size);
   }
   void value(std::size_t depth) {
-    require(depth <= kMaxDepth, IndexCodecErrorCode::LimitExceeded, "", "Index nesting is too deep");
-    require(++nodes <= kMaxNodes, IndexCodecErrorCode::LimitExceeded, "", "Too many MessagePack nodes");
+    require(depth <= kMaxDepth, IndexCodecErrorCode::LimitExceeded, "",
+            "Index nesting is too deep");
+    require(++nodes <= kMaxNodes, IndexCodecErrorCode::LimitExceeded, "",
+            "Too many MessagePack nodes");
     const auto code = number(1);
     std::uint64_t children = 0;
     bool map = false;
     if (code <= 0x7f || code >= 0xe0) return;
-    if (code >= 0x80 && code <= 0x8f) { map = true; children = code & 0x0f; }
-    else if (code >= 0x90 && code <= 0x9f) children = code & 0x0f;
-    else if (code >= 0xa0 && code <= 0xbf) { skip(code & 0x1f); return; }
-    else switch (code) {
-      case 0xc0: case 0xc2: case 0xc3: return;
-      case 0xc4: case 0xd9: skip(number(1)); return;
-      case 0xc5: case 0xda: skip(number(2)); return;
-      case 0xc6: case 0xdb: skip(number(4)); return;
-      case 0xc7: skip(number(1) + 1); return;
-      case 0xc8: skip(number(2) + 1); return;
-      case 0xc9: skip(number(4) + 1); return;
-      case 0xca: skip(4); return;
-      case 0xcb: skip(8); return;
-      case 0xcc: case 0xd0: skip(1); return;
-      case 0xcd: case 0xd1: skip(2); return;
-      case 0xce: case 0xd2: skip(4); return;
-      case 0xcf: case 0xd3: skip(8); return;
-      case 0xd4: skip(2); return;
-      case 0xd5: skip(3); return;
-      case 0xd6: skip(5); return;
-      case 0xd7: skip(9); return;
-      case 0xd8: skip(17); return;
-      case 0xdc: children = number(2); break;
-      case 0xdd: children = number(4); break;
-      case 0xde: map = true; children = number(2); break;
-      case 0xdf: map = true; children = number(4); break;
-      default: fail(IndexCodecErrorCode::Malformed, "", "Invalid MessagePack marker");
-    }
-    require(children <= (map ? kMaxMap : kMaxArray), IndexCodecErrorCode::LimitExceeded,
-            "", "MessagePack container is too large");
+    if (code >= 0x80 && code <= 0x8f) {
+      map = true;
+      children = code & 0x0f;
+    } else if (code >= 0x90 && code <= 0x9f)
+      children = code & 0x0f;
+    else if (code >= 0xa0 && code <= 0xbf) {
+      skip(code & 0x1f);
+      return;
+    } else
+      switch (code) {
+      case 0xc0:
+      case 0xc2:
+      case 0xc3:
+        return;
+      case 0xc4:
+      case 0xd9:
+        skip(number(1));
+        return;
+      case 0xc5:
+      case 0xda:
+        skip(number(2));
+        return;
+      case 0xc6:
+      case 0xdb:
+        skip(number(4));
+        return;
+      case 0xc7:
+        skip(number(1) + 1);
+        return;
+      case 0xc8:
+        skip(number(2) + 1);
+        return;
+      case 0xc9:
+        skip(number(4) + 1);
+        return;
+      case 0xca:
+        skip(4);
+        return;
+      case 0xcb:
+        skip(8);
+        return;
+      case 0xcc:
+      case 0xd0:
+        skip(1);
+        return;
+      case 0xcd:
+      case 0xd1:
+        skip(2);
+        return;
+      case 0xce:
+      case 0xd2:
+        skip(4);
+        return;
+      case 0xcf:
+      case 0xd3:
+        skip(8);
+        return;
+      case 0xd4:
+        skip(2);
+        return;
+      case 0xd5:
+        skip(3);
+        return;
+      case 0xd6:
+        skip(5);
+        return;
+      case 0xd7:
+        skip(9);
+        return;
+      case 0xd8:
+        skip(17);
+        return;
+      case 0xdc:
+        children = number(2);
+        break;
+      case 0xdd:
+        children = number(4);
+        break;
+      case 0xde:
+        map = true;
+        children = number(2);
+        break;
+      case 0xdf:
+        map = true;
+        children = number(4);
+        break;
+      default:
+        fail(IndexCodecErrorCode::Malformed, "", "Invalid MessagePack marker");
+      }
+    require(children <= (map ? kMaxMap : kMaxArray), IndexCodecErrorCode::LimitExceeded, "",
+            "MessagePack container is too large");
     if (map) children *= 2;
-    for (std::uint64_t i = 0; i < children; ++i) value(depth + 1);
+    for (std::uint64_t i = 0; i < children; ++i)
+      value(depth + 1);
   }
 };
 
 using Object = msgpack::object;
 const Object& as_map(const Object& object, std::string_view path) {
-  require(object.type == msgpack::type::MAP, IndexCodecErrorCode::Malformed,
-          std::string(path), "Expected named map");
+  require(object.type == msgpack::type::MAP, IndexCodecErrorCode::Malformed, std::string(path),
+          "Expected named map");
   return object;
 }
 const Object& field(const Object& object, std::string_view name, std::string_view path) {
@@ -305,7 +440,8 @@ const Object& field(const Object& object, std::string_view name, std::string_vie
     const auto& pair = object.via.map.ptr[i];
     const auto& key = pair.key;
     if (key.type == msgpack::type::STR &&
-        std::string_view(key.via.str.ptr, key.via.str.size) == name) return pair.val;
+        std::string_view(key.via.str.ptr, key.via.str.size) == name)
+      return pair.val;
   }
   fail(IndexCodecErrorCode::Malformed, std::string(path) + "." + std::string(name),
        "Required field is missing");
@@ -315,16 +451,17 @@ const Object* optional_field(const Object& object, std::string_view name) {
   for (std::uint32_t i = 0; i < object.via.map.size; ++i) {
     const auto& pair = object.via.map.ptr[i];
     if (pair.key.type == msgpack::type::STR &&
-        std::string_view(pair.key.via.str.ptr, pair.key.via.str.size) == name) return &pair.val;
+        std::string_view(pair.key.via.str.ptr, pair.key.via.str.size) == name)
+      return &pair.val;
   }
   return nullptr;
 }
 std::string string_of(const Object& object, std::string_view path) {
-  require(object.type == msgpack::type::STR, IndexCodecErrorCode::Malformed,
-          std::string(path), "Expected string");
+  require(object.type == msgpack::type::STR, IndexCodecErrorCode::Malformed, std::string(path),
+          "Expected string");
   std::string value(object.via.str.ptr, object.via.str.size);
-  require(valid_utf8(value), IndexCodecErrorCode::InvalidMetadata,
-          std::string(path), "Invalid UTF-8 string");
+  require(valid_utf8(value), IndexCodecErrorCode::InvalidMetadata, std::string(path),
+          "Invalid UTF-8 string");
   return value;
 }
 std::uint64_t unsigned_of(const Object& object, std::string_view path) {
@@ -335,13 +472,14 @@ std::uint64_t unsigned_of(const Object& object, std::string_view path) {
 std::int64_t integer_of(const Object& object, std::string_view path) {
   if (object.type == msgpack::type::NEGATIVE_INTEGER) return object.via.i64;
   require(object.type == msgpack::type::POSITIVE_INTEGER &&
-          object.via.u64 <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()),
+              object.via.u64 <=
+                  static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()),
           IndexCodecErrorCode::Malformed, std::string(path), "Expected signed integer");
   return static_cast<std::int64_t>(object.via.u64);
 }
 const Object& as_array(const Object& object, std::string_view path) {
-  require(object.type == msgpack::type::ARRAY, IndexCodecErrorCode::Malformed,
-          std::string(path), "Expected array");
+  require(object.type == msgpack::type::ARRAY, IndexCodecErrorCode::Malformed, std::string(path),
+          "Expected array");
   return object;
 }
 // All maps, including unknown future fields, must have unique UTF-8 string keys.
@@ -351,12 +489,12 @@ void validate_keys(const Object& object, std::size_t depth) {
     std::set<std::string_view> names;
     for (std::uint32_t i = 0; i < object.via.map.size; ++i) {
       const auto& pair = object.via.map.ptr[i];
-      require(pair.key.type == msgpack::type::STR, IndexCodecErrorCode::Malformed,
-              "", "Map key must be a string");
+      require(pair.key.type == msgpack::type::STR, IndexCodecErrorCode::Malformed, "",
+              "Map key must be a string");
       std::string_view key(pair.key.via.str.ptr, pair.key.via.str.size);
       require(valid_utf8(key), IndexCodecErrorCode::InvalidMetadata, "", "Invalid UTF-8 map key");
-      require(names.insert(key).second, IndexCodecErrorCode::Malformed,
-              std::string(key), "Duplicate map key");
+      require(names.insert(key).second, IndexCodecErrorCode::Malformed, std::string(key),
+              "Duplicate map key");
       validate_keys(pair.val, depth + 1);
     }
   } else if (object.type == msgpack::type::ARRAY) {
@@ -367,14 +505,14 @@ void validate_keys(const Object& object, std::size_t depth) {
 Id id_of(const Object& object, std::string_view path) {
   const auto value = string_of(object, path);
   const auto id = Id::parse(value);
-  require(id && id->to_string() == value, IndexCodecErrorCode::InvalidMetadata,
-          std::string(path), "Expected canonical UUIDv4");
+  require(id && id->to_string() == value, IndexCodecErrorCode::InvalidMetadata, std::string(path),
+          "Expected canonical UUIDv4");
   return *id;
 }
 std::filesystem::path path_of(const Object& object, std::string_view path) {
   const auto value = string_of(object, path);
-  require(safe_path(value), IndexCodecErrorCode::InvalidMetadata,
-          std::string(path), "Unsafe relative locator");
+  require(safe_path(value), IndexCodecErrorCode::InvalidMetadata, std::string(path),
+          "Unsafe relative locator");
   const auto* begin = reinterpret_cast<const char8_t*>(value.data());
   return std::filesystem::path(std::u8string(begin, begin + value.size()));
 }
@@ -382,18 +520,18 @@ std::filesystem::path path_of(const Object& object, std::string_view path) {
 std::chrono::year_month_day date_of(const Object& object, std::string_view path) {
   const auto text = string_of(object, path);
   auto digit = [](char c) { return c >= '0' && c <= '9'; };
-  require(text.size() == 10 && text[4] == '-' && text[7] == '-' &&
-          digit(text[0]) && digit(text[1]) && digit(text[2]) && digit(text[3]) &&
-          digit(text[5]) && digit(text[6]) && digit(text[8]) && digit(text[9]),
+  require(text.size() == 10 && text[4] == '-' && text[7] == '-' && digit(text[0]) &&
+              digit(text[1]) && digit(text[2]) && digit(text[3]) && digit(text[5]) &&
+              digit(text[6]) && digit(text[8]) && digit(text[9]),
           IndexCodecErrorCode::InvalidMetadata, std::string(path), "Invalid ISO calendar date");
-  const int year = (text[0] - '0') * 1000 + (text[1] - '0') * 100 +
-                   (text[2] - '0') * 10 + text[3] - '0';
+  const int year =
+      (text[0] - '0') * 1000 + (text[1] - '0') * 100 + (text[2] - '0') * 10 + text[3] - '0';
   const int month = (text[5] - '0') * 10 + text[6] - '0';
   const int day = (text[8] - '0') * 10 + text[9] - '0';
   const auto value = std::chrono::year{year} / std::chrono::month{static_cast<unsigned>(month)} /
                      std::chrono::day{static_cast<unsigned>(day)};
-  require(value.ok(), IndexCodecErrorCode::InvalidMetadata,
-          std::string(path), "Invalid calendar date");
+  require(value.ok(), IndexCodecErrorCode::InvalidMetadata, std::string(path),
+          "Invalid calendar date");
   return value;
 }
 Timestamp timestamp_of(std::int64_t seconds_value, std::uint64_t nanos, std::string_view path) {
@@ -404,29 +542,33 @@ Timestamp timestamp_of(std::int64_t seconds_value, std::uint64_t nanos, std::str
   static_assert(std::is_integral_v<Rep> && ticks_per_second > 0 &&
                 1000000000 % ticks_per_second == 0);
   constexpr auto nanos_per_tick = 1000000000 / ticks_per_second;
-  require(nanos < 1000000000 && nanos % nanos_per_tick == 0,
-          IndexCodecErrorCode::InvalidMetadata, std::string(path), "Unrepresentable timestamp fraction");
+  require(nanos < 1000000000 && nanos % nanos_per_tick == 0, IndexCodecErrorCode::InvalidMetadata,
+          std::string(path), "Unrepresentable timestamp fraction");
   const auto fraction = static_cast<Rep>(nanos / nanos_per_tick);
   const Rep min_ticks = Timestamp::min().time_since_epoch().count();
   const Rep max_ticks = Timestamp::max().time_since_epoch().count();
   auto split = [](Rep ticks) {
     std::int64_t whole = ticks / ticks_per_second;
     Rep remainder = ticks % ticks_per_second;
-    if (remainder < 0) { --whole; remainder += ticks_per_second; }
+    if (remainder < 0) {
+      --whole;
+      remainder += ticks_per_second;
+    }
     return std::pair{whole, remainder};
   };
   const auto [min_seconds, min_fraction] = split(min_ticks);
   const auto [max_seconds, max_fraction] = split(max_ticks);
   require(seconds_value >= min_seconds && seconds_value <= max_seconds,
-          IndexCodecErrorCode::InvalidMetadata, std::string(path), "Timestamp outside native range");
+          IndexCodecErrorCode::InvalidMetadata, std::string(path),
+          "Timestamp outside native range");
   Rep ticks;
   if (seconds_value == min_seconds) {
-    require(fraction >= min_fraction, IndexCodecErrorCode::InvalidMetadata,
-            std::string(path), "Timestamp outside native range");
+    require(fraction >= min_fraction, IndexCodecErrorCode::InvalidMetadata, std::string(path),
+            "Timestamp outside native range");
     ticks = min_ticks + (fraction - min_fraction);
   } else if (seconds_value == max_seconds) {
-    require(fraction <= max_fraction, IndexCodecErrorCode::InvalidMetadata,
-            std::string(path), "Timestamp outside native range");
+    require(fraction <= max_fraction, IndexCodecErrorCode::InvalidMetadata, std::string(path),
+            "Timestamp outside native range");
     ticks = max_ticks - (max_fraction - fraction);
   } else {
     ticks = static_cast<Rep>(seconds_value * ticks_per_second + fraction);
@@ -438,8 +580,10 @@ void reject_irrelevant(const Object& object, std::initializer_list<std::string_v
 TimestampContext timestamp_context_of(const Object& object, std::string_view path) {
   as_map(object, path);
   reject_irrelevant(object, {"date"}, path);
-  const auto seconds_value = integer_of(field(object, "seconds", path), std::string(path) + ".seconds");
-  const auto nanos = unsigned_of(field(object, "nanoseconds", path), std::string(path) + ".nanoseconds");
+  const auto seconds_value =
+      integer_of(field(object, "seconds", path), std::string(path) + ".seconds");
+  const auto nanos =
+      unsigned_of(field(object, "nanoseconds", path), std::string(path) + ".nanoseconds");
   const auto timezone = string_of(field(object, "timezone", path), std::string(path) + ".timezone");
   std::optional<std::string> location;
   if (const auto* value = optional_field(object, "location"))
@@ -497,7 +641,8 @@ std::vector<Tag> tags_of(const Object& object, std::string_view path) {
   std::vector<Tag> tags;
   tags.reserve(object.via.array.size);
   for (std::uint32_t i = 0; i < object.via.array.size; ++i)
-    tags.push_back(Tag{string_of(object.via.array.ptr[i], std::string(path) + "[" + std::to_string(i) + "]")});
+    tags.push_back(
+        Tag{string_of(object.via.array.ptr[i], std::string(path) + "[" + std::to_string(i) + "]")});
   return tags;
 }
 void reject_irrelevant(const Object& object, std::initializer_list<std::string_view> names,
@@ -511,8 +656,8 @@ DirectoryMetadata directory_of(const Object& object, std::string_view path) {
   as_map(object, path);
   const auto id = id_of(field(object, "id", path), std::string(path) + ".id");
   const auto kind = kind_of(field(object, "kind", path), std::string(path) + ".kind");
-  const auto relative_path = path_of(field(object, "relative_path", path),
-                                     std::string(path) + ".relative_path");
+  const auto relative_path =
+      path_of(field(object, "relative_path", path), std::string(path) + ".relative_path");
   const auto name = string_of(field(object, "name", path), std::string(path) + ".name");
   return {{id, kind, name}, relative_path};
 }
@@ -520,17 +665,21 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
   as_map(object, path);
   const auto type = string_of(field(object, "type", path), std::string(path) + ".type");
   const auto id = id_of(field(object, "id", path), std::string(path) + ".id");
-  const auto relative_path = path_of(field(object, "relative_path", path),
-                                     std::string(path) + ".relative_path");
+  const auto relative_path =
+      path_of(field(object, "relative_path", path), std::string(path) + ".relative_path");
   const auto privacy = privacy_of(field(object, "privacy", path), std::string(path) + ".privacy");
-  const auto created = timestamp_context_of(field(object, "created", path), std::string(path) + ".created");
-  const auto modified = timestamp_context_of(field(object, "modified", path), std::string(path) + ".modified");
+  const auto created =
+      timestamp_context_of(field(object, "created", path), std::string(path) + ".created");
+  const auto modified =
+      timestamp_context_of(field(object, "modified", path), std::string(path) + ".modified");
   const auto title = string_of(field(object, "title", path), std::string(path) + ".title");
   if (type == "Log") {
     reject_irrelevant(object, {"directory_id", "due_date", "priority", "status"}, path);
-    return LogMetadata{{id, privacy, created, modified, title,
-                       tags_of(field(object, "tags", path), std::string(path) + ".tags"),
-                       date_context_of(field(object, "log_date", path), std::string(path) + ".log_date")}, relative_path};
+    return LogMetadata{
+        {id, privacy, created, modified, title,
+         tags_of(field(object, "tags", path), std::string(path) + ".tags"),
+         date_context_of(field(object, "log_date", path), std::string(path) + ".log_date")},
+        relative_path};
   }
   if (type == "Memo") {
     reject_irrelevant(object, {"due_date", "log_date", "priority", "status"}, path);
@@ -538,8 +687,9 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
     if (const auto* value = optional_field(object, "directory_id"))
       directory_id = id_of(*value, std::string(path) + ".directory_id");
     return MemoMetadata{{id, privacy, created, modified, title,
-                        tags_of(field(object, "tags", path), std::string(path) + ".tags"),
-                        directory_id}, relative_path};
+                         tags_of(field(object, "tags", path), std::string(path) + ".tags"),
+                         directory_id},
+                        relative_path};
   }
   if (type == "Todo") {
     reject_irrelevant(object, {"log_date", "tags"}, path);
@@ -549,14 +699,16 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
     std::optional<DueDate> due_date;
     if (const auto* value = optional_field(object, "due_date"))
       due_date = due_of(*value, std::string(path) + ".due_date");
-    return TodoMetadata{{id, privacy, created, modified, title,
-                        status_of(field(object, "status", path), std::string(path) + ".status"),
-                        priority_of(field(object, "priority", path), std::string(path) + ".priority"),
-                        due_date, directory_id}, relative_path};
+    return TodoMetadata{
+        {id, privacy, created, modified, title,
+         status_of(field(object, "status", path), std::string(path) + ".status"),
+         priority_of(field(object, "priority", path), std::string(path) + ".priority"), due_date,
+         directory_id},
+        relative_path};
   }
   fail(IndexCodecErrorCode::InvalidMetadata, std::string(path) + ".type", "Invalid Entry type");
 }
-}  // namespace
+} // namespace
 
 ::folio::core::Result<std::string, IndexCodecError> encode_index(const MetadataCatalog& catalog) {
   try {
@@ -569,22 +721,25 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
     RecordQuery query;
     query.sort = MetadataSort::Id;
     auto entries = catalog.query(query);
-    require(directories.size() + entries.size() <= kMaxRecords,
-            IndexCodecErrorCode::LimitExceeded, "", "Too many Index records");
+    require(directories.size() + entries.size() <= kMaxRecords, IndexCodecErrorCode::LimitExceeded,
+            "", "Too many Index records");
     BoundedBuffer buffer;
     Packer packer(&buffer);
     packer.pack_map(3);
     pack_key(packer, "directories");
     packer.pack_array(static_cast<std::uint32_t>(directories.size()));
-    for (const auto& directory : directories) pack_directory(packer, directory);
+    for (const auto& directory : directories)
+      pack_directory(packer, directory);
     pack_key(packer, "entries");
     packer.pack_array(static_cast<std::uint32_t>(entries.size()));
-    for (const auto& entry : entries) pack_entry(packer, entry);
-    pack_key(packer, "schema_version"); packer.pack_uint8(1);
+    for (const auto& entry : entries)
+      pack_entry(packer, entry);
+    pack_key(packer, "schema_version");
+    packer.pack_uint8(1);
     Preflight preflight{buffer.bytes};
     preflight.value(1);
-    require(preflight.position == buffer.bytes.size(), IndexCodecErrorCode::Malformed,
-            "", "Internal MessagePack encoding error");
+    require(preflight.position == buffer.bytes.size(), IndexCodecErrorCode::Malformed, "",
+            "Internal MessagePack encoding error");
     return std::move(buffer.bytes);
   } catch (const Failure& failure) {
     return failure.error;
@@ -597,28 +752,28 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
 
 ::folio::core::Result<MetadataCatalog, IndexCodecError> decode_index(std::string_view bytes) {
   try {
-    require(bytes.size() <= kMaxBytes, IndexCodecErrorCode::LimitExceeded,
-            "", "Index exceeds 64 MiB");
+    require(bytes.size() <= kMaxBytes, IndexCodecErrorCode::LimitExceeded, "",
+            "Index exceeds 64 MiB");
     require(!bytes.empty(), IndexCodecErrorCode::Malformed, "", "Empty Index payload");
     Preflight preflight{bytes};
     preflight.value(1);
-    require(preflight.position == bytes.size(), IndexCodecErrorCode::Malformed,
-            "", "Trailing MessagePack bytes");
+    require(preflight.position == bytes.size(), IndexCodecErrorCode::Malformed, "",
+            "Trailing MessagePack bytes");
     std::size_t offset = 0;
-    const msgpack::unpack_limit limit{kMaxArray, kMaxMap, kMaxBytes,
+    const msgpack::unpack_limit limit{kMaxArray, kMaxMap,   kMaxBytes,
                                       kMaxBytes, kMaxBytes, kMaxDepth};
-    auto handle = msgpack::unpack(bytes.data(), bytes.size(), offset,
-                                  nullptr, nullptr, limit);
-    require(offset == bytes.size(), IndexCodecErrorCode::Malformed,
-            "", "Trailing MessagePack bytes");
+    auto handle = msgpack::unpack(bytes.data(), bytes.size(), offset, nullptr, nullptr, limit);
+    require(offset == bytes.size(), IndexCodecErrorCode::Malformed, "",
+            "Trailing MessagePack bytes");
     const auto& root = as_map(handle.get(), "");
     validate_keys(root, 1);
     const auto version = unsigned_of(field(root, "schema_version", ""), "schema_version");
-    require(version == 1, IndexCodecErrorCode::UnsupportedVersion,
-            "schema_version", "Unsupported Index schema version");
+    require(version == 1, IndexCodecErrorCode::UnsupportedVersion, "schema_version",
+            "Unsupported Index schema version");
     const auto& directories = as_array(field(root, "directories", ""), "directories");
     const auto& entries = as_array(field(root, "entries", ""), "entries");
-    require(static_cast<std::size_t>(directories.via.array.size) + entries.via.array.size <= kMaxRecords,
+    require(static_cast<std::size_t>(directories.via.array.size) + entries.via.array.size <=
+                kMaxRecords,
             IndexCodecErrorCode::LimitExceeded, "", "Too many Index records");
     MetadataCatalog catalog;
     for (std::uint32_t i = 0; i < directories.via.array.size; ++i) {
@@ -648,4 +803,4 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
   }
 }
 
-}  // namespace folio::core::storage::index_codec
+} // namespace folio::core::storage::index_codec

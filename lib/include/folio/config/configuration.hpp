@@ -47,17 +47,16 @@ struct ConfigurationError {
 };
 
 // Validate effective root layout and existing path properties without creating files.
-core::Result<StoragePaths, ConfigurationError> validate_effective_paths(
-    const StoragePaths& paths);
+core::Result<StoragePaths, ConfigurationError> validate_effective_paths(const StoragePaths& paths);
 
 // The single source of built-in settings; validation occurs during loading.
-core::Result<EffectiveConfig, ConfigurationError> configuration_defaults(const ApplicationPaths& application);
-core::Result<EffectiveConfig, ConfigurationError> load_configuration(
-    const ApplicationPaths& application,
-    const std::filesystem::path& file);
+core::Result<EffectiveConfig, ConfigurationError>
+configuration_defaults(const ApplicationPaths& application);
+core::Result<EffectiveConfig, ConfigurationError>
+load_configuration(const ApplicationPaths& application, const std::filesystem::path& file);
 core::Result<EffectiveConfig, ConfigurationError> load_configuration();
 
 // Pure platform resolution; creates nothing.
 core::Result<ApplicationPaths, ConfigurationError> application_paths();
 
-}  // namespace folio::config
+} // namespace folio::config

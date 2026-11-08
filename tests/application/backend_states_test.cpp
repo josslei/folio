@@ -14,19 +14,19 @@ namespace fs = std::filesystem;
 using Phase = BackendStateMachine::State;
 
 class BackendStates : public ::testing::Test {
- protected:
+protected:
   fs::path base;
   storage::StoragePaths paths;
   BackendContext context;
 
   void SetUp() override {
-    base = fs::temp_directory_path() /
-        ("fbstate-" + core::Id::generate().to_string().substr(0, 8));
+    base = fs::temp_directory_path() / ("fbstate-" + core::Id::generate().to_string().substr(0, 8));
     fs::create_directory(base);
     base = fs::canonical(base);
-    paths = {base / "normal", base / "vault",
-             {base / "config", base / "data", base / "state",
-              base / "cache", base / "logs", base / "runtime"}};
+    paths = {base / "normal",
+             base / "vault",
+             {base / "config", base / "data", base / "state", base / "cache", base / "logs",
+              base / "runtime"}};
     ASSERT_TRUE(logging::initialize(logging::ProcessRole::Backend, paths.application.logs));
   }
 
@@ -68,7 +68,8 @@ TEST_F(BackendStates, FailureBeforeOwnershipDoesNotStartSession) {
   EXPECT_EQ(Bootstrap(context), BackendActionOutcome::Failure);
   ASSERT_EQ(context.diagnostics.size(), 1u);
   EXPECT_EQ(context.diagnostics[0].phase, Phase::Bootstrap);
-  EXPECT_TRUE(std::holds_alternative<folio::config::ConfigurationError>(context.diagnostics[0].error));
+  EXPECT_TRUE(
+      std::holds_alternative<folio::config::ConfigurationError>(context.diagnostics[0].error));
   EXPECT_FALSE(context.ownership);
   EXPECT_FALSE(context.initialized);
   EXPECT_EQ(Finish(context), BackendActionOutcome::Success);
@@ -123,12 +124,14 @@ TEST_F(BackendStates, AcceptedWorkDrainsBeforeCatalogFinalizationAndOwnershipRel
     if (lifecycle.joinable()) lifecycle.join();
     if (frontend.joinable()) frontend.join();
   }};
-  context.runtime = std::make_unique<IpcServer>(*context.ownership,
-      [&](const OperationRequest&, const Session&) -> OperationResponse {
+  context.runtime = std::make_unique<IpcServer>(
+      *context.ownership, [&](const OperationRequest&, const Session&) -> OperationResponse {
         entered.set_value();
         gate.wait();
-        return ApplicationError{ErrorCategory::TargetUnavailable, ErrorReason::NotFound,
-                                "Synthetic missing Memo", {ErrorAction::Dismiss}};
+        return ApplicationError{ErrorCategory::TargetUnavailable,
+                                ErrorReason::NotFound,
+                                "Synthetic missing Memo",
+                                {ErrorAction::Dismiss}};
       });
   lifecycle = std::jthread([&] {
     context.runtime->run(shutdown.get_token());
@@ -194,10 +197,9 @@ TEST_F(BackendStates, FailedNotificationStillRetainsPrimaryBeforeCleanupFailure)
     throw std::runtime_error("original serving exception");
   };
   context.startup_paths = paths;
-  BackendStateMachine machine(transitions, std::move(actions),
-      [](State, std::exception_ptr) {
-        throw std::runtime_error("notification exception");
-      });
+  BackendStateMachine machine(transitions, std::move(actions), [](State, std::exception_ptr) {
+    throw std::runtime_error("notification exception");
+  });
   EXPECT_NO_THROW(machine.run());
   retain_backend_notification_failures(context, machine);
   ASSERT_EQ(context.diagnostics.size(), 3u);
@@ -216,7 +218,8 @@ TEST_F(BackendStates, InconsistentCatalogCannotBeFinalizedAsClean) {
   ASSERT_EQ(bootstrap(), BackendActionOutcome::Success);
   storage::RepositoryMutationError uncertain{
       storage::MutationFailureStage::AuthoritativeStateMayHaveChanged,
-      folio::io::FileError{folio::io::FileErrorCode::IoError, paths.normal_root, "partial mutation", {}, true}};
+      folio::io::FileError{
+          folio::io::FileErrorCode::IoError, paths.normal_root, "partial mutation", {}, true}};
   context.coordinator->memo_update_callback()(std::cref(uncertain));
   ASSERT_EQ(context.coordinator->status(), storage::CatalogStatus::Inconsistent);
   EXPECT_EQ(Finish(context), BackendActionOutcome::Failure);
@@ -253,10 +256,12 @@ TEST_F(BackendStates, FailedLoggingDoesNotPreventReleaseOrChangeDiagnostics) {
 
 TEST_F(BackendStates, LogsPrimaryAndCleanupFailuresWithoutSensitiveMessages) {
   const std::string sensitive = "synthetic-secret-body-never-log";
-  record_backend_failure(context, {Phase::Bootstrap,
-      config::ConfigurationError{config::ConfigurationErrorCode::InvalidValue, {}, sensitive, {}}});
-  record_backend_failure(context, {Phase::Serve,
-      std::make_exception_ptr(std::runtime_error(sensitive))});
+  record_backend_failure(
+      context,
+      {Phase::Bootstrap, config::ConfigurationError{
+                             config::ConfigurationErrorCode::InvalidValue, {}, sensitive, {}}});
+  record_backend_failure(context,
+                         {Phase::Serve, std::make_exception_ptr(std::runtime_error(sensitive))});
   ASSERT_EQ(bootstrap(), BackendActionOutcome::Success);
   block_index_save();
   EXPECT_EQ(Finish(context), BackendActionOutcome::Failure);
@@ -273,5 +278,5 @@ TEST_F(BackendStates, LogsPrimaryAndCleanupFailuresWithoutSensitiveMessages) {
   EXPECT_TRUE(fs::exists(marker()));
   expect_released();
 }
-}  // namespace
-}  // namespace folio::application::internal
+} // namespace
+} // namespace folio::application::internal

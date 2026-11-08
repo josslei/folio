@@ -8,4 +8,4 @@ namespace folio::application::internal {
 // weakly, so disconnect cannot revoke ownership before accepted work completes.
 struct ConnectionSession {};
 using Session = std::shared_ptr<ConnectionSession>;
-}  // namespace folio::application::internal
+} // namespace folio::application::internal

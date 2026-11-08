@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Explicit, check-only repository validation; no Git mutations or automatic fixes."""
+"""Explicit repository validation; optional formatting fixes, no Git mutations."""
 
 import argparse
 from datetime import datetime, timezone
@@ -30,6 +30,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build-dir', type=Path, default=ROOT / 'build')
     parser.add_argument('--config', default='Debug')
+    parser.add_argument('--fix', action='store_true',
+                        help='format first-party C++ files before running selected checks')
     parser.add_argument('--checks', nargs='+',
                         choices=['whitespace', 'docs', 'build', 'tests', 'format', 'tidy'],
                         default=['whitespace', 'docs', 'build', 'tests', 'format', 'tidy'])
@@ -47,6 +49,17 @@ def main():
         passed = run(command, session / (name + '.log'))
         results[name] = 'PASS' if passed else 'FAIL'
         return passed
+
+    if args.fix:
+        tool = shutil.which('clang-format')
+        if not tool or not (ROOT / '.clang-format').is_file():
+            print('format-fix: requires .clang-format and installed clang-format')
+            results['format-fix'] = 'BLOCKED'
+        else:
+            files = sorted(path for base in ['app', 'server', 'lib', 'tests']
+                           for path in (ROOT / base).rglob('*')
+                           if path.is_file() and path.suffix in {'.cpp', '.hpp', '.h'})
+            check('format-fix', [tool, '-i', *map(str, files)])
 
     if 'whitespace' in args.checks:
         check('working-tree-whitespace', ['git', 'diff', '--check'])
@@ -105,7 +118,9 @@ def main():
                       args.config, '-L', 'resource_limits', '--parallel', '1',
                       '--output-on-failure', '--no-tests=error'])
     print('\n' + '\n'.join(f'{key}: {value}' for key, value in results.items()))
-    print('Only executed checks are certified; no automatic fixes were applied.')
+    print('Only executed checks are certified; ' +
+          ('formatting fixes were requested; review the source diff.' if args.fix else
+           'no automatic fixes were applied.'))
     print(f'Logs: {session}')
     (session / 'summary.json').write_text(json.dumps(results, indent=2) + '\n',
                                           encoding='utf-8')

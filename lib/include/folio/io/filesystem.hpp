@@ -28,7 +28,7 @@ struct ReadError {
 // Owns opaque bytes; std::string supplies storage only, with no text decoding.
 // The caller supplies confinement/symlink policy and a maximum byte count.
 std::variant<std::string, ReadError> read_file(const std::filesystem::path& path,
-                                            std::size_t max_bytes);
+                                               std::size_t max_bytes);
 // Contents are opaque bytes: no text encoding, parsing, or encryption occurs
 // here. Normal storage can pass serialized text, and Vault can pass an already
 // encrypted binary envelope to these same operations.
@@ -45,10 +45,10 @@ std::variant<std::string, ReadError> read_file(const std::filesystem::path& path
 // A failure after publication requires caller reconciliation before further
 // writes; recovery is outside this API. A successful rename is not rolled back
 // by a failed sync.
-[[nodiscard]] std::variant<std::monostate, FileError> create_file_atomic(
-    const std::filesystem::path& path, std::span<const std::byte> contents);
-[[nodiscard]] std::variant<std::monostate, FileError> replace_file_atomic(
-    const std::filesystem::path& path, std::span<const std::byte> contents);
+[[nodiscard]] std::variant<std::monostate, FileError>
+create_file_atomic(const std::filesystem::path& path, std::span<const std::byte> contents);
+[[nodiscard]] std::variant<std::monostate, FileError>
+replace_file_atomic(const std::filesystem::path& path, std::span<const std::byte> contents);
 
 // Lifecycle-only durability helpers. Absolute paths without symlink components
 // are required; callers exclude concurrent external changes. Directory creation
@@ -71,13 +71,12 @@ sync_regular_file(const std::filesystem::path& path);
 [[nodiscard]] std::variant<std::monostate, FileError>
 remove_file_durable(const std::filesystem::path& path);
 
-
-inline std::variant<std::monostate, FileError> create_file_atomic(
-    const std::filesystem::path& path, std::string_view contents) {
+inline std::variant<std::monostate, FileError> create_file_atomic(const std::filesystem::path& path,
+                                                                  std::string_view contents) {
   return create_file_atomic(path, std::as_bytes(std::span{contents.data(), contents.size()}));
 }
-inline std::variant<std::monostate, FileError> replace_file_atomic(
-    const std::filesystem::path& path, std::string_view contents) {
+inline std::variant<std::monostate, FileError>
+replace_file_atomic(const std::filesystem::path& path, std::string_view contents) {
   return replace_file_atomic(path, std::as_bytes(std::span{contents.data(), contents.size()}));
 }
-}  // namespace folio::io
+} // namespace folio::io

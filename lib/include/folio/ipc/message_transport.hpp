@@ -9,7 +9,7 @@ namespace folio::application::internal {
 // transfers stay here; Application handlers only see complete Messages.
 // The caller owns the stream and its lifecycle/deadlines. One exchange at a time.
 class MessageTransport {
- public:
+public:
   // Optional Backend resource admission before payload buffering. Called once
   // after validating a header; false rejects reception without allocating it.
   explicit MessageTransport(std::function<bool(MessageKind, std::size_t)> reserve = {})
@@ -21,7 +21,7 @@ class MessageTransport {
   bool receiving() const { return !input_.empty(); }
   std::chrono::steady_clock::time_point last_activity() const { return last_activity_; }
 
- private:
+private:
   std::function<bool(MessageKind, std::size_t)> reserve_;
   bool reserved_ = false;
   std::string input_, output_;
@@ -29,17 +29,16 @@ class MessageTransport {
   std::chrono::steady_clock::time_point last_activity_ = std::chrono::steady_clock::now();
 };
 
-core::Result<std::monostate, IpcError> send_message(
-    IpcStream& stream, const Message& message,
-    std::chrono::steady_clock::time_point deadline, std::stop_token wake = {});
-core::Result<Message, IpcError> receive_message(
-    IpcStream& stream, MessageTransport& transport,
-    std::chrono::steady_clock::time_point deadline, std::stop_token wake = {});
+core::Result<std::monostate, IpcError> send_message(IpcStream& stream, const Message& message,
+                                                    std::chrono::steady_clock::time_point deadline,
+                                                    std::stop_token wake = {});
+core::Result<Message, IpcError> receive_message(IpcStream& stream, MessageTransport& transport,
+                                                std::chrono::steady_clock::time_point deadline,
+                                                std::stop_token wake = {});
 
 // Synchronous sequential exchange for Frontends. Backend uses the same progress
 // methods without blocking other connections. No retry/reconnect/replay occurs.
-core::Result<Message, IpcError> exchange_message(
-    IpcStream& stream, const Message& request,
-    std::chrono::steady_clock::time_point deadline);
+core::Result<Message, IpcError> exchange_message(IpcStream& stream, const Message& request,
+                                                 std::chrono::steady_clock::time_point deadline);
 
-}  // namespace folio::application::internal
+} // namespace folio::application::internal

@@ -8,7 +8,7 @@
 namespace folio::core {
 
 class Log {
- public:
+public:
   struct Snapshot {
     Id id;
     TimestampContext created;
@@ -39,7 +39,7 @@ class Log {
   void set_log_date(DateContext date, TimestampContext modified);
   void set_tags(std::vector<Tag> tags, TimestampContext modified);
 
- private:
+private:
   explicit Log(const Snapshot& snapshot);
 
   const Id id_;
@@ -52,4 +52,4 @@ class Log {
   const Privacy privacy_;
 };
 
-}  // namespace folio::core
+} // namespace folio::core

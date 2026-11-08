@@ -21,6 +21,10 @@ Testing/
 *.exe
 *.pdb
 
+# Python bytecode caches
+__pycache__/
+*.py[cod]
+
 # IDE and editor files
 .cache/
 .idea/

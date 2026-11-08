@@ -10,12 +10,7 @@
 
 namespace folio::core::storage::index_codec {
 
-enum class IndexCodecErrorCode {
-  Malformed,
-  UnsupportedVersion,
-  LimitExceeded,
-  InvalidMetadata
-};
+enum class IndexCodecErrorCode { Malformed, UnsupportedVersion, LimitExceeded, InvalidMetadata };
 
 struct IndexCodecError {
   IndexCodecErrorCode code;
@@ -25,7 +20,9 @@ struct IndexCodecError {
 
 // Pure in-memory MessagePack codec. Decoding builds a fresh, persisted catalog;
 // errors never mutate an existing catalog or authoritative Entry files.
-[[nodiscard]] ::folio::core::Result<std::string, IndexCodecError> encode_index(const MetadataCatalog& catalog);
-[[nodiscard]] ::folio::core::Result<MetadataCatalog, IndexCodecError> decode_index(std::string_view bytes);
+[[nodiscard]] ::folio::core::Result<std::string, IndexCodecError>
+encode_index(const MetadataCatalog& catalog);
+[[nodiscard]] ::folio::core::Result<MetadataCatalog, IndexCodecError>
+decode_index(std::string_view bytes);
 
-}  // namespace folio::core::storage::index_codec
+} // namespace folio::core::storage::index_codec

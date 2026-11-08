@@ -9,7 +9,7 @@
 namespace folio::core {
 
 class Memo {
- public:
+public:
   struct Snapshot {
     Id id;
     TimestampContext created;
@@ -40,7 +40,7 @@ class Memo {
   void set_tags(std::vector<Tag> tags, TimestampContext modified);
   void set_directory_id(std::optional<Id> directory_id, TimestampContext modified);
 
- private:
+private:
   explicit Memo(const Snapshot& snapshot);
 
   const Id id_;
@@ -53,4 +53,4 @@ class Memo {
   const Privacy privacy_;
 };
 
-}  // namespace folio::core
+} // namespace folio::core

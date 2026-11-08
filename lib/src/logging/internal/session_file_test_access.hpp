@@ -12,7 +12,7 @@
 namespace folio::logging::internal {
 // Reserves an empty file exclusively. Timestamp/PID injection makes naming and
 // collision tests deterministic; callers provide an already-created directory.
-std::optional<std::filesystem::path> reserve_session_file(
-    const std::filesystem::path& directory,
-    std::chrono::system_clock::time_point timestamp, std::uint64_t pid);
-}  // namespace folio::logging::internal
+std::optional<std::filesystem::path>
+reserve_session_file(const std::filesystem::path& directory,
+                     std::chrono::system_clock::time_point timestamp, std::uint64_t pid);
+} // namespace folio::logging::internal

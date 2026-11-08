@@ -10,9 +10,11 @@ core::Result<ConnectionSettings, IpcError> connection_settings() {
   auto paths = folio::config::load_configuration();
   if (auto* e = std::get_if<folio::config::ConfigurationError>(&paths)) {
     try {
-      SPDLOG_ERROR("Frontend configuration loading failed: ConfigurationError code={} system_error={}",
-                   static_cast<int>(e->code), e->system_error.value());
-    } catch (...) {}
+      SPDLOG_ERROR(
+          "Frontend configuration loading failed: ConfigurationError code={} system_error={}",
+          static_cast<int>(e->code), e->system_error.value());
+    } catch (...) {
+    }
     return IpcError{IpcErrorCode::IoError, e->message, e->system_error};
   }
   const auto& effective = std::get<folio::config::EffectiveConfig>(paths);
@@ -24,17 +26,35 @@ ApplicationError operation_connection_error(const IpcError& error) {
   auto reason = ErrorReason::IoFailure;
   auto actions = std::vector{ErrorAction::Reconnect, ErrorAction::Dismiss};
   switch (error.code) {
-    case IpcErrorCode::Unavailable: reason = ErrorReason::BackendUnavailable; break;
-    case IpcErrorCode::ConnectionLost: reason = ErrorReason::ConnectionLost; break;
-    case IpcErrorCode::Timeout: reason = ErrorReason::Timeout; break;
-    case IpcErrorCode::Protocol: reason = ErrorReason::ProtocolError; actions = {ErrorAction::Dismiss}; break;
-    case IpcErrorCode::Incompatible: reason = ErrorReason::IncompatibleProtocol; actions = {ErrorAction::Dismiss}; break;
-    case IpcErrorCode::AccessDenied: reason = ErrorReason::AccessDenied; actions = {ErrorAction::ResolveExternally, ErrorAction::Dismiss}; break;
-    case IpcErrorCode::IoError: break;
+  case IpcErrorCode::Unavailable:
+    reason = ErrorReason::BackendUnavailable;
+    break;
+  case IpcErrorCode::ConnectionLost:
+    reason = ErrorReason::ConnectionLost;
+    break;
+  case IpcErrorCode::Timeout:
+    reason = ErrorReason::Timeout;
+    break;
+  case IpcErrorCode::Protocol:
+    reason = ErrorReason::ProtocolError;
+    actions = {ErrorAction::Dismiss};
+    break;
+  case IpcErrorCode::Incompatible:
+    reason = ErrorReason::IncompatibleProtocol;
+    actions = {ErrorAction::Dismiss};
+    break;
+  case IpcErrorCode::AccessDenied:
+    reason = ErrorReason::AccessDenied;
+    actions = {ErrorAction::ResolveExternally, ErrorAction::Dismiss};
+    break;
+  case IpcErrorCode::IoError:
+    break;
   }
-  return {ErrorCategory::ConnectionFailure, reason, "The Backend connection could not complete the Application operation.", std::move(actions)};
+  return {ErrorCategory::ConnectionFailure, reason,
+          "The Backend connection could not complete the Application operation.",
+          std::move(actions)};
 }
-}  // namespace folio::application::internal
+} // namespace folio::application::internal
 
 namespace folio::application {
 using namespace internal;
@@ -43,13 +63,15 @@ using Clock = std::chrono::steady_clock;
 
 // Public operations are serial on a connection. Only transport/protocol failures
 // invalidate it; confirmed Application failures leave the connection usable.
-template<class Value>
+template <class Value>
 ApplicationResult<Value> invoke_operation(IpcStream& stream, OperationRequest request,
-                                SubmissionState* submission = nullptr) {
+                                          SubmissionState* submission = nullptr) {
   auto encoded = codec::encode<OperationRequest>(request);
   if (std::holds_alternative<IpcError>(encoded))
-    return ApplicationError{ErrorCategory::InvalidRequest, ErrorReason::ResourceLimit,
-                            "The Application request exceeds the resource limit.", {ErrorAction::Dismiss}};
+    return ApplicationError{ErrorCategory::InvalidRequest,
+                            ErrorReason::ResourceLimit,
+                            "The Application request exceeds the resource limit.",
+                            {ErrorAction::Dismiss}};
   const auto& payload = std::get<std::string>(encoded);
   auto fail = [&](IpcError error) -> ApplicationResult<Value> {
     stream = IpcStream{};
@@ -96,11 +118,12 @@ ApplicationResult<Value> invoke_operation(IpcStream& stream, OperationRequest re
   return fail({IpcErrorCode::Protocol, "Wrong Application response type"});
 }
 
-template<class Metadata, class Operation>
+template <class Metadata, class Operation>
 MutationResult<Metadata> mutate(IpcStream& stream, const MutationId& id,
                                 const Operation& operation) {
   auto submission = SubmissionState::NotSent;
-  auto response = invoke_operation<NormalMutationResponse>(stream, MutationRequest{id, operation}, &submission);
+  auto response =
+      invoke_operation<NormalMutationResponse>(stream, MutationRequest{id, operation}, &submission);
   if (auto* error = std::get_if<ApplicationError>(&response))
     return NoMutationResponse{id, std::move(*error), submission};
   auto confirmed = std::get<NormalMutationResponse>(std::move(response));
@@ -108,49 +131,47 @@ MutationResult<Metadata> mutate(IpcStream& stream, const MutationId& id,
     return MutationResponse<Metadata>{id, std::move(*failure)};
   auto& result = std::get<MutationValue>(confirmed.result);
   if constexpr (std::is_same_v<Metadata, core::RecordMetadata>) {
-    return std::visit([&](auto&& value) -> MutationResult<Metadata> {
-      using T = std::decay_t<decltype(value)>;
-      if constexpr (!std::is_same_v<T, core::DirectoryMetadata>)
-        return MutationResponse<Metadata>{id, Metadata{std::move(value)}};
-      stream = IpcStream{};
-      return NoMutationResponse{id, operation_connection_error(
-          {IpcErrorCode::Protocol, "Wrong Move success type"}), submission};
-    }, std::move(result));
+    return std::visit(
+        [&](auto&& value) -> MutationResult<Metadata> {
+          using T = std::decay_t<decltype(value)>;
+          if constexpr (!std::is_same_v<T, core::DirectoryMetadata>)
+            return MutationResponse<Metadata>{id, Metadata{std::move(value)}};
+          stream = IpcStream{};
+          return NoMutationResponse{
+              id, operation_connection_error({IpcErrorCode::Protocol, "Wrong Move success type"}),
+              submission};
+        },
+        std::move(result));
   } else if (auto* metadata = std::get_if<Metadata>(&result))
     return MutationResponse<Metadata>{id, std::move(*metadata)};
   stream = IpcStream{};
-  return NoMutationResponse{id, operation_connection_error(
-      {IpcErrorCode::Protocol, "Wrong Mutation success type"}), submission};
+  return NoMutationResponse{
+      id, operation_connection_error({IpcErrorCode::Protocol, "Wrong Mutation success type"}),
+      submission};
 }
-}  // namespace
+} // namespace
 
-core::Result<BackendConnectionHandle, IpcError> BackendConnectionHandle::connect(
-    const ConnectionSettings& paths, std::chrono::milliseconds timeout) {
+core::Result<BackendConnectionHandle, IpcError>
+BackendConnectionHandle::connect(const ConnectionSettings& paths,
+                                 std::chrono::milliseconds timeout) {
   core::Result<std::filesystem::path, IpcError> endpoint = paths.endpoint;
-  if (auto* problem = std::get_if<IpcError>(&endpoint))
-    return *problem;
+  if (auto* problem = std::get_if<IpcError>(&endpoint)) return *problem;
   auto connected = IpcStream::connect(std::get<std::filesystem::path>(endpoint));
-  if (auto* problem = std::get_if<IpcError>(&connected))
-    return *problem;
+  if (auto* problem = std::get_if<IpcError>(&connected)) return *problem;
   auto stream = std::get<IpcStream>(std::move(connected));
-  auto response = exchange_message(
-      stream, {MessageKind::Hello, {}},
-      Clock::now() + timeout);
-  if (auto* problem = std::get_if<IpcError>(&response))
-    return *problem;
+  auto response = exchange_message(stream, {MessageKind::Hello, {}}, Clock::now() + timeout);
+  if (auto* problem = std::get_if<IpcError>(&response)) return *problem;
   auto& message = std::get<Message>(response);
   if (message.kind == MessageKind::Reject)
     return IpcError{IpcErrorCode::Protocol, payload_text(message.payload)};
-  if (message.kind != MessageKind::Ready ||
-      !message.payload.empty())
-    return IpcError{IpcErrorCode::Protocol,
-                    "Invalid Backend readiness response"};
+  if (message.kind != MessageKind::Ready || !message.payload.empty())
+    return IpcError{IpcErrorCode::Protocol, "Invalid Backend readiness response"};
   return BackendConnectionHandle(std::move(stream));
 }
 
 core::Result<std::monostate, IpcError> BackendConnectionHandle::ping() {
-  auto response = exchange_message(stream_, {MessageKind::Ping, {}},
-                           Clock::now() + std::chrono::seconds(3));
+  auto response =
+      exchange_message(stream_, {MessageKind::Ping, {}}, Clock::now() + std::chrono::seconds(3));
   if (auto* problem = std::get_if<IpcError>(&response)) {
     stream_ = IpcStream{};
     return *problem;
@@ -163,22 +184,22 @@ core::Result<std::monostate, IpcError> BackendConnectionHandle::ping() {
   return std::monostate{};
 }
 
-core::Result<BackendConnectionHandle, IpcError> connect_or_start_backend(
-    const ConnectionSettings& paths, const BackendLauncher& launch,
-    std::chrono::milliseconds timeout) {
+core::Result<BackendConnectionHandle, IpcError>
+connect_or_start_backend(const ConnectionSettings& paths, const BackendLauncher& launch,
+                         std::chrono::milliseconds timeout) {
   const auto deadline = Clock::now() + timeout;
   auto next_launch = Clock::time_point::min();
   IpcError last{IpcErrorCode::Unavailable, "Backend is unavailable"};
   while (Clock::now() < deadline) {
-    auto budget = std::min(
-        std::chrono::milliseconds(3000),
-        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()));
+    auto budget =
+        std::min(std::chrono::milliseconds(3000),
+                 std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()));
     auto connected = BackendConnectionHandle::connect(paths, budget);
     if (auto* connection = std::get_if<BackendConnectionHandle>(&connected))
       return std::move(*connection);
     last = std::get<IpcError>(std::move(connected));
-    if (last.code != IpcErrorCode::Unavailable &&
-        last.code != IpcErrorCode::ConnectionLost && last.code != IpcErrorCode::Timeout) {
+    if (last.code != IpcErrorCode::Unavailable && last.code != IpcErrorCode::ConnectionLost &&
+        last.code != IpcErrorCode::Timeout) {
       try {
         SPDLOG_ERROR("Backend connection failed: IpcError code={}", static_cast<int>(last.code));
       } catch (...) {
@@ -207,8 +228,7 @@ core::Result<BackendConnectionHandle, IpcError> connect_or_start_backend(
   } catch (...) {
     // Preserve the original timeout result.
   }
-  return IpcError{IpcErrorCode::Timeout,
-                  "Backend startup deadline expired: " + last.message,
+  return IpcError{IpcErrorCode::Timeout, "Backend startup deadline expired: " + last.message,
                   last.system_error};
 }
 
@@ -216,22 +236,24 @@ core::Result<BackendConnectionHandle, IpcError> connect_or_start_backend() {
   auto configured = connection_settings();
   if (auto* problem = std::get_if<IpcError>(&configured))
     return IpcError{IpcErrorCode::IoError, problem->message, problem->system_error};
-  return connect_or_start_backend(std::get<ConnectionSettings>(configured),
-                                  launch_backend);
+  return connect_or_start_backend(std::get<ConnectionSettings>(configured), launch_backend);
 }
-ApplicationResult<ApplicationResponse<BrowseResult>> BackendConnectionHandle::browse(
-    DirectoryRef dir, RecordOrder order) {
-  return invoke_operation<ApplicationResponse<BrowseResult>>(stream_, BrowseRequest{std::move(dir), order});
-}
-
-ApplicationResult<ApplicationResponse<std::vector<core::RecordMetadata>>> BackendConnectionHandle::query_records(
-    const RecordQuery& query) {
-  return invoke_operation<ApplicationResponse<std::vector<core::RecordMetadata>>>(stream_, QueryRecordsRequest{query});
+ApplicationResult<ApplicationResponse<BrowseResult>>
+BackendConnectionHandle::browse(DirectoryRef dir, RecordOrder order) {
+  return invoke_operation<ApplicationResponse<BrowseResult>>(stream_,
+                                                             BrowseRequest{std::move(dir), order});
 }
 
-ApplicationResult<ApplicationResponse<std::vector<core::DirectoryMetadata>>> BackendConnectionHandle::list_directories(
-    core::DirectoryKind kind) {
-  return invoke_operation<ApplicationResponse<std::vector<core::DirectoryMetadata>>>(stream_, ListDirectoriesRequest{kind});
+ApplicationResult<ApplicationResponse<std::vector<core::RecordMetadata>>>
+BackendConnectionHandle::query_records(const RecordQuery& query) {
+  return invoke_operation<ApplicationResponse<std::vector<core::RecordMetadata>>>(
+      stream_, QueryRecordsRequest{query});
+}
+
+ApplicationResult<ApplicationResponse<std::vector<core::DirectoryMetadata>>>
+BackendConnectionHandle::list_directories(core::DirectoryKind kind) {
+  return invoke_operation<ApplicationResponse<std::vector<core::DirectoryMetadata>>>(
+      stream_, ListDirectoriesRequest{kind});
 }
 
 ApplicationResult<core::Log::Snapshot> BackendConnectionHandle::load_log(const core::Id& id) {
@@ -252,75 +274,75 @@ ApplicationResult<EditSnapshot> BackendConnectionHandle::acquire_edit(const core
 ApplicationResult<std::monostate> BackendConnectionHandle::release_edit(const core::Id& id) {
   return invoke_operation<std::monostate>(stream_, ReleaseEditRequest{id});
 }
-MutationResult<core::LogMetadata> BackendConnectionHandle::create(
-      const MutationId& mutation_id,
-      const LogEditableFields& fields,
-      const core::TimestampContext& created,
-      const core::TimestampContext& modified) {
-  return mutate<core::LogMetadata>(stream_, mutation_id, internal::CreateLogRequest{fields, created, modified});
+MutationResult<core::LogMetadata>
+BackendConnectionHandle::create(const MutationId& mutation_id, const LogEditableFields& fields,
+                                const core::TimestampContext& created,
+                                const core::TimestampContext& modified) {
+  return mutate<core::LogMetadata>(stream_, mutation_id,
+                                   internal::CreateLogRequest{fields, created, modified});
 }
-MutationResult<core::MemoMetadata> BackendConnectionHandle::create(
-      const MutationId& mutation_id,
-      const MemoEditableFields& fields,
-      const core::TimestampContext& created,
-      const core::TimestampContext& modified,
-      std::optional<core::Id> directory_id) {
-  return mutate<core::MemoMetadata>(stream_, mutation_id, internal::CreateMemoRequest{fields, created, modified, directory_id});
+MutationResult<core::MemoMetadata>
+BackendConnectionHandle::create(const MutationId& mutation_id, const MemoEditableFields& fields,
+                                const core::TimestampContext& created,
+                                const core::TimestampContext& modified,
+                                std::optional<core::Id> directory_id) {
+  return mutate<core::MemoMetadata>(
+      stream_, mutation_id, internal::CreateMemoRequest{fields, created, modified, directory_id});
 }
-MutationResult<core::TodoMetadata> BackendConnectionHandle::create(
-      const MutationId& mutation_id,
-      const TodoEditableFields& fields,
-      const core::TimestampContext& created,
-      const core::TimestampContext& modified,
-      std::optional<core::Id> directory_id) {
-  return mutate<core::TodoMetadata>(stream_, mutation_id, internal::CreateTodoRequest{fields, created, modified, directory_id});
+MutationResult<core::TodoMetadata>
+BackendConnectionHandle::create(const MutationId& mutation_id, const TodoEditableFields& fields,
+                                const core::TimestampContext& created,
+                                const core::TimestampContext& modified,
+                                std::optional<core::Id> directory_id) {
+  return mutate<core::TodoMetadata>(
+      stream_, mutation_id, internal::CreateTodoRequest{fields, created, modified, directory_id});
 }
-MutationResult<core::LogMetadata> BackendConnectionHandle::update(
-      const MutationId& mutation_id,
-      const core::Id& entry_id,
-      const LogEditableFields& fields,
-      const core::TimestampContext& modified) {
-  return mutate<core::LogMetadata>(stream_, mutation_id, internal::UpdateLogRequest{entry_id, fields, modified});
+MutationResult<core::LogMetadata>
+BackendConnectionHandle::update(const MutationId& mutation_id, const core::Id& entry_id,
+                                const LogEditableFields& fields,
+                                const core::TimestampContext& modified) {
+  return mutate<core::LogMetadata>(stream_, mutation_id,
+                                   internal::UpdateLogRequest{entry_id, fields, modified});
 }
-MutationResult<core::MemoMetadata> BackendConnectionHandle::update(
-      const MutationId& mutation_id,
-      const core::Id& entry_id,
-      const MemoEditableFields& fields,
-      const core::TimestampContext& modified) {
-  return mutate<core::MemoMetadata>(stream_, mutation_id, internal::UpdateMemoRequest{entry_id, fields, modified});
+MutationResult<core::MemoMetadata>
+BackendConnectionHandle::update(const MutationId& mutation_id, const core::Id& entry_id,
+                                const MemoEditableFields& fields,
+                                const core::TimestampContext& modified) {
+  return mutate<core::MemoMetadata>(stream_, mutation_id,
+                                    internal::UpdateMemoRequest{entry_id, fields, modified});
 }
-MutationResult<core::TodoMetadata> BackendConnectionHandle::update(
-      const MutationId& mutation_id,
-      const core::Id& entry_id,
-      const TodoEditableFields& fields,
-      const core::TimestampContext& modified) {
-  return mutate<core::TodoMetadata>(stream_, mutation_id, internal::UpdateTodoRequest{entry_id, fields, modified});
+MutationResult<core::TodoMetadata>
+BackendConnectionHandle::update(const MutationId& mutation_id, const core::Id& entry_id,
+                                const TodoEditableFields& fields,
+                                const core::TimestampContext& modified) {
+  return mutate<core::TodoMetadata>(stream_, mutation_id,
+                                    internal::UpdateTodoRequest{entry_id, fields, modified});
 }
-MutationResult<core::RecordMetadata> BackendConnectionHandle::move(
-      const MutationId& mutation_id,
-      const core::Id& entry_id,
-      std::optional<core::Id> destination,
-      const core::TimestampContext& modified) {
-  return mutate<core::RecordMetadata>(stream_, mutation_id, MoveRecordRequest{entry_id, destination, modified});
+MutationResult<core::RecordMetadata>
+BackendConnectionHandle::move(const MutationId& mutation_id, const core::Id& entry_id,
+                              std::optional<core::Id> destination,
+                              const core::TimestampContext& modified) {
+  return mutate<core::RecordMetadata>(stream_, mutation_id,
+                                      MoveRecordRequest{entry_id, destination, modified});
 }
-MutationResult<core::DirectoryMetadata> BackendConnectionHandle::create(
-      const MutationId& mutation_id,
-      core::DirectoryKind kind,
-      const std::string& name) {
-  return mutate<core::DirectoryMetadata>(stream_, mutation_id, internal::CreateDirectoryRequest{kind, name});
+MutationResult<core::DirectoryMetadata>
+BackendConnectionHandle::create(const MutationId& mutation_id, core::DirectoryKind kind,
+                                const std::string& name) {
+  return mutate<core::DirectoryMetadata>(stream_, mutation_id,
+                                         internal::CreateDirectoryRequest{kind, name});
 }
-MutationResult<core::DirectoryMetadata> BackendConnectionHandle::rename_directory(
-      const MutationId& mutation_id,
-      const core::Id& entry_id,
-      const std::string& new_name) {
-  return mutate<core::DirectoryMetadata>(stream_, mutation_id, internal::RenameDirectoryRequest{entry_id, new_name});
+MutationResult<core::DirectoryMetadata>
+BackendConnectionHandle::rename_directory(const MutationId& mutation_id, const core::Id& entry_id,
+                                          const std::string& new_name) {
+  return mutate<core::DirectoryMetadata>(stream_, mutation_id,
+                                         internal::RenameDirectoryRequest{entry_id, new_name});
 }
-MutationResult<core::TodoMetadata> BackendConnectionHandle::set_todo_status(
-      const MutationId& mutation_id,
-      const core::Id& entry_id,
-      core::TodoStatus status,
-      const core::TimestampContext& modified) {
-  return mutate<core::TodoMetadata>(stream_, mutation_id, internal::SetTodoStatusRequest{entry_id, status, modified});
+MutationResult<core::TodoMetadata>
+BackendConnectionHandle::set_todo_status(const MutationId& mutation_id, const core::Id& entry_id,
+                                         core::TodoStatus status,
+                                         const core::TimestampContext& modified) {
+  return mutate<core::TodoMetadata>(stream_, mutation_id,
+                                    internal::SetTodoStatusRequest{entry_id, status, modified});
 }
 
-}  // namespace folio::application
+} // namespace folio::application

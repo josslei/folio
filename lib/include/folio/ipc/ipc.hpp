@@ -37,8 +37,7 @@ struct ConnectionSettings {
 };
 
 // Derives settings from resolved paths; does not create or connect a socket.
-core::Result<ConnectionSettings, IpcError> connection_settings(
-    const config::StoragePaths& paths);
+core::Result<ConnectionSettings, IpcError> connection_settings(const config::StoragePaths& paths);
 
 inline constexpr std::uint16_t protocol_version = 1;
 // One complete message body: version + kind + payload. This is a memory
@@ -70,13 +69,12 @@ std::string payload_text(std::span<const std::byte> value);
 std::string encode_message(const Message& message);
 // Incomplete input returns nullopt. Invalid headers are rejected before payload
 // allocation.
-core::Result<std::optional<Message>, IpcError> decode_message(
-    std::string& buffer);
+core::Result<std::optional<Message>, IpcError> decode_message(std::string& buffer);
 
 // Move-only private byte stream. Each connection has one reader/writer owner.
 // Nonblocking methods return 0 when no progress is possible, errors on disconnect.
 class IpcStream {
- public:
+public:
   IpcStream();
   ~IpcStream();
   IpcStream(IpcStream&&) noexcept;
@@ -87,13 +85,11 @@ class IpcStream {
   bool connected() const;
   // OS readiness wait. false means the caller's wake token was signalled;
   // Timeout is an error. No periodic polling; the stream remains single-owner.
-  core::Result<bool, IpcError> wait(
-      bool writing, std::chrono::steady_clock::time_point deadline,
-      std::stop_token wake = {});
-  static core::Result<IpcStream, IpcError> connect(
-      const std::filesystem::path& endpoint);
+  core::Result<bool, IpcError> wait(bool writing, std::chrono::steady_clock::time_point deadline,
+                                    std::stop_token wake = {});
+  static core::Result<IpcStream, IpcError> connect(const std::filesystem::path& endpoint);
 
- private:
+private:
   struct Native;
   explicit IpcStream(std::unique_ptr<Native> native);
   std::unique_ptr<Native> native_;
@@ -103,20 +99,19 @@ class IpcStream {
 // Caller must hold RepositoryOwnership before listen and until destruction.
 // Only the owner may reclaim a stale endpoint; live sockets are never removed.
 class IpcListener {
- public:
+public:
   ~IpcListener();
   IpcListener(IpcListener&&) noexcept;
   IpcListener& operator=(IpcListener&&) noexcept;
   IpcListener(const IpcListener&) = delete;
-  static core::Result<IpcListener, IpcError> listen(
-      const std::filesystem::path& endpoint);
+  static core::Result<IpcListener, IpcError> listen(const std::filesystem::path& endpoint);
   core::Result<std::optional<IpcStream>, IpcError> accept();
-  core::Result<bool, IpcError> wait(
-      std::chrono::steady_clock::time_point deadline, std::stop_token wake = {});
+  core::Result<bool, IpcError> wait(std::chrono::steady_clock::time_point deadline,
+                                    std::stop_token wake = {});
 
- private:
+private:
   struct Native;
   explicit IpcListener(std::unique_ptr<Native> native);
   std::unique_ptr<Native> native_;
 };
-}  // namespace folio::application::internal
+} // namespace folio::application::internal

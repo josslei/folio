@@ -22,11 +22,11 @@ struct RuntimeLimits {
 // No additional lifecycle state machine: Serve runs this resource; Stopping and
 // Report preserves usable connections; Finish closes them before Catalog finalization.
 class IpcServer {
- public:
+public:
   using Failure = std::variant<IpcError, std::exception_ptr>;
   using Handler = std::function<OperationResponse(const OperationRequest&, const Session&)>;
-  IpcServer(RepositoryOwnership& ownership, Handler handler,
-            std::string startup_failure = {}, RuntimeLimits limits = {});
+  IpcServer(RepositoryOwnership& ownership, Handler handler, std::string startup_failure = {},
+            RuntimeLimits limits = {});
   ~IpcServer();
   IpcServer(const IpcServer&) = delete;
   core::Result<std::monostate, IpcError> run(std::stop_token shutdown = {});
@@ -45,7 +45,7 @@ class IpcServer {
   // Does not log, deliver, or resolve them. Later failures can be taken again.
   std::vector<Failure> take_failures();
 
- private:
+private:
   struct Connection {
     std::jthread worker;
     bool done = false;
@@ -54,8 +54,7 @@ class IpcServer {
   void connection(Connection& connection, IpcStream& stream, std::stop_token stop);
   void notify();
   void failure(Failure error);
-  bool send_rejection(IpcStream& stream, ApplicationError error,
-                      std::stop_token stop);
+  bool send_rejection(IpcStream& stream, ApplicationError error, std::stop_token stop);
   struct BufferReservation {
     explicit BufferReservation(std::atomic<std::size_t>& count) : count(count) {}
     ~BufferReservation() { --count; }
@@ -81,4 +80,4 @@ class IpcServer {
   std::atomic<std::size_t> reservations_{0};
 };
 
-}  // namespace folio::application::internal
+} // namespace folio::application::internal

@@ -29,10 +29,8 @@ core::Id id(const char* text) {
   return *parsed;
 }
 
-core::Timestamp timestamp_at(std::chrono::seconds seconds,
-                             std::chrono::nanoseconds fraction = {}) {
-  return core::Timestamp{std::chrono::duration_cast<core::Timestamp::duration>(
-      seconds + fraction)};
+core::Timestamp timestamp_at(std::chrono::seconds seconds, std::chrono::nanoseconds fraction = {}) {
+  return core::Timestamp{std::chrono::duration_cast<core::Timestamp::duration>(seconds + fraction)};
 }
 
 core::TimestampContext context(core::Timestamp timestamp, std::string timezone,
@@ -56,58 +54,68 @@ void expect_error(const ::folio::core::Result<T, codec::IndexCodecError>& result
 struct WireValue {
   using Array = std::vector<WireValue>;
   using Map = std::vector<std::pair<std::string, WireValue>>;
-  std::variant<std::nullptr_t, bool, std::int64_t, std::uint64_t,
-               std::string, Array, Map> value;
+  std::variant<std::nullptr_t, bool, std::int64_t, std::uint64_t, std::string, Array, Map> value;
 };
 
 WireValue unpack_value(const msgpack::object& object) {
   switch (object.type) {
-    case msgpack::type::NIL: return {nullptr};
-    case msgpack::type::BOOLEAN: return {object.via.boolean};
-    case msgpack::type::POSITIVE_INTEGER: return {object.via.u64};
-    case msgpack::type::NEGATIVE_INTEGER: return {object.via.i64};
-    case msgpack::type::STR:
-      return {std::string{object.via.str.ptr, object.via.str.size}};
-    case msgpack::type::ARRAY: {
-      WireValue::Array values;
-      for (std::uint32_t i = 0; i < object.via.array.size; ++i)
-        values.push_back(unpack_value(object.via.array.ptr[i]));
-      return {std::move(values)};
+  case msgpack::type::NIL:
+    return {nullptr};
+  case msgpack::type::BOOLEAN:
+    return {object.via.boolean};
+  case msgpack::type::POSITIVE_INTEGER:
+    return {object.via.u64};
+  case msgpack::type::NEGATIVE_INTEGER:
+    return {object.via.i64};
+  case msgpack::type::STR:
+    return {std::string{object.via.str.ptr, object.via.str.size}};
+  case msgpack::type::ARRAY: {
+    WireValue::Array values;
+    for (std::uint32_t i = 0; i < object.via.array.size; ++i)
+      values.push_back(unpack_value(object.via.array.ptr[i]));
+    return {std::move(values)};
+  }
+  case msgpack::type::MAP: {
+    WireValue::Map values;
+    for (std::uint32_t i = 0; i < object.via.map.size; ++i) {
+      const auto& pair = object.via.map.ptr[i];
+      values.emplace_back(pair.key.as<std::string>(), unpack_value(pair.val));
     }
-    case msgpack::type::MAP: {
-      WireValue::Map values;
-      for (std::uint32_t i = 0; i < object.via.map.size; ++i) {
-        const auto& pair = object.via.map.ptr[i];
-        values.emplace_back(pair.key.as<std::string>(), unpack_value(pair.val));
-      }
-      return {std::move(values)};
-    }
-    default: throw std::runtime_error("Unexpected fixture MessagePack type");
+    return {std::move(values)};
+  }
+  default:
+    throw std::runtime_error("Unexpected fixture MessagePack type");
   }
 }
 
-void pack_value(msgpack::packer<msgpack::sbuffer>& packer,
-                const WireValue& wire) {
-  std::visit([&](const auto& value) {
-    using T = std::decay_t<decltype(value)>;
-    if constexpr (std::is_same_v<T, std::nullptr_t>) packer.pack_nil();
-    else if constexpr (std::is_same_v<T, bool>) packer.pack(value);
-    else if constexpr (std::is_same_v<T, std::int64_t>) packer.pack_int64(value);
-    else if constexpr (std::is_same_v<T, std::uint64_t>) packer.pack_uint64(value);
-    else if constexpr (std::is_same_v<T, std::string>) {
-      packer.pack_str(static_cast<std::uint32_t>(value.size()));
-      packer.pack_str_body(value.data(), static_cast<std::uint32_t>(value.size()));
-    } else if constexpr (std::is_same_v<T, WireValue::Array>) {
-      packer.pack_array(static_cast<std::uint32_t>(value.size()));
-      for (const auto& child : value) pack_value(packer, child);
-    } else {
-      packer.pack_map(static_cast<std::uint32_t>(value.size()));
-      for (const auto& [key, child] : value) {
-        packer.pack(key);
-        pack_value(packer, child);
-      }
-    }
-  }, wire.value);
+void pack_value(msgpack::packer<msgpack::sbuffer>& packer, const WireValue& wire) {
+  std::visit(
+      [&](const auto& value) {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, std::nullptr_t>)
+          packer.pack_nil();
+        else if constexpr (std::is_same_v<T, bool>)
+          packer.pack(value);
+        else if constexpr (std::is_same_v<T, std::int64_t>)
+          packer.pack_int64(value);
+        else if constexpr (std::is_same_v<T, std::uint64_t>)
+          packer.pack_uint64(value);
+        else if constexpr (std::is_same_v<T, std::string>) {
+          packer.pack_str(static_cast<std::uint32_t>(value.size()));
+          packer.pack_str_body(value.data(), static_cast<std::uint32_t>(value.size()));
+        } else if constexpr (std::is_same_v<T, WireValue::Array>) {
+          packer.pack_array(static_cast<std::uint32_t>(value.size()));
+          for (const auto& child : value)
+            pack_value(packer, child);
+        } else {
+          packer.pack_map(static_cast<std::uint32_t>(value.size()));
+          for (const auto& [key, child] : value) {
+            packer.pack(key);
+            pack_value(packer, child);
+          }
+        }
+      },
+      wire.value);
 }
 
 std::string pack_wire(const WireValue& wire) {
@@ -163,39 +171,50 @@ storage::MetadataCatalog make_catalog() {
   const auto todo_path = fs::path{"vault/todo"} / todo_dir.to_string();
   if (!std::holds_alternative<std::monostate>(catalog.insert_directory(
           {{memo_dir, core::DirectoryKind::Memo, "研究 / Café"}, memo_path})) ||
-      !std::holds_alternative<std::monostate>(catalog.insert_directory(
-          {{todo_dir, core::DirectoryKind::Todo, "任务"}, todo_path})))
+      !std::holds_alternative<std::monostate>(
+          catalog.insert_directory({{todo_dir, core::DirectoryKind::Todo, "任务"}, todo_path})))
     throw std::runtime_error("Invalid Directory fixture");
 
-  const auto created = context(timestamp_at(std::chrono::seconds{1800000000},
-                       std::chrono::nanoseconds{123456000}), "Asia/Shanghai", "上海");
-  const auto modified = context(timestamp_at(std::chrono::seconds{1800000090},
-                        std::chrono::nanoseconds{987654000}), "Europe/Paris", std::nullopt);
+  const auto created =
+      context(timestamp_at(std::chrono::seconds{1800000000}, std::chrono::nanoseconds{123456000}),
+              "Asia/Shanghai", "上海");
+  const auto modified =
+      context(timestamp_at(std::chrono::seconds{1800000090}, std::chrono::nanoseconds{987654000}),
+              "Europe/Paris", std::nullopt);
   const std::string long_title(4096, 'a');
-  const storage::LogMetadata log{{
-      id("17183823-2574-4bfd-b411-99ed177d3e43"),
-      core::Privacy::Protected, created, modified, long_title + " 旅行",
-      {{"travel"}, {"旅行"}},
-      {{std::chrono::year{2027} / 1 / 15}, "Asia/Tokyo", "東京"}}, "vault/log.enc"};
-  const storage::MemoMetadata memo{{
-      id("27183823-2574-4bfd-b411-99ed177d3e43"),
-      core::Privacy::Normal, created, modified, "Memo Café", {{"notes"}}, memo_dir}, memo_path / "memo.enc"};
-  const storage::TodoMetadata todo_date{{
-      id("37183823-2574-4bfd-b411-99ed177d3e43"),
-      core::Privacy::Hidden, created, modified, "Todo 日付",
-      core::TodoStatus::Completed, core::TodoPriority::High,
-      core::DueDate{core::DateContext{{std::chrono::year{2028} / 2 / 3},
-                                      "Asia/Tokyo", "東京"}}, todo_dir}, todo_path / "date.enc"};
-  const storage::TodoMetadata todo_time{{
-      id("47183823-2574-4bfd-b411-99ed177d3e43"),
-      core::Privacy::Normal, created, modified, "Todo time",
-      core::TodoStatus::Pending, core::TodoPriority::Low,
-      core::DueDate{context(timestamp_at(std::chrono::seconds{1900000000},
-                             std::chrono::nanoseconds{654321000}),
-                            "UTC", std::nullopt)}, std::nullopt}, "vault/todo-root.enc"};
-  for (const storage::RecordMetadata& metadata : {
-           storage::RecordMetadata{log}, storage::RecordMetadata{memo},
-           storage::RecordMetadata{todo_date}, storage::RecordMetadata{todo_time}}) {
+  const storage::LogMetadata log{{id("17183823-2574-4bfd-b411-99ed177d3e43"),
+                                  core::Privacy::Protected,
+                                  created,
+                                  modified,
+                                  long_title + " 旅行",
+                                  {{"travel"}, {"旅行"}},
+                                  {{std::chrono::year{2027} / 1 / 15}, "Asia/Tokyo", "東京"}},
+                                 "vault/log.enc"};
+  const storage::MemoMetadata memo{{id("27183823-2574-4bfd-b411-99ed177d3e43"),
+                                    core::Privacy::Normal,
+                                    created,
+                                    modified,
+                                    "Memo Café",
+                                    {{"notes"}},
+                                    memo_dir},
+                                   memo_path / "memo.enc"};
+  const storage::TodoMetadata todo_date{
+      {id("37183823-2574-4bfd-b411-99ed177d3e43"), core::Privacy::Hidden, created, modified,
+       "Todo 日付", core::TodoStatus::Completed, core::TodoPriority::High,
+       core::DueDate{core::DateContext{{std::chrono::year{2028} / 2 / 3}, "Asia/Tokyo", "東京"}},
+       todo_dir},
+      todo_path / "date.enc"};
+  const storage::TodoMetadata todo_time{
+      {id("47183823-2574-4bfd-b411-99ed177d3e43"), core::Privacy::Normal, created, modified,
+       "Todo time", core::TodoStatus::Pending, core::TodoPriority::Low,
+       core::DueDate{context(
+           timestamp_at(std::chrono::seconds{1900000000}, std::chrono::nanoseconds{654321000}),
+           "UTC", std::nullopt)},
+       std::nullopt},
+      "vault/todo-root.enc"};
+  for (const storage::RecordMetadata& metadata :
+       {storage::RecordMetadata{log}, storage::RecordMetadata{memo},
+        storage::RecordMetadata{todo_date}, storage::RecordMetadata{todo_time}}) {
     if (!std::holds_alternative<std::monostate>(catalog.insert_record(metadata)))
       throw std::runtime_error("Invalid Entry fixture");
   }
@@ -213,26 +232,27 @@ TEST(IndexCodecTest, LocatedMetadataPreservesExactSchemaOneWireEncoding) {
   const auto record_id = id("27183823-2574-4bfd-b411-99ed177d3e43");
   const auto created = context(timestamp_at(std::chrono::seconds{1}), "UTC", std::nullopt);
   storage::MetadataCatalog catalog;
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_record(
-      storage::MemoMetadata{{record_id, core::Privacy::Normal, created, created,
-                             "Memo", {}, std::nullopt}, "memos/actual.md"})));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_record(storage::MemoMetadata{
+      {record_id, core::Privacy::Normal, created, created, "Memo", {}, std::nullopt},
+      "memos/actual.md"})));
   // Independent schema-v1 fixture: Located<T> is only an in-memory wrapper;
   // it must not introduce a metadata envelope or reorder persisted map fields.
-  const WireValue timestamp{WireValue::Map{
-      {"nanoseconds", WireValue{std::uint64_t{0}}},
-      {"seconds", WireValue{std::int64_t{1}}},
-      {"timezone", WireValue{std::string{"UTC"}}}}};
-  const WireValue record{WireValue::Map{
-      {"created", timestamp}, {"id", WireValue{record_id.to_string()}},
-      {"modified", timestamp}, {"privacy", WireValue{std::string{"Normal"}}},
-      {"relative_path", WireValue{std::string{"memos/actual.md"}}},
-      {"tags", WireValue{WireValue::Array{}}},
-      {"title", WireValue{std::string{"Memo"}}},
-      {"type", WireValue{std::string{"Memo"}}}}};
-  const auto expected = pack_wire(WireValue{WireValue::Map{
-      {"directories", WireValue{WireValue::Array{}}},
-      {"entries", WireValue{WireValue::Array{record}}},
-      {"schema_version", WireValue{std::uint64_t{1}}}}});
+  const WireValue timestamp{WireValue::Map{{"nanoseconds", WireValue{std::uint64_t{0}}},
+                                           {"seconds", WireValue{std::int64_t{1}}},
+                                           {"timezone", WireValue{std::string{"UTC"}}}}};
+  const WireValue record{
+      WireValue::Map{{"created", timestamp},
+                     {"id", WireValue{record_id.to_string()}},
+                     {"modified", timestamp},
+                     {"privacy", WireValue{std::string{"Normal"}}},
+                     {"relative_path", WireValue{std::string{"memos/actual.md"}}},
+                     {"tags", WireValue{WireValue::Array{}}},
+                     {"title", WireValue{std::string{"Memo"}}},
+                     {"type", WireValue{std::string{"Memo"}}}}};
+  const auto expected =
+      pack_wire(WireValue{WireValue::Map{{"directories", WireValue{WireValue::Array{}}},
+                                         {"entries", WireValue{WireValue::Array{record}}},
+                                         {"schema_version", WireValue{std::uint64_t{1}}}}});
   const auto encoded = codec::encode_index(catalog);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
   EXPECT_EQ(value_of(encoded), expected);
@@ -268,8 +288,7 @@ TEST(IndexCodecTest, RoundTripsAllMetadataFieldsAndRestoresPersistedMembership) 
   ASSERT_TRUE(todo_directory.has_value());
   EXPECT_EQ(memo_directory->metadata.kind, core::DirectoryKind::Memo);
   EXPECT_EQ(memo_directory->metadata.name, "研究 / Café");
-  EXPECT_EQ(memo_directory->relative_path,
-            fs::path{"vault/memo"} / memo_dir.to_string());
+  EXPECT_EQ(memo_directory->relative_path, fs::path{"vault/memo"} / memo_dir.to_string());
   EXPECT_EQ(todo_directory->metadata.kind, core::DirectoryKind::Todo);
   EXPECT_EQ(todo_directory->metadata.name, "任务");
   const auto memo_children = restored.list_directory(core::DirectoryKind::Memo, memo_dir);
@@ -294,13 +313,11 @@ TEST(IndexCodecTest, RoundTripsAllMetadataFieldsAndRestoresPersistedMembership) 
   EXPECT_EQ(log_data.metadata.title, std::string(4096, 'a') + " 旅行");
   EXPECT_EQ(log_data.metadata.tags, (std::vector<core::Tag>{{"travel"}, {"旅行"}}));
   EXPECT_EQ(log_data.metadata.created.timestamp,
-            timestamp_at(std::chrono::seconds{1800000000},
-                         std::chrono::nanoseconds{123456000}));
+            timestamp_at(std::chrono::seconds{1800000000}, std::chrono::nanoseconds{123456000}));
   EXPECT_EQ(log_data.metadata.created.timezone, "Asia/Shanghai");
   EXPECT_EQ(log_data.metadata.created.location, std::optional<std::string>{"上海"});
   EXPECT_EQ(log_data.metadata.modified.timestamp,
-            timestamp_at(std::chrono::seconds{1800000090},
-                         std::chrono::nanoseconds{987654000}));
+            timestamp_at(std::chrono::seconds{1800000090}, std::chrono::nanoseconds{987654000}));
   EXPECT_EQ(log_data.metadata.modified.timezone, "Europe/Paris");
   EXPECT_EQ(log_data.metadata.modified.location, std::nullopt);
   EXPECT_EQ(log_data.metadata.log_date.date, std::chrono::year{2027} / 1 / 15);
@@ -337,8 +354,7 @@ TEST(IndexCodecTest, RoundTripsAllMetadataFieldsAndRestoresPersistedMembership) 
   ASSERT_TRUE(std::holds_alternative<core::TimestampContext>(*time_data.metadata.due_date));
   const auto& time_due = std::get<core::TimestampContext>(*time_data.metadata.due_date);
   EXPECT_EQ(time_due.timestamp,
-            timestamp_at(std::chrono::seconds{1900000000},
-                         std::chrono::nanoseconds{654321000}));
+            timestamp_at(std::chrono::seconds{1900000000}, std::chrono::nanoseconds{654321000}));
   EXPECT_EQ(time_due.timezone, "UTC");
   EXPECT_EQ(time_due.location, std::nullopt);
 
@@ -367,13 +383,13 @@ TEST(IndexCodecTest, RoundTripsEmptyAndEachEntryTypeAlone) {
     storage::MetadataCatalog one;
     if (const auto* memo = std::get_if<storage::MemoMetadata>(&item)) {
       ASSERT_TRUE(memo->metadata.directory_id.has_value());
-      ASSERT_TRUE(std::holds_alternative<std::monostate>(one.insert_directory(
-          *fixture.find_directory(*memo->metadata.directory_id))));
+      ASSERT_TRUE(std::holds_alternative<std::monostate>(
+          one.insert_directory(*fixture.find_directory(*memo->metadata.directory_id))));
     }
     if (const auto* todo = std::get_if<storage::TodoMetadata>(&item)) {
       if (todo->metadata.directory_id) {
-        ASSERT_TRUE(std::holds_alternative<std::monostate>(one.insert_directory(
-            *fixture.find_directory(*todo->metadata.directory_id))));
+        ASSERT_TRUE(std::holds_alternative<std::monostate>(
+            one.insert_directory(*fixture.find_directory(*todo->metadata.directory_id))));
       }
     }
     ASSERT_TRUE(std::holds_alternative<std::monostate>(one.insert_record(item)));
@@ -391,29 +407,24 @@ TEST(IndexCodecTest, RoundTripsEmptyAndEachEntryTypeAlone) {
 
 TEST(IndexCodecTest, PreservesLongTodoTitleAndNegativeFractionalTimestamp) {
   storage::MetadataCatalog catalog;
-  const auto before_epoch = context(
-      timestamp_at(std::chrono::seconds{-1},
-                   std::chrono::nanoseconds{500000000}),
-      "UTC", std::string{});
-  const storage::TodoMetadata todo{{
-      id("58183823-2574-4bfd-b411-99ed177d3e43"),
-      core::Privacy::Normal, before_epoch, before_epoch,
-      std::string(1u << 20, 'x') + "旅行",
-      core::TodoStatus::Pending, core::TodoPriority::None,
-      std::nullopt, std::nullopt}, "long-todo.enc"};
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      catalog.insert_record(storage::RecordMetadata{todo})));
+  const auto before_epoch =
+      context(timestamp_at(std::chrono::seconds{-1}, std::chrono::nanoseconds{500000000}), "UTC",
+              std::string{});
+  const storage::TodoMetadata todo{{id("58183823-2574-4bfd-b411-99ed177d3e43"),
+                                    core::Privacy::Normal, before_epoch, before_epoch,
+                                    std::string(1u << 20, 'x') + "旅行", core::TodoStatus::Pending,
+                                    core::TodoPriority::None, std::nullopt, std::nullopt},
+                                   "long-todo.enc"};
+  ASSERT_TRUE(
+      std::holds_alternative<std::monostate>(catalog.insert_record(storage::RecordMetadata{todo})));
   const auto encoded = codec::encode_index(catalog);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
   auto wire = unpack_wire(value_of(encoded));
-  EXPECT_EQ(std::get<std::int64_t>(
-                field(field(entry(wire), "created"), "seconds").value), -1);
-  EXPECT_EQ(std::get<std::uint64_t>(
-                field(field(entry(wire), "created"), "nanoseconds").value),
+  EXPECT_EQ(std::get<std::int64_t>(field(field(entry(wire), "created"), "seconds").value), -1);
+  EXPECT_EQ(std::get<std::uint64_t>(field(field(entry(wire), "created"), "nanoseconds").value),
             500000000U);
   EXPECT_TRUE(has_field(field(entry(wire), "created"), "location"));
-  EXPECT_EQ(std::get<std::string>(
-                field(field(entry(wire), "created"), "location").value), "");
+  EXPECT_EQ(std::get<std::string>(field(field(entry(wire), "created"), "location").value), "");
   const auto decoded = codec::decode_index(value_of(encoded));
   ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
   const auto saved = value_of(decoded).find_record(todo.metadata.id);
@@ -427,15 +438,11 @@ TEST(IndexCodecTest, PreservesLongTodoTitleAndNegativeFractionalTimestamp) {
 TEST(IndexCodecTest, EncodingIsIndependentOfCatalogInsertionOrder) {
   const auto first = make_catalog();
   storage::MetadataCatalog reversed;
-  const auto todo_dir = first.find_directory(
-      id("97183823-2574-4bfd-b411-99ed177d3e43"));
-  const auto memo_dir = first.find_directory(
-      id("87183823-2574-4bfd-b411-99ed177d3e43"));
+  const auto todo_dir = first.find_directory(id("97183823-2574-4bfd-b411-99ed177d3e43"));
+  const auto memo_dir = first.find_directory(id("87183823-2574-4bfd-b411-99ed177d3e43"));
   ASSERT_TRUE(todo_dir && memo_dir);
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      reversed.insert_directory(*todo_dir)));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      reversed.insert_directory(*memo_dir)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(reversed.insert_directory(*todo_dir)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(reversed.insert_directory(*memo_dir)));
   const auto entries = first.query();
   for (auto it = entries.rbegin(); it != entries.rend(); ++it)
     ASSERT_TRUE(std::holds_alternative<std::monostate>(reversed.insert_record(*it)));
@@ -457,37 +464,35 @@ TEST(IndexCodecTest, EncodingIsIndependentOfCatalogInsertionOrder) {
 
 TEST(IndexCodecTest, OmitsAbsentOptionalFieldsAndRejectsExplicitNil) {
   storage::MetadataCatalog catalog;
-  const auto created = context(timestamp_at(std::chrono::seconds{1}),
-                               "UTC", std::nullopt);
-  const storage::TodoMetadata todo{{
-      id("57183823-2574-4bfd-b411-99ed177d3e43"),
-      core::Privacy::Normal, created, created, "No due",
-      core::TodoStatus::Pending, core::TodoPriority::None,
-      std::nullopt, std::nullopt}, "todo.enc"};
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      catalog.insert_record(storage::RecordMetadata{todo})));
+  const auto created = context(timestamp_at(std::chrono::seconds{1}), "UTC", std::nullopt);
+  const storage::TodoMetadata todo{
+      {id("57183823-2574-4bfd-b411-99ed177d3e43"), core::Privacy::Normal, created, created,
+       "No due", core::TodoStatus::Pending, core::TodoPriority::None, std::nullopt, std::nullopt},
+      "todo.enc"};
+  ASSERT_TRUE(
+      std::holds_alternative<std::monostate>(catalog.insert_record(storage::RecordMetadata{todo})));
   const auto encoded = codec::encode_index(catalog);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
   auto wire = unpack_wire(value_of(encoded));
   EXPECT_FALSE(has_field(entry(wire), "due_date"));
   EXPECT_FALSE(has_field(entry(wire), "directory_id"));
   EXPECT_FALSE(has_field(field(entry(wire), "created"), "location"));
-  std::get<WireValue::Map>(entry(wire).value).emplace_back(
-      "due_date", WireValue{nullptr});
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::Malformed);
+  std::get<WireValue::Map>(entry(wire).value).emplace_back("due_date", WireValue{nullptr});
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::Malformed);
 }
 
 TEST(IndexCodecTest, PreservesNativeTimestampPrecisionAtMinAndMax) {
   storage::MetadataCatalog catalog;
-  const storage::LogMetadata log{{
-      id("67183823-2574-4bfd-b411-99ed177d3e43"),
-      core::Privacy::Normal,
-      context(core::Timestamp::min(), "UTC", std::nullopt),
-      context(core::Timestamp::max(), "UTC", std::nullopt),
-      "Extreme", {}, {{std::chrono::year{9999} / 12 / 31}, "UTC", std::nullopt}}, "extreme.enc"};
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      catalog.insert_record(storage::RecordMetadata{log})));
+  const storage::LogMetadata log{{id("67183823-2574-4bfd-b411-99ed177d3e43"),
+                                  core::Privacy::Normal,
+                                  context(core::Timestamp::min(), "UTC", std::nullopt),
+                                  context(core::Timestamp::max(), "UTC", std::nullopt),
+                                  "Extreme",
+                                  {},
+                                  {{std::chrono::year{9999} / 12 / 31}, "UTC", std::nullopt}},
+                                 "extreme.enc"};
+  ASSERT_TRUE(
+      std::holds_alternative<std::monostate>(catalog.insert_record(storage::RecordMetadata{log})));
   const auto encoded = codec::encode_index(catalog);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
   const auto decoded = codec::decode_index(value_of(encoded));
@@ -512,39 +517,32 @@ TEST(IndexCodecTest, RejectsBrokenEnvelopeAndDuplicateKeys) {
 
   auto wire = unpack_wire(bytes);
   erase_field(wire, "schema_version");
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::Malformed);
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::Malformed);
   wire = unpack_wire(bytes);
   field(wire, "schema_version") = WireValue{std::uint64_t{2}};
   expect_error(codec::decode_index(pack_wire(wire)),
                codec::IndexCodecErrorCode::UnsupportedVersion);
   wire = unpack_wire(bytes);
   field(wire, "schema_version") = WireValue{std::string{"one"}};
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::Malformed);
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::Malformed);
   wire = unpack_wire(bytes);
   field(wire, "entries") = WireValue{std::string{"wrong container"}};
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::Malformed);
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::Malformed);
   wire = unpack_wire(bytes);
-  std::get<WireValue::Map>(wire.value).emplace_back(
-      "entries", WireValue{WireValue::Array{}});
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::Malformed);
+  std::get<WireValue::Map>(wire.value).emplace_back("entries", WireValue{WireValue::Array{}});
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::Malformed);
   wire = unpack_wire(bytes);
-  std::get<WireValue::Map>(entry(wire).value).emplace_back(
-      "title", WireValue{std::string{"duplicate"}});
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::Malformed);
+  std::get<WireValue::Map>(entry(wire).value)
+      .emplace_back("title", WireValue{std::string{"duplicate"}});
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::Malformed);
   wire = unpack_wire(bytes);
-  std::get<WireValue::Map>(wire.value).emplace_back(
-      "future", WireValue{WireValue::Map{{"inner", WireValue{std::uint64_t{1}}}}});
-  ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(
-      codec::decode_index(pack_wire(wire))));
-  std::get<WireValue::Map>(field(wire, "future").value).emplace_back(
-      "inner", WireValue{std::uint64_t{2}});
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::Malformed);
+  std::get<WireValue::Map>(wire.value)
+      .emplace_back("future", WireValue{WireValue::Map{{"inner", WireValue{std::uint64_t{1}}}}});
+  ASSERT_TRUE(
+      std::holds_alternative<storage::MetadataCatalog>(codec::decode_index(pack_wire(wire))));
+  std::get<WireValue::Map>(field(wire, "future").value)
+      .emplace_back("inner", WireValue{std::uint64_t{2}});
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::Malformed);
 }
 
 TEST(IndexCodecTest, RejectsMissingWrongAndIrrelevantKnownFields) {
@@ -553,42 +551,33 @@ TEST(IndexCodecTest, RejectsMissingWrongAndIrrelevantKnownFields) {
     SCOPED_TRACE(key);
     auto wire = unpack_wire(bytes);
     erase_field(entry(wire), key);
-    expect_error(codec::decode_index(pack_wire(wire)),
-                 codec::IndexCodecErrorCode::Malformed);
+    expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::Malformed);
   }
   auto wire = unpack_wire(bytes);
   field(entry(wire), "title") = WireValue{std::uint64_t{42}};
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::Malformed);
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::Malformed);
   wire = unpack_wire(bytes);
   field(directory(wire), "kind") = WireValue{std::uint64_t{1}};
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::Malformed);
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::Malformed);
   wire = unpack_wire(bytes);
-  std::get<WireValue::Map>(entry(wire, 2).value).emplace_back(
-      "tags", WireValue{WireValue::Array{}});
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::InvalidMetadata);
+  std::get<WireValue::Map>(entry(wire, 2).value)
+      .emplace_back("tags", WireValue{WireValue::Array{}});
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::InvalidMetadata);
   wire = unpack_wire(bytes);
-  std::get<WireValue::Map>(entry(wire, 3).value).emplace_back(
-      "directory_id", WireValue{nullptr});
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::Malformed);
+  std::get<WireValue::Map>(entry(wire, 3).value).emplace_back("directory_id", WireValue{nullptr});
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::Malformed);
   wire = unpack_wire(bytes);
-  std::get<WireValue::Map>(field(entry(wire), "modified").value).emplace_back(
-      "location", WireValue{nullptr});
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::Malformed);
+  std::get<WireValue::Map>(field(entry(wire), "modified").value)
+      .emplace_back("location", WireValue{nullptr});
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::Malformed);
   wire = unpack_wire(bytes);
-  std::get<WireValue::Map>(field(entry(wire), "created").value).emplace_back(
-      "date", WireValue{std::string{"2027-01-15"}});
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::InvalidMetadata);
+  std::get<WireValue::Map>(field(entry(wire), "created").value)
+      .emplace_back("date", WireValue{std::string{"2027-01-15"}});
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::InvalidMetadata);
   wire = unpack_wire(bytes);
-  std::get<WireValue::Map>(field(entry(wire), "log_date").value).emplace_back(
-      "seconds", WireValue{std::int64_t{1}});
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::InvalidMetadata);
+  std::get<WireValue::Map>(field(entry(wire), "log_date").value)
+      .emplace_back("seconds", WireValue{std::int64_t{1}});
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::InvalidMetadata);
 }
 
 TEST(IndexCodecTest, RejectsInvalidMetadataAndRelationshipsWithoutMutatingCaller) {
@@ -598,8 +587,7 @@ TEST(IndexCodecTest, RejectsInvalidMetadataAndRelationshipsWithoutMutatingCaller
   ASSERT_TRUE(std::holds_alternative<std::string>(unchanged));
   const auto bytes = value_of(unchanged);
   auto check = [&](WireValue& wire) {
-    expect_error(codec::decode_index(pack_wire(wire)),
-                 codec::IndexCodecErrorCode::InvalidMetadata);
+    expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::InvalidMetadata);
     EXPECT_FALSE(working.unpersisted());
     const auto after = codec::encode_index(working);
     ASSERT_TRUE(std::holds_alternative<std::string>(after));
@@ -648,20 +636,16 @@ TEST(IndexCodecTest, RejectsInvalidMetadataAndRelationshipsWithoutMutatingCaller
   field(directory(wire, 1), "id") = field(directory(wire), "id");
   check(wire);
   wire = unpack_wire(bytes);
-  field(field(entry(wire), "created"), "nanoseconds") =
-      WireValue{std::uint64_t{1000000000}};
+  field(field(entry(wire), "created"), "nanoseconds") = WireValue{std::uint64_t{1000000000}};
   check(wire);
   wire = unpack_wire(bytes);
-  field(field(entry(wire), "log_date"), "date") =
-      WireValue{std::string{"2027-02-30"}};
+  field(field(entry(wire), "log_date"), "date") = WireValue{std::string{"2027-02-30"}};
   check(wire);
   wire = unpack_wire(bytes);
-  field(field(entry(wire, 2), "due_date"), "kind") =
-      WireValue{std::string{"TimeOnly"}};
+  field(field(entry(wire, 2), "due_date"), "kind") = WireValue{std::string{"TimeOnly"}};
   check(wire);
   wire = unpack_wire(bytes);
-  field(entry(wire, 3), "relative_path") =
-      WireValue{std::string{"vault\\escape.enc"}};
+  field(entry(wire, 3), "relative_path") = WireValue{std::string{"vault\\escape.enc"}};
   check(wire);
 }
 
@@ -671,26 +655,21 @@ TEST(IndexCodecTest, EnforcesDepthAndDeclaredContainerBounds) {
   expect_error(codec::decode_index(declared_large_array),
                codec::IndexCodecErrorCode::LimitExceeded);
   const std::string declared_large_map{static_cast<char>(0xde), '\0', 'A'};
-  expect_error(codec::decode_index(declared_large_map),
-               codec::IndexCodecErrorCode::LimitExceeded);
+  expect_error(codec::decode_index(declared_large_map), codec::IndexCodecErrorCode::LimitExceeded);
 
   auto wire = unpack_wire(encoded_catalog());
   WireValue nested{std::uint64_t{1}};
   for (int depth = 0; depth < 18; ++depth)
     nested = WireValue{WireValue::Array{std::move(nested)}};
   std::get<WireValue::Map>(wire.value).emplace_back("future", std::move(nested));
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::LimitExceeded);
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::LimitExceeded);
 
   wire = unpack_wire(encoded_catalog());
   auto& fields = std::get<WireValue::Map>(wire.value);
   for (int i = 0; i < 62; ++i)
-    fields.emplace_back("future" + std::to_string(i),
-                        WireValue{std::uint64_t{1}});
-  expect_error(codec::decode_index(pack_wire(wire)),
-               codec::IndexCodecErrorCode::LimitExceeded);
+    fields.emplace_back("future" + std::to_string(i), WireValue{std::uint64_t{1}});
+  expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::LimitExceeded);
 }
-
 
 TEST(IndexCodecTest, RejectsRecordDirectoryUuidCollisionsForEveryRecordType) {
   const auto encoded = codec::encode_index(make_catalog());
@@ -699,10 +678,8 @@ TEST(IndexCodecTest, RejectsRecordDirectoryUuidCollisionsForEveryRecordType) {
   for (std::size_t index : {0u, 1u, 2u}) {
     auto wire = unpack_wire(value_of(encoded));
     field(entry(wire, index), "id") = field(directory(wire), "id");
-    expect_error(codec::decode_index(pack_wire(wire)),
-                 codec::IndexCodecErrorCode::InvalidMetadata);
+    expect_error(codec::decode_index(pack_wire(wire)), codec::IndexCodecErrorCode::InvalidMetadata);
   }
 }
 
-}  // namespace
-
+} // namespace

@@ -15,8 +15,8 @@ enum class ProcessRole { Backend, Frontend };
 // logger and returns nullopt, without making application startup fail.
 [[nodiscard]] std::optional<std::filesystem::path> initialize(ProcessRole role) noexcept;
 // Explicit root injection for isolated tests and embedded entry points.
-[[nodiscard]] std::optional<std::filesystem::path> initialize(
-    ProcessRole role, const std::filesystem::path& log_root) noexcept;
+[[nodiscard]] std::optional<std::filesystem::path>
+initialize(ProcessRole role, const std::filesystem::path& log_root) noexcept;
 
 // Updates the existing default logger, without replacing its sink or file.
 void set_level(config::LogLevel level) noexcept;
@@ -24,4 +24,4 @@ void set_level(config::LogLevel level) noexcept;
 // A silent default remains available for late diagnostic calls. No Catalog work.
 void shutdown() noexcept;
 
-}  // namespace folio::logging
+} // namespace folio::logging

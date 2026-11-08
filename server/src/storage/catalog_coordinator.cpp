@@ -13,9 +13,13 @@
 namespace folio::core::storage {
 namespace {
 namespace fs = std::filesystem;
-constexpr std::size_t kMaxIndexBytes = 64u * 1024u * 1024u;  // IndexCodec v1 limit.
-fs::path marker_path(const StoragePaths& paths) { return paths.application.state / "session.marker"; }
-fs::path index_relative_path() { return fs::path{"index"} / "normal.msgpack"; }
+constexpr std::size_t kMaxIndexBytes = 64u * 1024u * 1024u; // IndexCodec v1 limit.
+fs::path marker_path(const StoragePaths& paths) {
+  return paths.application.state / "session.marker";
+}
+fs::path index_relative_path() {
+  return fs::path{"index"} / "normal.msgpack";
+}
 
 bool contains_path(const fs::path& parent, const fs::path& child) {
   auto p = parent.begin();
@@ -23,8 +27,7 @@ bool contains_path(const fs::path& parent, const fs::path& child) {
   for (; p != parent.end(); ++p, ++c) {
     if (c == child.end()) return false;
 #ifdef _WIN32
-    if (CompareStringOrdinal(p->c_str(), -1, c->c_str(), -1, TRUE) != CSTR_EQUAL)
-      return false;
+    if (CompareStringOrdinal(p->c_str(), -1, c->c_str(), -1, TRUE) != CSTR_EQUAL) return false;
 #else
     if (*p != *c) return false;
 #endif
@@ -32,47 +35,60 @@ bool contains_path(const fs::path& parent, const fs::path& child) {
   return true;
 }
 
-CoordinatorError error(CoordinatorErrorCode code, const fs::path& path,
-                       std::string message) {
+CoordinatorError error(CoordinatorErrorCode code, const fs::path& path, std::string message) {
   return {code, path, std::move(message), std::nullopt, std::nullopt, std::nullopt};
 }
 CoordinatorError storage_error(StorageError source) {
-  return {CoordinatorErrorCode::StorageFailure, source.path, source.message,
-          std::move(source), std::nullopt, std::nullopt, std::nullopt};
+  return {CoordinatorErrorCode::StorageFailure,
+          source.path,
+          source.message,
+          std::move(source),
+          std::nullopt,
+          std::nullopt,
+          std::nullopt};
 }
 CoordinatorError storage_error(io::FileError source) {
-  const auto code = source.code == io::FileErrorCode::InvalidPath
-      ? CoordinatorErrorCode::InvalidPath
-      : (source.code == io::FileErrorCode::IoError ? CoordinatorErrorCode::IoError
-                                                  : CoordinatorErrorCode::StorageFailure);
-  return {code, source.path, source.message, std::nullopt, std::nullopt,
-          std::nullopt, std::move(source)};
+  const auto code =
+      source.code == io::FileErrorCode::InvalidPath
+          ? CoordinatorErrorCode::InvalidPath
+          : (source.code == io::FileErrorCode::IoError ? CoordinatorErrorCode::IoError
+                                                       : CoordinatorErrorCode::StorageFailure);
+  return {code,         source.path,  source.message,   std::nullopt,
+          std::nullopt, std::nullopt, std::move(source)};
 }
 CoordinatorError io_error(const fs::path& path, std::string message, std::error_code ec) {
-  return storage_error(io::FileError{io::FileErrorCode::IoError, path,
-                                    std::move(message), ec, false});
+  return storage_error(
+      io::FileError{io::FileErrorCode::IoError, path, std::move(message), ec, false});
 }
 CoordinatorError codec_error(const fs::path& path, index_codec::IndexCodecError source,
                              bool loading) {
   CoordinatorErrorCode code;
   switch (source.code) {
-    case index_codec::IndexCodecErrorCode::UnsupportedVersion:
-      code = CoordinatorErrorCode::UnsupportedVersion; break;
-    case index_codec::IndexCodecErrorCode::LimitExceeded:
-      code = CoordinatorErrorCode::LimitExceeded; break;
-    case index_codec::IndexCodecErrorCode::Malformed:
-    case index_codec::IndexCodecErrorCode::InvalidMetadata:
-      code = loading ? CoordinatorErrorCode::Corrupt : CoordinatorErrorCode::CodecError; break;
+  case index_codec::IndexCodecErrorCode::UnsupportedVersion:
+    code = CoordinatorErrorCode::UnsupportedVersion;
+    break;
+  case index_codec::IndexCodecErrorCode::LimitExceeded:
+    code = CoordinatorErrorCode::LimitExceeded;
+    break;
+  case index_codec::IndexCodecErrorCode::Malformed:
+  case index_codec::IndexCodecErrorCode::InvalidMetadata:
+    code = loading ? CoordinatorErrorCode::Corrupt : CoordinatorErrorCode::CodecError;
+    break;
   }
   return {code, path, source.message, std::nullopt, std::move(source), std::nullopt};
 }
 CoordinatorError binary_error(io::ReadError source) {
   const auto code = source.code == io::ReadErrorCode::LimitExceeded
-      ? CoordinatorErrorCode::LimitExceeded : CoordinatorErrorCode::IoError;
+                        ? CoordinatorErrorCode::LimitExceeded
+                        : CoordinatorErrorCode::IoError;
   return {code, source.path, source.message, std::nullopt, std::nullopt, std::move(source)};
 }
 
-struct Locations { fs::path cache_root; fs::path parent; fs::path file; };
+struct Locations {
+  fs::path cache_root;
+  fs::path parent;
+  fs::path file;
+};
 ::folio::core::Result<Locations, CoordinatorError> locations(const StoragePaths& paths) {
   auto checked = validate_storage_paths(paths);
   if (auto* problem = std::get_if<StorageError>(&checked)) return storage_error(*problem);
@@ -86,8 +102,7 @@ struct Locations { fs::path cache_root; fs::path parent; fs::path file; };
 ::folio::core::Result<fs::file_status, CoordinatorError> inspect(const fs::path& path) {
   std::error_code ec;
   const auto status = fs::symlink_status(path, ec);
-  if (ec == std::errc::no_such_file_or_directory)
-    return fs::file_status{fs::file_type::not_found};
+  if (ec == std::errc::no_such_file_or_directory) return fs::file_status{fs::file_type::not_found};
   if (ec) return io_error(path, "Could not inspect lifecycle path", ec);
   if (fs::is_symlink(status))
     return error(CoordinatorErrorCode::InvalidPath, path, "Symlink in lifecycle path");
@@ -111,20 +126,19 @@ struct Locations { fs::path cache_root; fs::path parent; fs::path file; };
     return error(CoordinatorErrorCode::InvalidPath, path, "Lifecycle target is not a regular file");
   return true;
 }
-}  // namespace
+} // namespace
 
 // Marker location must survive independent Cache/Runtime deletion. Application
 // categories can otherwise share parents; only this durable file is constrained.
-::folio::core::Result<bool, CoordinatorError>
-CatalogCoordinator::previous_marker() const {
+::folio::core::Result<bool, CoordinatorError> CatalogCoordinator::previous_marker() const {
   auto validated = validate_storage_paths(paths_);
   if (auto* problem = std::get_if<StorageError>(&validated)) return storage_error(*problem);
   if (auto* problem = std::get_if<io::FileError>(&validated)) return storage_error(*problem);
   std::error_code ec;
   const auto marker = fs::weakly_canonical(marker_path(paths_), ec);
   if (ec) return io_error(marker_path(paths_), "Could not resolve Session Marker", ec);
-  for (const auto& transient : {std::optional<fs::path>{paths_.application.cache},
-                                paths_.application.runtime}) {
+  for (const auto& transient :
+       {std::optional<fs::path>{paths_.application.cache}, paths_.application.runtime}) {
     if (!transient) continue;
     const auto root = fs::weakly_canonical(*transient, ec);
     if (ec) return io_error(*transient, "Could not resolve transient directory", ec);
@@ -144,8 +158,7 @@ CatalogCoordinator::previous_marker() const {
   return file_ready(marker_path(paths_));
 }
 
-::folio::core::Result<std::monostate, CoordinatorError>
-CatalogCoordinator::establish_marker() {
+::folio::core::Result<std::monostate, CoordinatorError> CatalogCoordinator::establish_marker() {
   auto present = previous_marker();
   if (auto* problem = std::get_if<CoordinatorError>(&present)) return *problem;
   auto parents = io::create_directories_durable(paths_.application.state);
@@ -154,60 +167,52 @@ CatalogCoordinator::establish_marker() {
   // Never remove/recreate an existing Marker during startup. Sync it and its
   // ancestry, including when a previous process failed during publication sync.
   auto durable = std::get<bool>(present) ? io::sync_regular_file(marker)
-                                        : io::create_empty_file_durable(marker);
+                                         : io::create_empty_file_durable(marker);
   if (auto* problem = std::get_if<io::FileError>(&durable)) return storage_error(*problem);
   session_active_ = true;
   return std::monostate{};
 }
 
 CatalogCoordinator::CatalogCoordinator(StoragePaths paths, MetadataCatalog& catalog)
-    : paths_(std::move(paths)),
-      catalog_(catalog),
-      creation_check_([this](const core::Id& id)
-          -> ::folio::core::Result<std::monostate, StorageError> {
-        if (status_ != CatalogStatus::Ready)
-          return StorageError{StorageErrorCode::CatalogUnavailable, paths_.normal_root,
-                              "Creation requires an initialized, consistent Catalog", {}, false};
-        if (catalog_.contains_entry(id))
-          return StorageError{StorageErrorCode::DuplicateId, paths_.normal_root,
-                              "Entry UUID already exists in Catalog", {}, false};
-        return std::monostate{};
-      }),
+    : paths_(std::move(paths)), catalog_(catalog),
+      creation_check_(
+          [this](const core::Id& id) -> ::folio::core::Result<std::monostate, StorageError> {
+            if (status_ != CatalogStatus::Ready)
+              return StorageError{StorageErrorCode::CatalogUnavailable,
+                                  paths_.normal_root,
+                                  "Creation requires an initialized, consistent Catalog",
+                                  {},
+                                  false};
+            if (catalog_.contains_entry(id))
+              return StorageError{StorageErrorCode::DuplicateId,
+                                  paths_.normal_root,
+                                  "Entry UUID already exists in Catalog",
+                                  {},
+                                  false};
+            return std::monostate{};
+          }),
       log_creation_callback_(wrap_catalog_update<LogMetadata>(
-          [this](const LogMetadata& metadata) {
-            return catalog_.insert_record(metadata);
-          })),
+          [this](const LogMetadata& metadata) { return catalog_.insert_record(metadata); })),
       log_update_callback_(wrap_catalog_update<LogMetadata>(
-          [this](const LogMetadata& metadata) {
-            return catalog_.update_record(metadata);
-          })),
+          [this](const LogMetadata& metadata) { return catalog_.update_record(metadata); })),
       memo_creation_callback_(wrap_catalog_update<MemoMetadata>(
-          [this](const MemoMetadata& metadata) {
-            return catalog_.insert_record(metadata);
-          })),
+          [this](const MemoMetadata& metadata) { return catalog_.insert_record(metadata); })),
       memo_update_callback_(wrap_catalog_update<MemoMetadata>(
-          [this](const MemoMetadata& metadata) {
-            return catalog_.update_record(metadata);
-          })),
+          [this](const MemoMetadata& metadata) { return catalog_.update_record(metadata); })),
       todo_creation_callback_(wrap_catalog_update<TodoMetadata>(
-          [this](const TodoMetadata& metadata) {
-            return catalog_.insert_record(metadata);
-          })),
+          [this](const TodoMetadata& metadata) { return catalog_.insert_record(metadata); })),
       todo_update_callback_(wrap_catalog_update<TodoMetadata>(
-          [this](const TodoMetadata& metadata) {
-            return catalog_.update_record(metadata);
-          })),
-      directory_creation_callback_(wrap_catalog_update<DirectoryMetadata>(
-          [this](const DirectoryMetadata& metadata) {
+          [this](const TodoMetadata& metadata) { return catalog_.update_record(metadata); })),
+      directory_creation_callback_(
+          wrap_catalog_update<DirectoryMetadata>([this](const DirectoryMetadata& metadata) {
             return catalog_.insert_directory(metadata);
           })),
-      directory_update_callback_(wrap_catalog_update<DirectoryMetadata>(
-          [this](const DirectoryMetadata& metadata) {
+      directory_update_callback_(
+          wrap_catalog_update<DirectoryMetadata>([this](const DirectoryMetadata& metadata) {
             return catalog_.update_directory(metadata);
           })) {}
 
-::folio::core::Result<InitializationOutcome, CoordinatorError>
-CatalogCoordinator::startup_load() {
+::folio::core::Result<InitializationOutcome, CoordinatorError> CatalogCoordinator::startup_load() {
   if (load_attempted_)
     return error(CoordinatorErrorCode::Lifecycle, {}, "Startup load already attempted");
   load_attempted_ = true;
@@ -218,7 +223,7 @@ CatalogCoordinator::startup_load() {
     auto rebuilt = rebuild();
     if (auto* problem = std::get_if<CoordinatorError>(&rebuilt)) return *problem;
     return InitializationOutcome{std::nullopt,
-        std::get<std::vector<ExcludedObject>>(std::move(rebuilt)), true};
+                                 std::get<std::vector<ExcludedObject>>(std::move(rebuilt)), true};
   }
   // Keep cache-read errors distinct so only unusable caches trigger a rebuild.
   auto load_index = [&]() -> ::folio::core::Result<std::monostate, CoordinatorError> {
@@ -249,13 +254,13 @@ CatalogCoordinator::startup_load() {
   auto loaded = load_index();
   if (const auto* problem = std::get_if<CoordinatorError>(&loaded)) {
     switch (problem->code) {
-      case CoordinatorErrorCode::Missing:
-      case CoordinatorErrorCode::Corrupt:
-      case CoordinatorErrorCode::UnsupportedVersion:
-      case CoordinatorErrorCode::LimitExceeded:
-        break;
-      default:
-        return *problem;
+    case CoordinatorErrorCode::Missing:
+    case CoordinatorErrorCode::Corrupt:
+    case CoordinatorErrorCode::UnsupportedVersion:
+    case CoordinatorErrorCode::LimitExceeded:
+      break;
+    default:
+      return *problem;
     }
     CoordinatorError index_error = *problem;
     auto rebuilt = rebuild();
@@ -266,8 +271,7 @@ CatalogCoordinator::startup_load() {
   return InitializationOutcome{};
 }
 
-::folio::core::Result<std::vector<ExcludedObject>, CoordinatorError>
-CatalogCoordinator::rebuild() {
+::folio::core::Result<std::vector<ExcludedObject>, CoordinatorError> CatalogCoordinator::rebuild() {
   auto paths = validate_storage_paths(paths_);
   if (auto* problem = std::get_if<StorageError>(&paths)) return storage_error(*problem);
   if (auto* problem = std::get_if<io::FileError>(&paths)) return storage_error(*problem);
@@ -280,12 +284,13 @@ CatalogCoordinator::rebuild() {
   auto to_vector = []<class T>(std::deque<T>& records) {
     std::vector<T> result;
     result.reserve(records.size());
-    for (auto& record : records) result.push_back(std::move(record));
+    for (auto& record : records)
+      result.push_back(std::move(record));
     return result;
   };
   MetadataCatalog candidate;
   auto adopted = candidate.rebuild(to_vector(inventory.logs), to_vector(inventory.memos),
-                                  to_vector(inventory.todos), to_vector(inventory.directories));
+                                   to_vector(inventory.todos), to_vector(inventory.directories));
   if (auto* problem = std::get_if<StorageError>(&adopted)) return storage_error(*problem);
   if (!session_active_) {
     auto marker_ready = establish_marker();
@@ -336,15 +341,14 @@ CatalogCoordinator::refresh_all() {
   auto found = file_ready(path.file);
   if (auto* problem = std::get_if<CoordinatorError>(&found)) return *problem;
   const auto& bytes = std::get<std::string>(encoded);
-  auto written = std::get<bool>(found)
-      ? io::replace_file_atomic(path.file, bytes) : io::create_file_atomic(path.file, bytes);
+  auto written = std::get<bool>(found) ? io::replace_file_atomic(path.file, bytes)
+                                       : io::create_file_atomic(path.file, bytes);
   if (auto* problem = std::get_if<io::FileError>(&written)) return storage_error(*problem);
   catalog_.mark_persisted();
   return SaveOutcome::Saved;
 }
 
-::folio::core::Result<SaveOutcome, CoordinatorError>
-CatalogCoordinator::finish_session() {
+::folio::core::Result<SaveOutcome, CoordinatorError> CatalogCoordinator::finish_session() {
   // No once-only guard on saving: explicit retries remain possible.
   ::folio::core::Result<SaveOutcome, CoordinatorError> saved = SaveOutcome::SkippedPersisted;
   if (!marker_cleanup_pending_) saved = shutdown_save();
@@ -385,9 +389,11 @@ CatalogCoordinator::finish_session() {
   return std::get<SaveOutcome>(saved);
 }
 
-CatalogStatus CatalogCoordinator::status() const noexcept { return status_; }
+CatalogStatus CatalogCoordinator::status() const noexcept {
+  return status_;
+}
 void CatalogCoordinator::mark_needs_refresh() noexcept {
   if (status_ == CatalogStatus::Ready) status_ = CatalogStatus::Inconsistent;
 }
 
-}  // namespace folio::core::storage
+} // namespace folio::core::storage

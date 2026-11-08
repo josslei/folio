@@ -16,4 +16,4 @@ std::string MutationId::to_string() const {
   return value_.to_string();
 }
 
-}  // namespace folio::application
+} // namespace folio::application

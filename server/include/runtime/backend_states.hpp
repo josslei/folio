@@ -25,7 +25,9 @@ namespace storage = core::storage;
 // these errors as text. No public output or IPC contract is implied.
 struct BackendDiagnostic {
   BackendStateMachine::State phase;
-  std::variant<folio::config::ConfigurationError, ProcessError, IpcError, storage::CoordinatorError, std::exception_ptr> error;
+  std::variant<folio::config::ConfigurationError, ProcessError, IpcError, storage::CoordinatorError,
+               std::exception_ptr>
+      error;
   std::chrono::steady_clock::time_point occurred_at = std::chrono::steady_clock::now();
 };
 
@@ -51,7 +53,7 @@ struct BackendContext {
 };
 
 void retain_backend_notification_failures(BackendContext& context,
-                                         const BackendStateMachine& machine);
+                                          const BackendStateMachine& machine);
 BackendActionOutcome Bootstrap(BackendContext& context);
 BackendActionOutcome Serve(BackendContext& context);
 BackendActionOutcome Stopping(BackendContext& context);
@@ -64,4 +66,4 @@ int run_backend(std::optional<config::StoragePaths> startup_paths);
 // Registered once; the context must outlive the resulting handlers.
 BackendStateMachine::Handlers register_backend_states(BackendContext& context);
 
-}  // namespace folio::application::internal
+} // namespace folio::application::internal

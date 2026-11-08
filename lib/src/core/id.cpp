@@ -27,8 +27,7 @@ bool is_canonical_uuid_string(std::string_view text) {
       if (text[i] != '-') {
         return false;
       }
-    } else if (!((text[i] >= '0' && text[i] <= '9') ||
-                 (text[i] >= 'a' && text[i] <= 'f') ||
+    } else if (!((text[i] >= '0' && text[i] <= '9') || (text[i] >= 'a' && text[i] <= 'f') ||
                  (text[i] >= 'A' && text[i] <= 'F'))) {
       return false;
     }
@@ -36,7 +35,7 @@ bool is_canonical_uuid_string(std::string_view text) {
   return true;
 }
 
-}  // namespace
+} // namespace
 
 Id Id::generate() {
   ensure_sodium_initialized();
@@ -65,4 +64,4 @@ std::string Id::to_string() const {
   return uuids::to_string(uuids::uuid(bytes_));
 }
 
-}  // namespace folio::core
+} // namespace folio::core

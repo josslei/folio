@@ -5,7 +5,9 @@ namespace folio::application::internal {
 RequestScheduler::RequestScheduler(std::size_t capacity)
     : capacity_(capacity), executor_([this] { execute(); }) {}
 
-RequestScheduler::~RequestScheduler() { drain(); }
+RequestScheduler::~RequestScheduler() {
+  drain();
+}
 
 std::shared_ptr<RequestScheduler::Ticket> RequestScheduler::admit(Action action) {
   auto ticket = std::make_shared<Ticket>();
@@ -70,4 +72,4 @@ void RequestScheduler::execute() {
   }
 }
 
-}  // namespace folio::application::internal
+} // namespace folio::application::internal

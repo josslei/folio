@@ -30,15 +30,23 @@ using DirectoryMetadata = Located<core::DirectoryMetadata>;
 using RecordMetadata = std::variant<LogMetadata, MemoMetadata, TodoMetadata>;
 [[nodiscard]] RecordType record_type(const RecordMetadata& metadata) noexcept;
 
-template <class T>
-struct InclusiveRange {
+template <class T> struct InclusiveRange {
   std::optional<T> from;
   std::optional<T> through;
 };
 
 enum class DueKind { Date, Datetime };
 enum class MetadataSort {
-  Id, Type, Created, Modified, Title, LogDate, DueDate, Status, Priority, Privacy
+  Id,
+  Type,
+  Created,
+  Modified,
+  Title,
+  LogDate,
+  DueDate,
+  Status,
+  Priority,
+  Privacy
 };
 
 // Filters only Record metadata; Directory listing remains a separate operation.
@@ -73,18 +81,20 @@ struct RootListing {
 };
 
 [[nodiscard]] RecordMetadata metadata_from(const Log::Snapshot& snapshot,
-                                          std::filesystem::path relative_path);
+                                           std::filesystem::path relative_path);
 [[nodiscard]] RecordMetadata metadata_from(const Memo::Snapshot& snapshot,
-                                          std::filesystem::path relative_path);
+                                           std::filesystem::path relative_path);
 [[nodiscard]] RecordMetadata metadata_from(const Todo::Snapshot& snapshot,
-                                          std::filesystem::path relative_path);
+                                           std::filesystem::path relative_path);
 [[nodiscard]] DirectoryMetadata metadata_from(const Directory::Snapshot& snapshot,
                                               std::filesystem::path relative_path);
 
 // Reuse Catalog field validation before authoritative publication. These checks
 // perform no I/O and do not insert/update metadata or validate live membership.
-[[nodiscard]] core::Result<std::monostate, StorageError> validate_metadata(const RecordMetadata& metadata);
-[[nodiscard]] core::Result<std::monostate, StorageError> validate_metadata(const DirectoryMetadata& metadata);
+[[nodiscard]] core::Result<std::monostate, StorageError>
+validate_metadata(const RecordMetadata& metadata);
+[[nodiscard]] core::Result<std::monostate, StorageError>
+validate_metadata(const DirectoryMetadata& metadata);
 
 // Compare existing projected fields/locators without reading authoritative data.
 [[nodiscard]] bool metadata_matches(const RecordMetadata& left, const RecordMetadata& right);
@@ -94,29 +104,31 @@ struct RootListing {
 // repository. Lookups return copies, so callers cannot mutate catalog state
 // indirectly. UUID lookup and Directory membership listing use ordered IDs.
 class MetadataCatalog {
- public:
-  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError> insert_record(RecordMetadata metadata);
+public:
+  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError>
+  insert_record(RecordMetadata metadata);
   // Identical updates are successful no-ops and preserve unpersisted state.
-  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError> update_record(RecordMetadata metadata);
+  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError>
+  update_record(RecordMetadata metadata);
   [[nodiscard]] ::folio::core::Result<std::monostate, StorageError> remove_record(const Id& id);
-  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError> insert_directory(DirectoryMetadata metadata);
-  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError> update_directory(DirectoryMetadata metadata);
+  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError>
+  insert_directory(DirectoryMetadata metadata);
+  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError>
+  update_directory(DirectoryMetadata metadata);
   [[nodiscard]] ::folio::core::Result<std::monostate, StorageError> remove_directory(const Id& id);
   // Validates a complete candidate in isolation, then adopts it atomically.
   // A successful replacement is unpersisted even if all vectors are empty.
-  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError> rebuild(
-      std::vector<LogMetadata> logs,
-      std::vector<MemoMetadata> memos,
-      std::vector<TodoMetadata> todos,
-      std::vector<DirectoryMetadata> directories);
+  [[nodiscard]] ::folio::core::Result<std::monostate, StorageError>
+  rebuild(std::vector<LogMetadata> logs, std::vector<MemoMetadata> memos,
+          std::vector<TodoMetadata> todos, std::vector<DirectoryMetadata> directories);
 
   // UUID membership across all four Entry types, without copying metadata.
   [[nodiscard]] bool contains_entry(const Id& id) const;
   [[nodiscard]] std::optional<RecordMetadata> find_record(const Id& id) const;
   [[nodiscard]] std::optional<DirectoryMetadata> find_directory(const Id& id) const;
   [[nodiscard]] RootListing list_root(RecordType module) const;
-  [[nodiscard]] ::folio::core::Result<std::vector<RecordMetadata>, StorageError> list_directory(
-      DirectoryKind kind, const Id& id) const;
+  [[nodiscard]] ::folio::core::Result<std::vector<RecordMetadata>, StorageError>
+  list_directory(DirectoryKind kind, const Id& id) const;
   [[nodiscard]] std::vector<DirectoryMetadata> list_directories(DirectoryKind kind) const;
   [[nodiscard]] std::vector<RecordMetadata> query(const RecordQuery& query = {}) const;
   // Changes since the last acknowledged Index snapshot; unrelated to readiness
@@ -124,12 +136,11 @@ class MetadataCatalog {
   [[nodiscard]] bool unpersisted() const noexcept;
   void mark_persisted() noexcept;
 
- private:
+private:
   [[nodiscard]] bool record_path_occupied(const std::filesystem::path& path,
-                                         std::optional<Id> except = std::nullopt) const;
+                                          std::optional<Id> except = std::nullopt) const;
   [[nodiscard]] bool directory_referenced(const DirectoryMetadata& directory) const;
-  [[nodiscard]] std::set<std::string>& members_for(RecordType type,
-                                                  std::optional<Id> directory_id);
+  [[nodiscard]] std::set<std::string>& members_for(RecordType type, std::optional<Id> directory_id);
 
   std::map<std::string, LogMetadata> logs_;
   std::map<std::string, MemoMetadata> memos_;
@@ -142,4 +153,4 @@ class MetadataCatalog {
   bool unpersisted_ = false;
 };
 
-}  // namespace folio::core::storage
+} // namespace folio::core::storage

@@ -16,12 +16,12 @@ enum class TodoPriority { None, Low, Medium, High };
 using DueDate = std::variant<DateContext, TimestampContext>;
 
 struct Subtask {
-  std::string content;  // UTF-8.
+  std::string content; // UTF-8.
   bool completed = false;
 };
 
 class Todo {
- public:
+public:
   struct Snapshot {
     Id id;
     TimestampContext created;
@@ -62,13 +62,11 @@ class Todo {
   void set_directory_id(std::optional<Id> directory_id, TimestampContext modified);
 
   void add_subtask(std::string content, TimestampContext modified);
-  void set_subtask_content(std::size_t index, std::string content,
-                           TimestampContext modified);
-  void set_subtask_completed(std::size_t index, bool completed,
-                             TimestampContext modified);
+  void set_subtask_content(std::size_t index, std::string content, TimestampContext modified);
+  void set_subtask_completed(std::size_t index, bool completed, TimestampContext modified);
   void remove_subtask(std::size_t index, TimestampContext modified);
 
- private:
+private:
   explicit Todo(const Snapshot& snapshot);
 
   const Id id_;
@@ -84,4 +82,4 @@ class Todo {
   std::vector<Subtask> subtasks_;
 };
 
-}  // namespace folio::core
+} // namespace folio::core

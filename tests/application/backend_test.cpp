@@ -36,12 +36,10 @@ std::string read(const fs::path& p) {
   return {std::istreambuf_iterator<char>(in), {}};
 }
 
-template <class F>
-bool until(F predicate, std::chrono::seconds timeout = 8s) {
+template <class F> bool until(F predicate, std::chrono::seconds timeout = 8s) {
   auto deadline = std::chrono::steady_clock::now() + timeout;
   do {
-    if (predicate())
-      return true;
+    if (predicate()) return true;
     std::this_thread::sleep_for(5ms);
   } while (std::chrono::steady_clock::now() < deadline);
   return false;
@@ -51,8 +49,7 @@ void terminate(std::uint64_t id) {
 #ifndef _WIN32
   kill(static_cast<pid_t>(id), SIGKILL);
 #else
-  auto handle =
-      OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, static_cast<DWORD>(id));
+  auto handle = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, static_cast<DWORD>(id));
   if (handle) {
     TerminateProcess(handle, 9);
     WaitForSingleObject(handle, 5000);
@@ -62,7 +59,7 @@ void terminate(std::uint64_t id) {
 }
 
 class Backend : public testing::Test {
- protected:
+protected:
   fs::path base;
   storage::StoragePaths paths;
 
@@ -100,11 +97,10 @@ class Backend : public testing::Test {
     fs::remove_all(base, ignored);
   }
 
-  auto launch()
-      -> folio::core::Result<folio::application::LaunchedProcess, folio::application::ProcessError> {
+  auto launch() -> folio::core::Result<folio::application::LaunchedProcess,
+                                       folio::application::ProcessError> {
     auto result_path = base / ("result-" + std::to_string(children.size()));
-    auto result =
-        app::launch_process(FOLIO_BACKEND_CHILD, {"backend", base, result_path});
+    auto result = app::launch_process(FOLIO_BACKEND_CHILD, {"backend", base, result_path});
     if (auto* process = std::get_if<folio::application::LaunchedProcess>(&result))
       children.push_back({process->id, result_path});
     return result;
@@ -114,28 +110,21 @@ class Backend : public testing::Test {
     auto result = folio::application::connect_or_start_backend(
         std::get<app::ConnectionSettings>(app::connection_settings(paths)),
         [&] { return launch(); }, 8s);
-    if (auto* error = std::get_if<app::IpcError>(&result))
-      throw std::runtime_error(error->message);
+    if (auto* error = std::get_if<app::IpcError>(&result)) throw std::runtime_error(error->message);
     return std::get<folio::application::BackendConnectionHandle>(std::move(result));
   }
 
-  fs::path marker() {
-    return paths.application.state / "session.marker";
-  }
+  fs::path marker() { return paths.application.state / "session.marker"; }
 
-  fs::path index() {
-    return paths.application.cache / "index/normal.msgpack";
-  }
+  fs::path index() { return paths.application.cache / "index/normal.msgpack"; }
 
   void clean_cache() {
     auto owner = app::RepositoryOwnership::acquire(paths);
     ASSERT_TRUE(std::holds_alternative<app::RepositoryOwnership>(owner));
     storage::MetadataCatalog catalog;
     storage::CatalogCoordinator coordinator(paths, catalog);
-    ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(
-        coordinator.startup_load()));
-    ASSERT_TRUE(
-        std::holds_alternative<storage::SaveOutcome>(coordinator.finish_session()));
+    ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
+    ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.finish_session()));
   }
 };
 
@@ -183,7 +172,8 @@ TEST_F(Backend, IndependentFrontendAndBackendProcessesHaveSeparateSessionLogs) {
   fs::create_directory(control);
   auto launched = app::launch_process(FOLIO_BACKEND_CHILD, {"frontend", base, control});
   ASSERT_TRUE(std::holds_alternative<folio::application::LaunchedProcess>(launched));
-  children.push_back({std::get<folio::application::LaunchedProcess>(launched).id, control / "done"});
+  children.push_back(
+      {std::get<folio::application::LaunchedProcess>(launched).id, control / "done"});
   ASSERT_TRUE(until([&] { return fs::exists(control / "connected"); }));
   write(control / "disconnect");
   ASSERT_TRUE(until([&] { return fs::exists(control / "done"); }));
@@ -203,17 +193,20 @@ TEST_F(Backend, IndependentFrontendAndBackendProcessesHaveSeparateSessionLogs) {
 TEST_F(Backend, NewFrontendConfigurationDoesNotReconfigureActiveBackend) {
   fs::create_directory(paths.application.config);
   const auto file = paths.application.config / "folio_config.toml";
-  write(file, "[general.normal_storage]\nuse_default_location = false\npath = '" + paths.normal_root.generic_string() +
-                  "'\n[general.vault_storage]\nuse_default_location = false\npath = '" + paths.vault_root.generic_string() + "'\n");
+  write(file, "[general.normal_storage]\nuse_default_location = false\npath = '" +
+                  paths.normal_root.generic_string() +
+                  "'\n[general.vault_storage]\nuse_default_location = false\npath = '" +
+                  paths.vault_root.generic_string() + "'\n");
   {
     auto first = connect();
     const auto changed_root = base / "changed-normal";
-    write(file, "[general.normal_storage]\nuse_default_location = false\npath = '" + changed_root.generic_string() + "'\n");
+    write(file, "[general.normal_storage]\nuse_default_location = false\npath = '" +
+                    changed_root.generic_string() + "'\n");
     auto settings = folio::config::load_configuration(paths.application, file);
     ASSERT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(settings));
     auto second = folio::application::connect_or_start_backend(
-        std::get<app::ConnectionSettings>(app::connection_settings(
-            std::get<folio::config::EffectiveConfig>(settings).paths)),
+        std::get<app::ConnectionSettings>(
+            app::connection_settings(std::get<folio::config::EffectiveConfig>(settings).paths)),
         [&] { return launch(); }, 8s);
     ASSERT_TRUE(std::holds_alternative<folio::application::BackendConnectionHandle>(second));
     EXPECT_TRUE(std::holds_alternative<std::monostate>(
@@ -298,8 +291,7 @@ TEST_F(Backend, CrashReleasesOwnershipAndRestartRebuildsDespiteValidStaleIndex) 
   storage::NormalRepository repo(paths.normal_root);
   folio::core::Memo memo("after crash", "",
                          {std::chrono::system_clock::now(), "UTC", std::nullopt});
-  ASSERT_TRUE(
-      std::holds_alternative<std::monostate>(repo.create_memo(memo.snapshot())));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repo.create_memo(memo.snapshot())));
   {
     auto restarted = connect();
     EXPECT_TRUE(std::holds_alternative<std::monostate>(restarted.ping()));
@@ -317,8 +309,8 @@ TEST_F(Backend, StartupFailureNeverSendsReadyAndRetainsPreviousMarker) {
   fs::create_directories(paths.normal_root / "memos");
   write(paths.normal_root / "memos/broken.md", "invalid");
   auto result = folio::application::connect_or_start_backend(
-      std::get<app::ConnectionSettings>(app::connection_settings(paths)),
-      [&] { return launch(); }, 5s);
+      std::get<app::ConnectionSettings>(app::connection_settings(paths)), [&] { return launch(); },
+      5s);
   ASSERT_TRUE(std::holds_alternative<app::IpcError>(result));
   EXPECT_NE(std::get<app::IpcError>(result).message.find("initialization failed"),
             std::string::npos);
@@ -340,8 +332,8 @@ TEST_F(Backend, InvalidFramesRejectedWithoutTerminatingOtherClient) {
   auto keeper = connect();
   auto endpoint = std::get<app::ConnectionSettings>(app::connection_settings(paths)).endpoint;
   for (const auto& bytes :
-       {app::encode_message({app::MessageKind::Hello, {}, 2}),
-        std::string("\x04\x00\x00\x01", 4), std::string("\0\0\0\1", 4),
+       {app::encode_message({app::MessageKind::Hello, {}, 2}), std::string("\x04\x00\x00\x01", 4),
+        std::string("\0\0\0\1", 4),
         app::encode_message(
             {app::MessageKind::Hello, app::payload_bytes("unexpected handshake payload")})}) {
     auto connected = app::IpcStream::connect(endpoint);
@@ -353,10 +345,8 @@ TEST_F(Backend, InvalidFramesRejectedWithoutTerminatingOtherClient) {
     ASSERT_TRUE(until([&] {
       std::array<std::byte, 1024> buffer{};
       auto result = stream.read(buffer);
-      if (std::holds_alternative<app::IpcError>(result))
-        return true;
-      incoming +=
-          app::payload_text(std::span(buffer).first(std::get<std::size_t>(result)));
+      if (std::holds_alternative<app::IpcError>(result)) return true;
+      incoming += app::payload_text(std::span(buffer).first(std::get<std::size_t>(result)));
       return incoming.size() >= 8;
     }));
     EXPECT_TRUE(std::holds_alternative<std::monostate>(keeper.ping()));
@@ -414,13 +404,17 @@ TEST_F(Backend, UnsafeRuntimePermissionsAreNotSilentlyAccepted) {
 TEST_F(Backend, ConfigurationAcceptsOverridesAndCreatesNothing) {
   fs::create_directory(paths.application.config);
   auto config = paths.application.config / "folio_config.toml";
-  write(config, "[general.normal_storage]\nuse_default_location = false\npath = '" + paths.normal_root.generic_string() +
-                    "'\n[general.vault_storage]\nuse_default_location = false\npath = '" + paths.vault_root.generic_string() + "'\n");
+  write(config, "[general.normal_storage]\nuse_default_location = false\npath = '" +
+                    paths.normal_root.generic_string() +
+                    "'\n[general.vault_storage]\nuse_default_location = false\npath = '" +
+                    paths.vault_root.generic_string() + "'\n");
   auto result = folio::config::load_configuration(paths.application, config);
   ASSERT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(result));
   EXPECT_FALSE(fs::exists(paths.normal_root));
   EXPECT_FALSE(fs::exists(paths.application.state));
-  write(config, "[general.normal_storage]\nuse_default_location = false\npath = 'relative'\n[general.vault_storage]\nuse_default_location = false\npath = 'relative2'\n");
+  write(config,
+        "[general.normal_storage]\nuse_default_location = false\npath = "
+        "'relative'\n[general.vault_storage]\nuse_default_location = false\npath = 'relative2'\n");
   EXPECT_TRUE(std::holds_alternative<folio::config::ConfigurationError>(
       folio::config::load_configuration(paths.application, config)));
   EXPECT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(
@@ -452,4 +446,4 @@ TEST(IpcProtocol, PartialFramesAndBounds) {
   bytes = std::string("\xff\xff\xff\xff", 4);
   EXPECT_TRUE(std::holds_alternative<app::IpcError>(app::decode_message(bytes)));
 }
-}  // namespace
+} // namespace

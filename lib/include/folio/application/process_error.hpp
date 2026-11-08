@@ -5,12 +5,7 @@
 
 namespace folio::application {
 
-enum class ProcessErrorCode {
-  InvalidArgument,
-  IoError,
-  AlreadyOwned,
-  LaunchFailed
-};
+enum class ProcessErrorCode { InvalidArgument, IoError, AlreadyOwned, LaunchFailed };
 
 struct ProcessError {
   ProcessErrorCode code;
@@ -18,4 +13,4 @@ struct ProcessError {
   std::error_code system_error;
 };
 
-}  // namespace folio::application
+} // namespace folio::application

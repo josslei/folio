@@ -31,4 +31,4 @@ bool contains_path(const fs::path& parent, const fs::path& child) {
 bool overlaps(const fs::path& a, const fs::path& b) {
   return contains_path(a, b) || contains_path(b, a);
 }
-}
+} // namespace folio::io

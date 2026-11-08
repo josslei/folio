@@ -21,6 +21,7 @@ or run the same command directly from the repository root:
 
 ```sh
 python3 scripts/validate.py
+python3 scripts/validate.py --fix
 python3 scripts/validate.py --checks whitespace docs
 python3 scripts/validate.py --resource-limits
 ```
@@ -35,7 +36,11 @@ and configuration. Do not run multiple validations against the same build tree.
 runs its tests with `--parallel 1`. Tests fail if no matching tests are registered.
 Configuration/build failure blocks dependent tests.
 
-The command does not format source, apply tidy fixes or modify Git. It writes
+By default the command does not modify source. Explicit `$validate-fix` or
+`--fix` formats all first-party C++ files before running the selected checks;
+review the diff afterward. This can change pre-existing formatting, including
+files with local edits. It never stages changes or applies clang-tidy fixes.
+Analyzer findings still require investigation. Neither mode modifies Git. It writes
 per-command output and a JSON summary under ignored `build/validation/<UTC-time>/`.
 Any failed or blocked requested check returns a nonzero exit status. Whitespace
 checks cover Git diffs, not untracked file content. Documentation-only work still

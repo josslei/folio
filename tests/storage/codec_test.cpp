@@ -18,13 +18,11 @@ namespace {
 using namespace folio::core;
 namespace codec = folio::core::storage::codec;
 
-template <typename T>
-const T& value_of(const ::folio::core::Result<T, codec::CodecError>& result) {
+template <typename T> const T& value_of(const ::folio::core::Result<T, codec::CodecError>& result) {
   return std::get<T>(result);
 }
 
-template <typename T>
-bool is_error(const ::folio::core::Result<T, codec::CodecError>& result) {
+template <typename T> bool is_error(const ::folio::core::Result<T, codec::CodecError>& result) {
   return std::holds_alternative<codec::CodecError>(result);
 }
 
@@ -33,19 +31,16 @@ Id sample_id() {
 }
 
 TimestampContext sample_timestamp_context(std::optional<std::string> location) {
-  return {Timestamp{std::chrono::milliseconds{123456789}}, "Asia/Shanghai",
-          std::move(location)};
+  return {Timestamp{std::chrono::milliseconds{123456789}}, "Asia/Shanghai", std::move(location)};
 }
 
-void expect_timestamp_context_eq(const TimestampContext& actual,
-                                 const TimestampContext& expected) {
+void expect_timestamp_context_eq(const TimestampContext& actual, const TimestampContext& expected) {
   EXPECT_EQ(actual.timestamp, expected.timestamp);
   EXPECT_EQ(actual.timezone, expected.timezone);
   EXPECT_EQ(actual.location, expected.location);
 }
 
-void expect_date_context_eq(const DateContext& actual,
-                            const DateContext& expected) {
+void expect_date_context_eq(const DateContext& actual, const DateContext& expected) {
   EXPECT_EQ(actual.date, expected.date);
   EXPECT_EQ(actual.timezone, expected.timezone);
   EXPECT_EQ(actual.location, expected.location);
@@ -59,16 +54,14 @@ void expect_due_date_eq(const std::optional<DueDate>& actual,
   }
   ASSERT_EQ(actual->index(), expected->index());
   if (std::holds_alternative<DateContext>(*expected)) {
-    expect_date_context_eq(std::get<DateContext>(*actual),
-                           std::get<DateContext>(*expected));
+    expect_date_context_eq(std::get<DateContext>(*actual), std::get<DateContext>(*expected));
   } else {
     expect_timestamp_context_eq(std::get<TimestampContext>(*actual),
                                 std::get<TimestampContext>(*expected));
   }
 }
 
-void expect_subtasks_eq(const std::vector<Subtask>& actual,
-                        const std::vector<Subtask>& expected) {
+void expect_subtasks_eq(const std::vector<Subtask>& actual, const std::vector<Subtask>& expected) {
   ASSERT_EQ(actual.size(), expected.size());
   for (std::size_t index = 0; index < actual.size(); ++index) {
     EXPECT_EQ(actual[index].content, expected[index].content);
@@ -87,8 +80,7 @@ TEST(CoreCodecScalarTest, RoundTripsIdTagAndPrivacy) {
   ASSERT_FALSE(is_error(parsed_tag));
   EXPECT_EQ(value_of(parsed_tag), tag);
 
-  for (const auto privacy : {Privacy::Normal, Privacy::Protected,
-                             Privacy::Hidden}) {
+  for (const auto privacy : {Privacy::Normal, Privacy::Protected, Privacy::Hidden}) {
     const auto parsed = codec::privacy_from_toml(codec::to_toml(privacy));
     ASSERT_FALSE(is_error(parsed));
     EXPECT_EQ(value_of(parsed), privacy);
@@ -96,20 +88,17 @@ TEST(CoreCodecScalarTest, RoundTripsIdTagAndPrivacy) {
 }
 
 TEST(CoreCodecContextTest, RoundTripsContextsWithAndWithoutLocation) {
-  const TimestampContext with_location =
-      sample_timestamp_context(std::string("Shanghai"));
-  const auto parsed_timestamp = codec::timestamp_context_from_toml(
-      codec::to_toml(with_location));
+  const TimestampContext with_location = sample_timestamp_context(std::string("Shanghai"));
+  const auto parsed_timestamp = codec::timestamp_context_from_toml(codec::to_toml(with_location));
   ASSERT_FALSE(is_error(parsed_timestamp));
   expect_timestamp_context_eq(value_of(parsed_timestamp), with_location);
   EXPECT_TRUE(codec::to_toml(with_location).contains("location"));
 
   const TimestampContext without_location = sample_timestamp_context(std::nullopt);
-  const auto parsed_without_location = codec::timestamp_context_from_toml(
-      codec::to_toml(without_location));
+  const auto parsed_without_location =
+      codec::timestamp_context_from_toml(codec::to_toml(without_location));
   ASSERT_FALSE(is_error(parsed_without_location));
-  expect_timestamp_context_eq(value_of(parsed_without_location),
-                               without_location);
+  expect_timestamp_context_eq(value_of(parsed_without_location), without_location);
   EXPECT_FALSE(codec::to_toml(without_location).contains("location"));
 
   const DateContext date{{std::chrono::year{2025} / 3 / 4}, "UTC", std::nullopt};
@@ -120,19 +109,18 @@ TEST(CoreCodecContextTest, RoundTripsContextsWithAndWithoutLocation) {
 }
 
 TEST(CoreCodecContextTest, PreservesSubsecondTimestampPrecision) {
-  const TimestampContext original{Timestamp{std::chrono::duration_cast<Timestamp::duration>(
-                                      std::chrono::microseconds{987654})},
-                                 "UTC", std::nullopt};
-  const auto decoded =
-      codec::timestamp_context_from_toml(codec::to_toml(original));
+  const TimestampContext original{
+      Timestamp{std::chrono::duration_cast<Timestamp::duration>(std::chrono::microseconds{987654})},
+      "UTC", std::nullopt};
+  const auto decoded = codec::timestamp_context_from_toml(codec::to_toml(original));
 
   ASSERT_FALSE(is_error(decoded));
   expect_timestamp_context_eq(value_of(decoded), original);
 }
 
 TEST(CoreCodecContextTest, RoundTripsBothDueDateAlternatives) {
-  const DueDate date_only = DateContext{{std::chrono::year{2026} / 10 / 25},
-                                        "Asia/Tokyo", std::string("Tokyo")};
+  const DueDate date_only =
+      DateContext{{std::chrono::year{2026} / 10 / 25}, "Asia/Tokyo", std::string("Tokyo")};
   const auto parsed_date = codec::due_date_from_toml(codec::to_toml(date_only));
   ASSERT_FALSE(is_error(parsed_date));
   ASSERT_TRUE(std::holds_alternative<DateContext>(value_of(parsed_date)));
@@ -142,8 +130,7 @@ TEST(CoreCodecContextTest, RoundTripsBothDueDateAlternatives) {
             std::optional<std::string>{"Date"});
 
   const DueDate date_time = sample_timestamp_context(std::nullopt);
-  const auto parsed_date_time =
-      codec::due_date_from_toml(codec::to_toml(date_time));
+  const auto parsed_date_time = codec::due_date_from_toml(codec::to_toml(date_time));
   ASSERT_FALSE(is_error(parsed_date_time));
   ASSERT_TRUE(std::holds_alternative<TimestampContext>(value_of(parsed_date_time)));
   expect_timestamp_context_eq(std::get<TimestampContext>(value_of(parsed_date_time)),
@@ -161,16 +148,11 @@ TEST(CoreCodecSnapshotTest, RoundTripsDefaultTodoAndOmittedOptionals) {
   EXPECT_FALSE(table.contains("directory_id"));
   EXPECT_FALSE(table.contains("subtasks"));
   EXPECT_FALSE(table.contains("description"));
-  EXPECT_EQ(table.get("title")->value<std::string>(),
-            std::optional<std::string>{"Default task"});
-  EXPECT_EQ(table.get("notes")->value<std::string>(),
-            std::optional<std::string>{""});
-  EXPECT_EQ(table.get("status")->value<std::string>(),
-            std::optional<std::string>{"Pending"});
-  EXPECT_EQ(table.get("priority")->value<std::string>(),
-            std::optional<std::string>{"None"});
-  EXPECT_EQ(table.get("privacy")->value<std::string>(),
-            std::optional<std::string>{"Normal"});
+  EXPECT_EQ(table.get("title")->value<std::string>(), std::optional<std::string>{"Default task"});
+  EXPECT_EQ(table.get("notes")->value<std::string>(), std::optional<std::string>{""});
+  EXPECT_EQ(table.get("status")->value<std::string>(), std::optional<std::string>{"Pending"});
+  EXPECT_EQ(table.get("priority")->value<std::string>(), std::optional<std::string>{"None"});
+  EXPECT_EQ(table.get("privacy")->value<std::string>(), std::optional<std::string>{"Normal"});
 
   const auto decoded = codec::todo_snapshot_from_toml(table);
   ASSERT_FALSE(is_error(decoded));
@@ -192,10 +174,8 @@ TEST(CoreCodecSnapshotTest, RoundTripsDefaultTodoAndOmittedOptionals) {
 TEST(CoreCodecSnapshotTest, PreservesEmptyTodoTitleAndNotesWithoutLegacyDescription) {
   const Todo original("", "", sample_timestamp_context(std::nullopt));
   const auto table = codec::to_toml(original.snapshot());
-  EXPECT_EQ(table.get("title")->value<std::string>(),
-            std::optional<std::string>{""});
-  EXPECT_EQ(table.get("notes")->value<std::string>(),
-            std::optional<std::string>{""});
+  EXPECT_EQ(table.get("title")->value<std::string>(), std::optional<std::string>{""});
+  EXPECT_EQ(table.get("notes")->value<std::string>(), std::optional<std::string>{""});
   EXPECT_FALSE(table.contains("description"));
   const auto decoded = codec::todo_snapshot_from_toml(table);
   ASSERT_FALSE(is_error(decoded));
@@ -211,21 +191,18 @@ TEST(CoreCodecSnapshotTest, PreservesEmptyTodoTitleAndNotesWithoutLegacyDescript
   legacy.insert("description", "Old field");
   const auto rejected = codec::todo_snapshot_from_toml(legacy);
   ASSERT_TRUE(is_error(rejected));
-  EXPECT_EQ(std::get<codec::CodecError>(rejected).code,
-            codec::CodecErrorCode::MissingField);
+  EXPECT_EQ(std::get<codec::CodecError>(rejected).code, codec::CodecErrorCode::MissingField);
 }
 
 TEST(CoreCodecSnapshotTest, RoundTripsFullTodoAndSerializedText) {
   Todo original("Plan trip", "First line\n旅行\nCafé",
-                sample_timestamp_context(std::string("Osaka")),
-                Privacy::Protected);
+                sample_timestamp_context(std::string("Osaka")), Privacy::Protected);
   const auto modified = sample_timestamp_context(std::string("Kyoto"));
   original.set_status(TodoStatus::Completed, modified);
   original.set_priority(TodoPriority::High, modified);
-  original.set_due_date(
-      DueDate{TimestampContext{Timestamp{std::chrono::seconds{1900000000}},
-                               "Asia/Tokyo", std::nullopt}},
-      modified);
+  original.set_due_date(DueDate{TimestampContext{Timestamp{std::chrono::seconds{1900000000}},
+                                                 "Asia/Tokyo", std::nullopt}},
+                        modified);
   original.set_directory_id(sample_id(), modified);
   original.add_subtask("First", modified);
   original.add_subtask("\xE7\xAC\xAC\xE4\xBA\x8C", modified);
@@ -233,14 +210,12 @@ TEST(CoreCodecSnapshotTest, RoundTripsFullTodoAndSerializedText) {
 
   const auto snapshot = original.snapshot();
   const auto document = codec::to_toml(snapshot);
-  EXPECT_EQ(document.get("title")->value<std::string>(),
-            std::optional<std::string>{"Plan trip"});
+  EXPECT_EQ(document.get("title")->value<std::string>(), std::optional<std::string>{"Plan trip"});
   EXPECT_EQ(document.get("notes")->value<std::string>(),
             std::optional<std::string>{"First line\n旅行\nCafé"});
   const auto* due = document.get_as<toml::table>("due");
   ASSERT_NE(due, nullptr);
-  EXPECT_EQ(due->get("kind")->value<std::string>(),
-            std::optional<std::string>{"Datetime"});
+  EXPECT_EQ(due->get("kind")->value<std::string>(), std::optional<std::string>{"Datetime"});
   EXPECT_FALSE(due->contains("date"));
   EXPECT_TRUE(document.contains("directory_id"));
   ASSERT_NE(document.get_as<toml::array>("subtasks"), nullptr);
@@ -272,18 +247,15 @@ TEST(CoreCodecSnapshotTest, RoundTripsFullTodoAndSerializedText) {
 }
 
 TEST(CoreCodecSnapshotTest, DirectoryNameAndIdentitySurviveRoundTrip) {
-  const Directory original(DirectoryKind::Todo,
-                           "\xE7\xAC\x94\xE8\xAE\xB0\xE5\xBA\x93");
+  const Directory original(DirectoryKind::Todo, "\xE7\xAC\x94\xE8\xAE\xB0\xE5\xBA\x93");
   const auto snapshot = original.snapshot();
   const auto document = codec::to_toml(snapshot);
-  EXPECT_EQ(document.get("schema_version")->value<std::int64_t>(),
-            std::optional<std::int64_t>{1});
+  EXPECT_EQ(document.get("schema_version")->value<std::int64_t>(), std::optional<std::int64_t>{1});
   EXPECT_EQ(document.get("id")->value<std::string>(),
             std::optional<std::string>{snapshot.id.to_string()});
   EXPECT_EQ(document.get("name")->value<std::string>(),
             std::optional<std::string>{original.name()});
-  EXPECT_EQ(document.get("kind")->value<std::string>(),
-            std::optional<std::string>{"Todo"});
+  EXPECT_EQ(document.get("kind")->value<std::string>(), std::optional<std::string>{"Todo"});
   const auto serialized = codec::serialize_toml(codec::to_toml(snapshot));
   ASSERT_FALSE(is_error(serialized));
   const auto parsed = codec::parse_toml(value_of(serialized));
@@ -298,49 +270,44 @@ TEST(CoreCodecSnapshotTest, DirectoryNameAndIdentitySurviveRoundTrip) {
 }
 
 TEST(CoreCodecSnapshotTest, DirectoryLegacyKindRequiresTrustedContext) {
-  auto legacy = codec::to_toml(Directory::Snapshot{
-      sample_id(), DirectoryKind::Memo, "Legacy notes"});
+  auto legacy =
+      codec::to_toml(Directory::Snapshot{sample_id(), DirectoryKind::Memo, "Legacy notes"});
   legacy.erase("kind");
   const auto untrusted = codec::directory_snapshot_from_toml(legacy);
   ASSERT_TRUE(is_error(untrusted));
-  EXPECT_EQ(std::get<codec::CodecError>(untrusted).code,
-            codec::CodecErrorCode::MissingField);
+  EXPECT_EQ(std::get<codec::CodecError>(untrusted).code, codec::CodecErrorCode::MissingField);
   EXPECT_EQ(std::get<codec::CodecError>(untrusted).path, "kind");
 
-  const auto trusted = codec::directory_snapshot_from_toml(
-      legacy, DirectoryKind::Memo);
+  const auto trusted = codec::directory_snapshot_from_toml(legacy, DirectoryKind::Memo);
   ASSERT_FALSE(is_error(trusted));
   EXPECT_EQ(value_of(trusted).kind, DirectoryKind::Memo);
   EXPECT_EQ(value_of(trusted).name, "Legacy notes");
 
   auto explicit_kind = legacy;
   explicit_kind.insert("kind", "Todo");
-  const auto conflicting = codec::directory_snapshot_from_toml(
-      explicit_kind, DirectoryKind::Memo);
+  const auto conflicting = codec::directory_snapshot_from_toml(explicit_kind, DirectoryKind::Memo);
   ASSERT_TRUE(is_error(conflicting));
-  EXPECT_EQ(std::get<codec::CodecError>(conflicting).code,
-            codec::CodecErrorCode::InvalidField);
+  EXPECT_EQ(std::get<codec::CodecError>(conflicting).code, codec::CodecErrorCode::InvalidField);
   EXPECT_EQ(std::get<codec::CodecError>(conflicting).path, "kind");
-  const auto invalid = codec::directory_snapshot_from_toml(
-      toml::table{{"schema_version", 1}, {"id", sample_id().to_string()},
-                  {"kind", "Archive"}, {"name", "Unknown"}});
+  const auto invalid =
+      codec::directory_snapshot_from_toml(toml::table{{"schema_version", 1},
+                                                      {"id", sample_id().to_string()},
+                                                      {"kind", "Archive"},
+                                                      {"name", "Unknown"}});
   ASSERT_TRUE(is_error(invalid));
-  EXPECT_EQ(std::get<codec::CodecError>(invalid).code,
-            codec::CodecErrorCode::InvalidField);
+  EXPECT_EQ(std::get<codec::CodecError>(invalid).code, codec::CodecErrorCode::InvalidField);
   EXPECT_EQ(std::get<codec::CodecError>(invalid).path, "kind");
-  auto wrong_type = codec::to_toml(Directory::Snapshot{
-      sample_id(), DirectoryKind::Memo, "Wrong type"});
+  auto wrong_type =
+      codec::to_toml(Directory::Snapshot{sample_id(), DirectoryKind::Memo, "Wrong type"});
   wrong_type.insert_or_assign("kind", 42);
   const auto invalid_type = codec::directory_snapshot_from_toml(wrong_type);
   ASSERT_TRUE(is_error(invalid_type));
-  EXPECT_EQ(std::get<codec::CodecError>(invalid_type).code,
-            codec::CodecErrorCode::InvalidField);
+  EXPECT_EQ(std::get<codec::CodecError>(invalid_type).code, codec::CodecErrorCode::InvalidField);
   EXPECT_EQ(std::get<codec::CodecError>(invalid_type).path, "kind");
-  const auto invalid_context = codec::directory_snapshot_from_toml(
-      legacy, static_cast<DirectoryKind>(99));
+  const auto invalid_context =
+      codec::directory_snapshot_from_toml(legacy, static_cast<DirectoryKind>(99));
   ASSERT_TRUE(is_error(invalid_context));
-  EXPECT_EQ(std::get<codec::CodecError>(invalid_context).code,
-            codec::CodecErrorCode::InvalidField);
+  EXPECT_EQ(std::get<codec::CodecError>(invalid_context).code, codec::CodecErrorCode::InvalidField);
   EXPECT_EQ(std::get<codec::CodecError>(invalid_context).path, "kind");
 }
 
@@ -349,10 +316,14 @@ TEST(CoreCodecSnapshotTest, EncodesExplicitSchemaWithoutPlaceholderValues) {
       sample_id(),
       {Timestamp{std::chrono::seconds{86400}}, "Asia/Tokyo", "Tokyo"},
       {Timestamp{std::chrono::seconds{172800}}, "Europe/Paris", std::nullopt},
-      "Review", "First line\n第二行", TodoStatus::Completed, TodoPriority::Medium,
-      DueDate{DateContext{{std::chrono::year{2026} / 10 / 25},
-                          "Asia/Shanghai", std::nullopt}},
-      sample_id(), Privacy::Hidden, {{"Read", true}, {"Reply", false}}};
+      "Review",
+      "First line\n第二行",
+      TodoStatus::Completed,
+      TodoPriority::Medium,
+      DueDate{DateContext{{std::chrono::year{2026} / 10 / 25}, "Asia/Shanghai", std::nullopt}},
+      sample_id(),
+      Privacy::Hidden,
+      {{"Read", true}, {"Reply", false}}};
   const auto expected = codec::parse_toml(R"toml(
 schema_version = 1
 id = "47183823-2574-4bfd-b411-99ed177d3e43"
@@ -388,41 +359,41 @@ completed = false
   ASSERT_FALSE(is_error(expected));
   EXPECT_EQ(codec::to_toml(snapshot), value_of(expected));
 
-  const toml::table expected_directory{
-      {"schema_version", 1}, {"id", sample_id().to_string()},
-      {"kind", "Memo"},
-      {"name", "Research"}};
-  EXPECT_EQ(codec::to_toml(Directory::Snapshot{sample_id(), DirectoryKind::Memo,
-                                               "Research"}),
+  const toml::table expected_directory{{"schema_version", 1},
+                                       {"id", sample_id().to_string()},
+                                       {"kind", "Memo"},
+                                       {"name", "Research"}};
+  EXPECT_EQ(codec::to_toml(Directory::Snapshot{sample_id(), DirectoryKind::Memo, "Research"}),
             expected_directory);
 }
 
 TEST(CoreCodecContextTest, DueVariantsEmitOnlyTheirOwnFields) {
-  const DueDate date = DateContext{{std::chrono::year{2026} / 10 / 25},
-                                   "Asia/Tokyo", std::nullopt};
-  const toml::table expected_date{{"kind", "Date"}, {"date", "2026-10-25"},
-                                  {"timezone", "Asia/Tokyo"}};
+  const DueDate date = DateContext{{std::chrono::year{2026} / 10 / 25}, "Asia/Tokyo", std::nullopt};
+  const toml::table expected_date{
+      {"kind", "Date"}, {"date", "2026-10-25"}, {"timezone", "Asia/Tokyo"}};
   EXPECT_EQ(codec::to_toml(date), expected_date);
 
-  const DueDate datetime = TimestampContext{
-      Timestamp{std::chrono::seconds{86400}}, "Europe/Paris", "Paris"};
-  const toml::table expected_datetime{
-      {"kind", "Datetime"}, {"timestamp", "1970-01-02T00:00:00Z"},
-      {"timezone", "Europe/Paris"}, {"location", "Paris"}};
+  const DueDate datetime =
+      TimestampContext{Timestamp{std::chrono::seconds{86400}}, "Europe/Paris", "Paris"};
+  const toml::table expected_datetime{{"kind", "Datetime"},
+                                      {"timestamp", "1970-01-02T00:00:00Z"},
+                                      {"timezone", "Europe/Paris"},
+                                      {"location", "Paris"}};
   EXPECT_EQ(codec::to_toml(datetime), expected_datetime);
 }
 
 TEST(CoreCodecSnapshotTest, UsesStableStringsForEveryPriority) {
   const std::vector<std::pair<TodoPriority, std::string>> priorities{
-      {TodoPriority::None, "None"}, {TodoPriority::Low, "Low"},
-      {TodoPriority::Medium, "Medium"}, {TodoPriority::High, "High"}};
+      {TodoPriority::None, "None"},
+      {TodoPriority::Low, "Low"},
+      {TodoPriority::Medium, "Medium"},
+      {TodoPriority::High, "High"}};
   auto snapshot = Todo("Priority", "", sample_timestamp_context(std::nullopt)).snapshot();
   for (const auto& [priority, text] : priorities) {
     SCOPED_TRACE(text);
     snapshot.priority = priority;
     const auto table = codec::to_toml(snapshot);
-    EXPECT_EQ(table["priority"].value<std::string>(),
-              std::optional<std::string>{text});
+    EXPECT_EQ(table["priority"].value<std::string>(), std::optional<std::string>{text});
     const auto decoded = codec::todo_snapshot_from_toml(table);
     ASSERT_FALSE(is_error(decoded));
     EXPECT_EQ(value_of(decoded).priority, priority);
@@ -432,8 +403,8 @@ TEST(CoreCodecSnapshotTest, UsesStableStringsForEveryPriority) {
 TEST(CoreCodecErrorTest, RejectsEachMissingRequiredSnapshotField) {
   const auto todo = codec::to_toml(
       Todo("Required fields", "", sample_timestamp_context(std::nullopt)).snapshot());
-  for (const auto* field : {"schema_version", "id", "created", "modified",
-                             "title", "notes", "status", "priority", "privacy"}) {
+  for (const auto* field : {"schema_version", "id", "created", "modified", "title", "notes",
+                            "status", "priority", "privacy"}) {
     SCOPED_TRACE(field);
     auto incomplete = todo;
     incomplete.erase(field);
@@ -444,8 +415,8 @@ TEST(CoreCodecErrorTest, RejectsEachMissingRequiredSnapshotField) {
     EXPECT_EQ(error.path, field);
   }
 
-  const auto directory = codec::to_toml(Directory::Snapshot{
-      sample_id(), DirectoryKind::Memo, "Work"});
+  const auto directory =
+      codec::to_toml(Directory::Snapshot{sample_id(), DirectoryKind::Memo, "Work"});
   for (const auto* field : {"schema_version", "id", "kind", "name"}) {
     SCOPED_TRACE(field);
     auto incomplete = directory;
@@ -463,8 +434,7 @@ TEST(CoreCodecErrorTest, RejectsMalformedTomlAndMissingRequiredFields) {
   EXPECT_TRUE(is_error(codec::todo_snapshot_from_toml(toml::table{})));
   EXPECT_TRUE(is_error(codec::directory_snapshot_from_toml(toml::table{})));
   EXPECT_TRUE(is_error(codec::id_from_toml(toml::value<std::string>{"not-a-uuid"})));
-  EXPECT_TRUE(is_error(codec::privacy_from_toml(
-      toml::value<std::string>{"not-a-privacy"})));
+  EXPECT_TRUE(is_error(codec::privacy_from_toml(toml::value<std::string>{"not-a-privacy"})));
   EXPECT_TRUE(is_error(codec::tag_from_toml(toml::value<std::int64_t>{42})));
   EXPECT_TRUE(is_error(codec::timestamp_context_from_toml(toml::value<bool>{true})));
   EXPECT_TRUE(is_error(codec::date_context_from_toml(toml::value<bool>{true})));
@@ -472,18 +442,16 @@ TEST(CoreCodecErrorTest, RejectsMalformedTomlAndMissingRequiredFields) {
 }
 
 TEST(CoreCodecErrorTest, RejectsInvalidDateTimestampAndSchemaVersion) {
-  auto invalid_timestamp =
-      codec::to_toml(sample_timestamp_context(std::nullopt));
+  auto invalid_timestamp = codec::to_toml(sample_timestamp_context(std::nullopt));
   invalid_timestamp.insert_or_assign("timestamp", "not-a-timestamp");
   EXPECT_TRUE(is_error(codec::timestamp_context_from_toml(invalid_timestamp)));
 
-  auto invalid_date = codec::to_toml(
-      DateContext{{std::chrono::year{2025} / 3 / 4}, "UTC", std::nullopt});
+  auto invalid_date =
+      codec::to_toml(DateContext{{std::chrono::year{2025} / 3 / 4}, "UTC", std::nullopt});
   invalid_date.insert_or_assign("date", "2025-02-30");
   EXPECT_TRUE(is_error(codec::date_context_from_toml(invalid_date)));
 
-  auto empty_timezone =
-      codec::to_toml(sample_timestamp_context(std::nullopt));
+  auto empty_timezone = codec::to_toml(sample_timestamp_context(std::nullopt));
   empty_timezone.insert_or_assign("timezone", "");
   EXPECT_TRUE(is_error(codec::timestamp_context_from_toml(empty_timezone)));
 
@@ -502,8 +470,7 @@ TEST(CoreCodecErrorTest, RejectsInvalidDateTimestampAndSchemaVersion) {
     invalid_text.insert_or_assign(field, 42);
     const auto decoded = codec::todo_snapshot_from_toml(invalid_text);
     ASSERT_TRUE(is_error(decoded));
-    EXPECT_EQ(std::get<codec::CodecError>(decoded).code,
-              codec::CodecErrorCode::InvalidField);
+    EXPECT_EQ(std::get<codec::CodecError>(decoded).code, codec::CodecErrorCode::InvalidField);
     EXPECT_EQ(std::get<codec::CodecError>(decoded).path, field);
   }
 
@@ -517,12 +484,10 @@ TEST(CoreCodecErrorTest, RejectsInvalidDateTimestampAndSchemaVersion) {
 
   auto invalid_due_kind = codec::to_toml(todo.snapshot());
   invalid_due_kind.insert_or_assign(
-      "due", toml::table{{"kind", "DateTime"}, {"date", "2025-03-04"},
-                         {"timezone", "UTC"}});
+      "due", toml::table{{"kind", "DateTime"}, {"date", "2025-03-04"}, {"timezone", "UTC"}});
   EXPECT_TRUE(is_error(codec::todo_snapshot_from_toml(invalid_due_kind)));
 
-  auto directory = codec::to_toml(
-      Directory(DirectoryKind::Memo, "Projects").snapshot());
+  auto directory = codec::to_toml(Directory(DirectoryKind::Memo, "Projects").snapshot());
   directory.insert_or_assign("schema_version", 2);
   EXPECT_TRUE(is_error(codec::directory_snapshot_from_toml(directory)));
 }
@@ -537,27 +502,35 @@ tags = ["旅行", "", "notes", "旅行"]
 created = { timestamp = "1970-01-02T00:00:00.123456Z", timezone = "Asia/Tokyo", location = "東京" }
 modified = { timestamp = "1970-01-03T00:00:00Z", timezone = "Europe/Paris", location = "Paris" }
 )toml";
-  text += is_log
-      ? "log_date = { date = \"2024-02-29\", timezone = \"Asia/Shanghai\", location = \"上海\" }\n"
-      : "directory_id = \"27183823-2574-4bfd-b411-99ed177d3e43\"\n";
+  text += is_log ? "log_date = { date = \"2024-02-29\", timezone = \"Asia/Shanghai\", location = "
+                   "\"上海\" }\n"
+                 : "directory_id = \"27183823-2574-4bfd-b411-99ed177d3e43\"\n";
   return text;
 }
 
 Log::Snapshot markdown_log() {
   return {sample_id(),
           {Timestamp{std::chrono::duration_cast<Timestamp::duration>(
-              std::chrono::seconds{86400} +
-              std::chrono::microseconds{123456})}, "Asia/Tokyo", "東京"},
+               std::chrono::seconds{86400} + std::chrono::microseconds{123456})},
+           "Asia/Tokyo", "東京"},
           {Timestamp{std::chrono::seconds{172800}}, "Europe/Paris", "Paris"},
-          "旅の記録", "# 本文\n\nText\r\n+++\nlast line",
+          "旅の記録",
+          "# 本文\n\nText\r\n+++\nlast line",
           {{std::chrono::year{2024} / 2 / 29}, "Asia/Shanghai", "上海"},
-          {{"旅行"}, {""}, {"notes"}, {"旅行"}}, Privacy::Hidden};
+          {{"旅行"}, {""}, {"notes"}, {"旅行"}},
+          Privacy::Hidden};
 }
 
 Memo::Snapshot markdown_memo() {
   const auto log = markdown_log();
-  return {log.id, log.created, log.modified, log.title, log.content, log.tags,
-          *Id::parse("27183823-2574-4bfd-b411-99ed177d3e43"), log.privacy};
+  return {log.id,
+          log.created,
+          log.modified,
+          log.title,
+          log.content,
+          log.tags,
+          *Id::parse("27183823-2574-4bfd-b411-99ed177d3e43"),
+          log.privacy};
 }
 
 template <typename Snapshot>
@@ -581,8 +554,7 @@ void expect_memo_eq(const Memo::Snapshot& actual, const Memo::Snapshot& expected
   EXPECT_EQ(actual.directory_id, expected.directory_id);
 }
 
-void expect_markdown_error(bool is_log, const std::string& document,
-                           codec::CodecErrorCode code) {
+void expect_markdown_error(bool is_log, const std::string& document, codec::CodecErrorCode code) {
   const auto check_error = [code](const codec::CodecError& error) {
     EXPECT_EQ(error.code, code);
     EXPECT_FALSE(error.message.empty());
@@ -606,15 +578,15 @@ void expect_markdown_error(bool is_log, const std::string& document,
 
 TEST(CoreCodecMarkdownTest, DecodesIndependentFixturesAndRestoresAllFields) {
   const auto log = markdown_log();
-  const auto decoded_log = codec::log_snapshot_from_markdown(
-      "+++\n" + markdown_metadata(true) + "+++\n" + log.content);
+  const auto decoded_log =
+      codec::log_snapshot_from_markdown("+++\n" + markdown_metadata(true) + "+++\n" + log.content);
   ASSERT_FALSE(is_error(decoded_log));
   expect_log_eq(value_of(decoded_log), log);
   expect_log_eq(Log::restore(value_of(decoded_log)).snapshot(), log);
 
   const auto memo = markdown_memo();
-  const auto decoded_memo = codec::memo_snapshot_from_markdown(
-      "+++\n" + markdown_metadata(false) + "+++\n" + memo.content);
+  const auto decoded_memo = codec::memo_snapshot_from_markdown("+++\n" + markdown_metadata(false) +
+                                                               "+++\n" + memo.content);
   ASSERT_FALSE(is_error(decoded_memo));
   expect_memo_eq(value_of(decoded_memo), memo);
   expect_memo_eq(Memo::restore(value_of(decoded_memo)).snapshot(), memo);
@@ -641,11 +613,15 @@ TEST(CoreCodecMarkdownTest, RoundTripsFullSnapshotsWithLfFraming) {
 }
 
 TEST(CoreCodecMarkdownTest, PreservesEveryBodyByteAcrossFramingLineEndings) {
-  const std::vector<std::string> bodies{
-      "", "\n", " \t\r\n\n ", "no final newline", "+++", "+++\n+++\r\n",
-      "\n# 見出し\r\n```toml\ncontent = 'body'\r\n+++\n```\n"
-      "| a | b |\n|---|---|\n| 1 | 2 |\n\tend  ",
-      std::string("a\0b\r\n", 5)};
+  const std::vector<std::string> bodies{"",
+                                        "\n",
+                                        " \t\r\n\n ",
+                                        "no final newline",
+                                        "+++",
+                                        "+++\n+++\r\n",
+                                        "\n# 見出し\r\n```toml\ncontent = 'body'\r\n+++\n```\n"
+                                        "| a | b |\n|---|---|\n| 1 | 2 |\n\tend  ",
+                                        std::string("a\0b\r\n", 5)};
   for (const auto& body : bodies) {
     SCOPED_TRACE(body);
     auto log = markdown_log();
@@ -669,8 +645,8 @@ TEST(CoreCodecMarkdownTest, PreservesEveryBodyByteAcrossFramingLineEndings) {
           auto metadata = markdown_metadata(is_log);
           // Alternate metadata line endings independently of delimiter endings.
           if (std::string_view{opening} == "+++\r\n") {
-            for (std::size_t pos = 0; (pos = metadata.find('\n', pos)) !=
-                 std::string::npos; pos += 2) {
+            for (std::size_t pos = 0; (pos = metadata.find('\n', pos)) != std::string::npos;
+                 pos += 2) {
               metadata.insert(pos, 1, '\r');
             }
           }
@@ -730,8 +706,8 @@ TEST(CoreCodecMarkdownTest, RoundTripsEmptyValuesPrivacyAndOmittedOptionals) {
 }
 
 TEST(CoreCodecMarkdownTest, EscapesDelimiterLinesInsideMetadataStrings) {
-  for (const auto& collision : {std::string("before\n+++\nafter"),
-                                std::string("before\r\n+++\r\nafter")}) {
+  for (const auto& collision :
+       {std::string("before\n+++\nafter"), std::string("before\r\n+++\r\nafter")}) {
     auto log = markdown_log();
     auto memo = markdown_memo();
     log.title = memo.title = collision;
@@ -755,21 +731,23 @@ TEST(CoreCodecMarkdownTest, EscapesDelimiterLinesInsideMetadataStrings) {
 TEST(CoreCodecMarkdownErrorTest, RejectsMalformedFramingAndTomlRecoverably) {
   for (const bool is_log : {true, false}) {
     const auto metadata = markdown_metadata(is_log);
-    const std::vector<std::string> malformed{
-        "", "+++", "+++\r", "---\n" + metadata + "---\n",
-        "\n+++\n" + metadata + "+++\n",
-        "preamble\n+++\n" + metadata + "+++\n",
-        "\xEF\xBB\xBF+++\n" + metadata + "+++\n",
-        " +++\n" + metadata + "+++\n",
-        "+++ \n" + metadata + "+++\n",
-        "+++\t\r\n" + metadata + "+++\n",
-        "+++\r" + metadata + "+++\n",
-        "+++\n" + metadata,
-        "+++\n" + metadata + "+++",
-        "+++\n" + metadata + "+++\r",
-        "+++\n" + metadata + "+++ \n",
-        "+++\n" + metadata + " +++\n",
-        "+++\n" + metadata + "+++\t\r\n"};
+    const std::vector<std::string> malformed{"",
+                                             "+++",
+                                             "+++\r",
+                                             "---\n" + metadata + "---\n",
+                                             "\n+++\n" + metadata + "+++\n",
+                                             "preamble\n+++\n" + metadata + "+++\n",
+                                             "\xEF\xBB\xBF+++\n" + metadata + "+++\n",
+                                             " +++\n" + metadata + "+++\n",
+                                             "+++ \n" + metadata + "+++\n",
+                                             "+++\t\r\n" + metadata + "+++\n",
+                                             "+++\r" + metadata + "+++\n",
+                                             "+++\n" + metadata,
+                                             "+++\n" + metadata + "+++",
+                                             "+++\n" + metadata + "+++\r",
+                                             "+++\n" + metadata + "+++ \n",
+                                             "+++\n" + metadata + " +++\n",
+                                             "+++\n" + metadata + "+++\t\r\n"};
     for (const auto& document : malformed) {
       SCOPED_TRACE(document);
       expect_markdown_error(is_log, document, codec::CodecErrorCode::MalformedFrontMatter);
@@ -786,8 +764,8 @@ TEST(CoreCodecMarkdownErrorTest, RejectsEveryMissingAndMistypedRequiredField) {
   for (const bool is_log : {true, false}) {
     const auto fixture = codec::parse_toml(markdown_metadata(is_log));
     ASSERT_FALSE(is_error(fixture));
-    std::vector<std::string> required{
-        "schema_version", "id", "privacy", "title", "tags", "created", "modified"};
+    std::vector<std::string> required{"schema_version", "id",      "privacy", "title",
+                                      "tags",           "created", "modified"};
     if (is_log) required.push_back("log_date");
     for (const auto& key : required) {
       SCOPED_TRACE(key);
@@ -823,8 +801,10 @@ TEST(CoreCodecMarkdownErrorTest, RejectsCoercibleNonIntegerSchemaVersions) {
 TEST(CoreCodecMarkdownErrorTest, RejectsUnknownFieldsAndContentMetadata) {
   for (const bool is_log : {true, false}) {
     const std::vector<std::string> extras{
-        "unknown = 42\n", "content = 'must not shadow body'\n",
-        "created.extra = 'unknown'\n", "modified.extra = 'unknown'\n",
+        "unknown = 42\n",
+        "content = 'must not shadow body'\n",
+        "created.extra = 'unknown'\n",
+        "modified.extra = 'unknown'\n",
         is_log ? "log_date.extra = 'unknown'\n" : "log_date = {}\n",
         is_log ? "directory_id = '27183823-2574-4bfd-b411-99ed177d3e43'\n"
                : "status = 'Pending'\n"};
@@ -840,7 +820,8 @@ TEST(CoreCodecMarkdownErrorTest, RejectsUnknownFieldsAndContentMetadata) {
       } else {
         const auto added = codec::parse_toml(extra);
         ASSERT_FALSE(is_error(added));
-        for (const auto& [key, node] : value_of(added)) table.insert(key.str(), node);
+        for (const auto& [key, node] : value_of(added))
+          table.insert(key.str(), node);
       }
       const auto text = codec::serialize_toml(table);
       ASSERT_FALSE(is_error(text));
@@ -855,9 +836,9 @@ TEST(CoreCodecMarkdownErrorTest, RejectsInvalidMetadataValuesAndContextFields) {
     const auto fixture = codec::parse_toml(markdown_metadata(is_log));
     ASSERT_FALSE(is_error(fixture));
     const std::vector<std::pair<std::string, std::string>> replacements{
-        {"id", "not-a-uuid"}, {"id", "00000000-0000-0000-0000-000000000000"},
-        {"privacy", "Secret"}, {"privacy", "hidden"}, {"tags", "not-an-array"},
-        {"schema_version", "1"}};
+        {"id", "not-a-uuid"},     {"id", "00000000-0000-0000-0000-000000000000"},
+        {"privacy", "Secret"},    {"privacy", "hidden"},
+        {"tags", "not-an-array"}, {"schema_version", "1"}};
     for (const auto& [key, value] : replacements) {
       SCOPED_TRACE(key + "=" + value);
       auto table = value_of(fixture);
@@ -893,13 +874,13 @@ TEST(CoreCodecMarkdownErrorTest, RejectsInvalidMetadataValuesAndContextFields) {
           auto* nested = table.get_as<toml::table>(context);
           auto expected = codec::CodecErrorCode::InvalidField;
           if (mutation == 0) {
-            if (key == "location") continue;  // Optional, covered by round trips.
+            if (key == "location") continue; // Optional, covered by round trips.
             nested->erase(key);
             expected = codec::CodecErrorCode::MissingField;
           } else if (mutation == 1) {
             nested->insert_or_assign(key, 42);
           } else {
-            if (key == "location") continue;  // Empty locations are permitted.
+            if (key == "location") continue; // Empty locations are permitted.
             nested->insert_or_assign(key, key == "date" ? "2025-02-30" : "");
           }
           const auto text = codec::serialize_toml(table);
@@ -943,8 +924,7 @@ TEST(CoreCodecMarkdownErrorTest, RejectsSignedDateAndTimestampFields) {
   const auto position = metadata.find(date);
   ASSERT_NE(position, std::string::npos);
   metadata.replace(position, date.size(), "-001-01-02");
-  expect_markdown_error(true, "+++\n" + metadata + "+++\n",
-                        codec::CodecErrorCode::InvalidField);
+  expect_markdown_error(true, "+++\n" + metadata + "+++\n", codec::CodecErrorCode::InvalidField);
 }
 
 TEST(CoreCodecMarkdownErrorTest, EncodingInvalidSnapshotsReturnsErrors) {
@@ -964,4 +944,4 @@ TEST(CoreCodecMarkdownErrorTest, EncodingInvalidSnapshotsReturnsErrors) {
   EXPECT_TRUE(is_error(codec::serialize_markdown(memo)));
 }
 
-}  // namespace
+} // namespace

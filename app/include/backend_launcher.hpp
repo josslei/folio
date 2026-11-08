@@ -17,4 +17,4 @@ struct LaunchedProcess {
 // a subsequent connection handshake, not by successful process creation.
 [[nodiscard]] core::Result<LaunchedProcess, ProcessError> launch_backend();
 
-}  // namespace folio::application
+} // namespace folio::application

@@ -20,14 +20,14 @@ namespace folio::application {
 // Identifies one mutation intention, not an Entry or Draft. Correlation alone
 // provides no deduplication, receipt, or cross-restart execution guarantee.
 class MutationId {
- public:
+public:
   [[nodiscard]] static MutationId generate();
   [[nodiscard]] static std::optional<MutationId> parse(std::string_view text);
   [[nodiscard]] std::string to_string() const;
 
   bool operator==(const MutationId&) const = default;
 
- private:
+private:
   explicit MutationId(core::Id value) : value_(value) {}
 
   core::Id value_;
@@ -56,8 +56,8 @@ struct TodoEditableFields {
   std::vector<core::Subtask> subtasks;
 };
 
-using EditSnapshot = std::variant<core::Log::Snapshot, core::Memo::Snapshot,
-                                  core::Todo::Snapshot, core::Directory::Snapshot>;
+using EditSnapshot = std::variant<core::Log::Snapshot, core::Memo::Snapshot, core::Todo::Snapshot,
+                                  core::Directory::Snapshot>;
 
 // Mutation outcomes and evidence
 
@@ -66,15 +66,15 @@ enum class AuthoritativeChangeStatus {
   NotApplied,       // Intended change was not published; artifacts may remain.
   Applied,          // Required authoritative durability steps completed.
   PartiallyApplied, // Confirmed durable partial effects of a compound mutation.
-  Unknown          // Evidence does not establish the final authoritative outcome.
+  Unknown           // Evidence does not establish the final authoritative outcome.
 };
 
 enum class MutationStep { WriteEntry, CreateDestination, RemoveSource };
 
 enum class StepObservation {
   NotAttempted,
-  NotCompleted,        // This step is confirmed not to have published its change.
-  Published,           // Publication known, required durability not confirmed.
+  NotCompleted, // This step is confirmed not to have published its change.
+  Published,    // Publication known, required durability not confirmed.
   DurabilityConfirmed,
   Unknown
 };
@@ -102,8 +102,7 @@ struct MutationFailure {
 
 // A trustworthy Backend response. Success requires both authoritative durability
 // and necessary Application synchronization. The echoed ID must match the request.
-template<class T>
-struct MutationResponse {
+template <class T> struct MutationResponse {
   MutationId mutation_id;
   core::Result<T, MutationFailure> result;
 };
@@ -123,7 +122,6 @@ struct NoMutationResponse {
   SubmissionState submission;
 };
 
-template<class T>
-using MutationResult = core::Result<MutationResponse<T>, NoMutationResponse>;
+template <class T> using MutationResult = core::Result<MutationResponse<T>, NoMutationResponse>;
 
-}  // namespace folio::application
+} // namespace folio::application

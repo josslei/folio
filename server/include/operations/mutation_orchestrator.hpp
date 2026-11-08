@@ -16,15 +16,15 @@ namespace folio::application::internal {
 // Expired session owners are removed before each mutation/editing request; no leases,
 // timed expiry, cross-session permissions or persistence are implied.
 class MutationOrchestrator {
- public:
+public:
   MutationOrchestrator(core::storage::MetadataCatalog& catalog,
                        core::storage::NormalRepository& repository,
                        core::storage::CatalogCoordinator& coordinator);
   OperationResponse handle(const OperationRequest& request, const Session& session);
 
- private:
-  std::optional<ApplicationError> check_lock(const core::Id& id,
-                                            const Session& session, bool required);
+private:
+  std::optional<ApplicationError> check_lock(const core::Id& id, const Session& session,
+                                             bool required);
   OperationResponse acquire_edit(const core::Id& id, const Session& session);
   OperationResponse release_edit(const core::Id& id, const Session& session);
   NormalMutationResponse mutate(const MutationRequest& request, const Session& session);
@@ -33,4 +33,4 @@ class MutationOrchestrator {
   core::storage::CatalogCoordinator& coordinator_;
   std::map<std::string, std::weak_ptr<ConnectionSession>> locks_;
 };
-}  // namespace folio::application::internal
+} // namespace folio::application::internal

@@ -103,11 +103,13 @@ TEST(RequestScheduler, DrainCollectsMultipleFailuresAndStillCompletesFollowingWo
 }
 
 class IpcServer : public testing::Test {
- protected:
+protected:
   fs::path base = fs::canonical(fs::temp_directory_path()) /
-      ("frun-" + core::Id::generate().to_string().substr(0, 8));
-  folio::config::StoragePaths paths{base / "normal", base / "vault",
-      {base / "config", base / "data", base / "state", base / "cache", base / "logs", base / "runtime"}};
+                  ("frun-" + core::Id::generate().to_string().substr(0, 8));
+  folio::config::StoragePaths paths{base / "normal",
+                                    base / "vault",
+                                    {base / "config", base / "data", base / "state", base / "cache",
+                                     base / "logs", base / "runtime"}};
   std::optional<ipc::RepositoryOwnership> ownership;
   std::unique_ptr<ipc::IpcServer> runtime;
   std::jthread server;
@@ -128,25 +130,37 @@ class IpcServer : public testing::Test {
     auto acquired = ipc::RepositoryOwnership::acquire(paths);
     ASSERT_TRUE(std::holds_alternative<ipc::RepositoryOwnership>(acquired));
     ownership.emplace(std::get<ipc::RepositoryOwnership>(std::move(acquired)));
-    runtime = std::make_unique<ipc::IpcServer>(*ownership,
+    runtime = std::make_unique<ipc::IpcServer>(
+        *ownership,
         [&](const ipc::OperationRequest& request, const ipc::Session&) -> ipc::OperationResponse {
           std::unique_lock lock(mutex);
-          if (const auto* load = std::get_if<ipc::LoadMemoRequest>(&request)) executed.push_back(load->id);
-          else executed.push_back(core::Id::generate());
+          if (const auto* load = std::get_if<ipc::LoadMemoRequest>(&request))
+            executed.push_back(load->id);
+          else
+            executed.push_back(core::Id::generate());
           changed.notify_all();
           changed.wait(lock, [&] { return released; });
           if (fail_operations) throw std::runtime_error("synthetic operation exception");
           if (const auto* mutation = std::get_if<ipc::MutationRequest>(&request)) {
             return ipc::NormalMutationResponse{
                 mismatch_mutation ? app::MutationId::generate() : mutation->mutation_id,
-                app::MutationFailure{{app::ErrorCategory::InvalidRequest, app::ErrorReason::InvalidMutation,
-                    "Synthetic mutation failure", {app::ErrorAction::Dismiss}},
+                app::MutationFailure{
+                    {app::ErrorCategory::InvalidRequest,
+                     app::ErrorReason::InvalidMutation,
+                     "Synthetic mutation failure",
+                     {app::ErrorAction::Dismiss}},
                     app::AuthoritativeChangeStatus::NotApplied,
-                    {executed.back(), {}, {}, {{app::MutationStep::WriteEntry, app::StepObservation::NotAttempted}}}}};
+                    {executed.back(),
+                     {},
+                     {},
+                     {{app::MutationStep::WriteEntry, app::StepObservation::NotAttempted}}}}};
           }
           return app::ApplicationError{app::ErrorCategory::TargetUnavailable,
-              app::ErrorReason::NotFound, "Synthetic missing Memo", {app::ErrorAction::Dismiss}};
-        }, "", limits);
+                                       app::ErrorReason::NotFound,
+                                       "Synthetic missing Memo",
+                                       {app::ErrorAction::Dismiss}};
+        },
+        "", limits);
     server = std::jthread([&] {
       try {
         auto result = runtime->run(shutdown.get_token());
@@ -174,7 +188,8 @@ class IpcServer : public testing::Test {
   }
   ipc::IpcStream connect() {
     auto connected = ipc::IpcStream::connect(settings().endpoint);
-    if (!std::holds_alternative<ipc::IpcStream>(connected)) throw std::runtime_error("connect failed");
+    if (!std::holds_alternative<ipc::IpcStream>(connected))
+      throw std::runtime_error("connect failed");
     auto stream = std::get<ipc::IpcStream>(std::move(connected));
     auto ready = ipc::exchange_message(stream, {ipc::MessageKind::Hello, {}}, Clock::now() + 3s);
     if (!std::holds_alternative<ipc::Message>(ready) ||
@@ -189,7 +204,8 @@ class IpcServer : public testing::Test {
     return std::get<ipc::Message>(std::move(message));
   }
   void submit(ipc::IpcStream& stream, const core::Id& id) {
-    const auto bytes = std::get<std::string>(ipc::codec::encode<ipc::OperationRequest>(ipc::LoadMemoRequest{id}));
+    const auto bytes =
+        std::get<std::string>(ipc::codec::encode<ipc::OperationRequest>(ipc::LoadMemoRequest{id}));
     ASSERT_TRUE(std::holds_alternative<std::monostate>(ipc::send_message(
         stream, {ipc::MessageKind::Request, ipc::payload_bytes(bytes)}, Clock::now() + 3s)));
   }
@@ -277,8 +293,8 @@ TEST_F(IpcServer, HeaderReservationBoundsIncompleteRequestBuffers) {
   submit(first, core::Id::generate());
   EXPECT_EQ(receive(first).kind, ipc::MessageKind::Accepted);
   ASSERT_TRUE(await_count(1));
-  const auto bytes = ipc::encode_message({ipc::MessageKind::Request,
-                                         std::vector<std::byte>(128, std::byte{1})});
+  const auto bytes =
+      ipc::encode_message({ipc::MessageKind::Request, std::vector<std::byte>(128, std::byte{1})});
   auto sent = second.write(std::as_bytes(std::span(bytes.data(), 8)));
   ASSERT_TRUE(std::holds_alternative<std::size_t>(sent));
   EXPECT_EQ(receive(second).kind, ipc::MessageKind::Rejected);
@@ -385,9 +401,8 @@ TEST_F(IpcServer, ConnectionCapacityWaitWakesWhenAWorkerLeaves) {
   limits.connections = 2;
   start();
   auto first = connect(), keeper = connect();
-  auto waiting = std::async(std::launch::async, [&] {
-    return app::BackendConnectionHandle::connect(settings());
-  });
+  auto waiting = std::async(std::launch::async,
+                            [&] { return app::BackendConnectionHandle::connect(settings()); });
   EXPECT_EQ(waiting.wait_for(20ms), std::future_status::timeout);
   first = ipc::IpcStream{};
   ASSERT_EQ(waiting.wait_for(2s), std::future_status::ready);
@@ -402,7 +417,8 @@ TEST_F(IpcServer, BlockingPublicReadWaitsForFinalResultAfterAdmission) {
   auto result = app::BackendConnectionHandle::connect(settings());
   ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(result));
   auto connection = std::get<app::BackendConnectionHandle>(std::move(result));
-  auto read = std::async(std::launch::async, [&] { return connection.load_memo(core::Id::generate()); });
+  auto read =
+      std::async(std::launch::async, [&] { return connection.load_memo(core::Id::generate()); });
   ASSERT_TRUE(await_count(1));
   EXPECT_EQ(read.wait_for(20ms), std::future_status::timeout);
   release();
@@ -411,7 +427,7 @@ TEST_F(IpcServer, BlockingPublicReadWaitsForFinalResultAfterAdmission) {
   EXPECT_EQ(std::get<app::ApplicationError>(response).reason, app::ErrorReason::NotFound);
   EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
 }
-}  // namespace
+} // namespace
 
 TEST_F(IpcServer, FailureDrainPreservesOtherConnectionsUntilFinish) {
   hold_report = true;

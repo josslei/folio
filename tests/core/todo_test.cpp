@@ -29,8 +29,8 @@ TEST(SubtaskTest, StartsIncompleteWithOnlyContent) {
 }
 
 TEST(TodoTest, StartsWithDefaultsAndDistinctIdentity) {
-  const TimestampContext created{Timestamp{std::chrono::seconds{100}},
-                                 "Asia/Shanghai", std::string("Shanghai")};
+  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "Asia/Shanghai",
+                                 std::string("Shanghai")};
   const Todo todo("Plan trip", "", created);
   const Todo another("Plan trip", "", created);
 
@@ -52,13 +52,12 @@ TEST(TodoTest, StartsWithDefaultsAndDistinctIdentity) {
 }
 
 TEST(TodoTest, DueDateRetainsDateOnlyOrExactTimeAndCanBeCleared) {
-  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC",
-                                 std::nullopt};
-  const TimestampContext modified{Timestamp{std::chrono::seconds{200}},
-                                  "Europe/Paris", std::string("Paris")};
+  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC", std::nullopt};
+  const TimestampContext modified{Timestamp{std::chrono::seconds{200}}, "Europe/Paris",
+                                  std::string("Paris")};
   Todo todo("Task", "", created);
-  const DateContext calendar_due{std::chrono::year{2026} / 10 / 25,
-                                 "Asia/Shanghai", std::string("Shanghai")};
+  const DateContext calendar_due{std::chrono::year{2026} / 10 / 25, "Asia/Shanghai",
+                                 std::string("Shanghai")};
 
   todo.set_due_date(DueDate{calendar_due}, modified);
   ASSERT_TRUE(todo.due_date().has_value());
@@ -67,17 +66,14 @@ TEST(TodoTest, DueDateRetainsDateOnlyOrExactTimeAndCanBeCleared) {
   EXPECT_EQ(std::get<DateContext>(*todo.due_date()).timezone, calendar_due.timezone);
   EXPECT_EQ(std::get<DateContext>(*todo.due_date()).location, calendar_due.location);
 
-  const TimestampContext timed_due{Timestamp{std::chrono::seconds{300}},
-                                   "Europe/Paris", std::string("Paris")};
+  const TimestampContext timed_due{Timestamp{std::chrono::seconds{300}}, "Europe/Paris",
+                                   std::string("Paris")};
   todo.set_due_date(DueDate{timed_due}, modified);
   ASSERT_TRUE(todo.due_date().has_value());
   ASSERT_TRUE(std::holds_alternative<TimestampContext>(*todo.due_date()));
-  EXPECT_EQ(std::get<TimestampContext>(*todo.due_date()).timestamp,
-            timed_due.timestamp);
-  EXPECT_EQ(std::get<TimestampContext>(*todo.due_date()).timezone,
-            timed_due.timezone);
-  EXPECT_EQ(std::get<TimestampContext>(*todo.due_date()).location,
-            timed_due.location);
+  EXPECT_EQ(std::get<TimestampContext>(*todo.due_date()).timestamp, timed_due.timestamp);
+  EXPECT_EQ(std::get<TimestampContext>(*todo.due_date()).timezone, timed_due.timezone);
+  EXPECT_EQ(std::get<TimestampContext>(*todo.due_date()).location, timed_due.location);
 
   todo.set_due_date(std::nullopt, modified);
   EXPECT_FALSE(todo.due_date().has_value());
@@ -85,25 +81,21 @@ TEST(TodoTest, DueDateRetainsDateOnlyOrExactTimeAndCanBeCleared) {
 }
 
 TEST(TodoTest, RejectsInvalidCalendarDueDateWithoutChangingState) {
-  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC",
-                                 std::nullopt};
+  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC", std::nullopt};
   Todo todo("Task", "", created);
-  const DateContext invalid_due{std::chrono::year{2026} / 2 / 30, "UTC",
-                                std::nullopt};
+  const DateContext invalid_due{std::chrono::year{2026} / 2 / 30, "UTC", std::nullopt};
 
   EXPECT_THROW(todo.set_due_date(DueDate{invalid_due},
-                                 {Timestamp{std::chrono::seconds{200}}, "UTC",
-                                  std::nullopt}),
+                                 {Timestamp{std::chrono::seconds{200}}, "UTC", std::nullopt}),
                std::invalid_argument);
   EXPECT_FALSE(todo.due_date().has_value());
   EXPECT_EQ(todo.modified().timestamp, created.timestamp);
 }
 
 TEST(TodoTest, FieldChangesPreserveIdentityAndCreationContext) {
-  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC",
-                                 std::nullopt};
-  const TimestampContext modified{Timestamp{std::chrono::seconds{200}},
-                                  "Europe/Paris", std::string("Paris")};
+  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC", std::nullopt};
+  const TimestampContext modified{Timestamp{std::chrono::seconds{200}}, "Europe/Paris",
+                                  std::string("Paris")};
   Todo todo("First", "", created);
   const Id original_id = todo.id();
   const Id directory_id = Id::generate();
@@ -133,20 +125,18 @@ TEST(TodoTest, FieldChangesPreserveIdentityAndCreationContext) {
 }
 
 TEST(TodoTest, AcceptsExplicitPrivacyAtCreation) {
-  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC",
-                                std::nullopt};
+  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC", std::nullopt};
   const Todo todo("Task", "", created, Privacy::Hidden);
 
   EXPECT_EQ(todo.privacy(), Privacy::Hidden);
 }
 
 TEST(TodoTest, AllowsEmptyTitleAndNotesAndUpdatesEachModificationContext) {
-  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC",
-                                 std::nullopt};
-  const TimestampContext title_changed{Timestamp{std::chrono::seconds{200}},
-                                       "Asia/Shanghai", "上海"};
-  const TimestampContext notes_changed{Timestamp{std::chrono::seconds{300}},
-                                       "Europe/Paris", "Paris"};
+  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC", std::nullopt};
+  const TimestampContext title_changed{Timestamp{std::chrono::seconds{200}}, "Asia/Shanghai",
+                                       "上海"};
+  const TimestampContext notes_changed{Timestamp{std::chrono::seconds{300}}, "Europe/Paris",
+                                       "Paris"};
   Todo todo("", "", created);
   EXPECT_TRUE(todo.title().empty());
   EXPECT_TRUE(todo.notes().empty());
@@ -175,13 +165,10 @@ TEST(TodoTest, AllowsEmptyTitleAndNotesAndUpdatesEachModificationContext) {
 }
 
 TEST(TodoTest, SubtasksStayOrderedAndParentCompletionDoesNotCompleteThem) {
-  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC",
-                                 std::nullopt};
+  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC", std::nullopt};
   Todo todo("Task", "", created);
-  const TimestampContext first_change{Timestamp{std::chrono::seconds{200}}, "UTC",
-                                      std::nullopt};
-  const TimestampContext second_change{Timestamp{std::chrono::seconds{300}}, "UTC",
-                                       std::nullopt};
+  const TimestampContext first_change{Timestamp{std::chrono::seconds{200}}, "UTC", std::nullopt};
+  const TimestampContext second_change{Timestamp{std::chrono::seconds{300}}, "UTC", std::nullopt};
 
   todo.add_subtask("First", first_change);
   EXPECT_EQ(todo.modified().timestamp, first_change.timestamp);
@@ -199,13 +186,12 @@ TEST(TodoTest, SubtasksStayOrderedAndParentCompletionDoesNotCompleteThem) {
 }
 
 TEST(TodoTest, SubtaskEditsAndRemovalUpdateParentModificationContext) {
-  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC",
-                                 std::nullopt};
+  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC", std::nullopt};
   Todo todo("Task", "", created);
   todo.add_subtask("First", created);
   todo.add_subtask("Second", created);
-  const TimestampContext edited{Timestamp{std::chrono::seconds{200}},
-                                "Asia/Shanghai", std::string("Shanghai")};
+  const TimestampContext edited{Timestamp{std::chrono::seconds{200}}, "Asia/Shanghai",
+                                std::string("Shanghai")};
 
   todo.set_subtask_content(0, "Revised", edited);
   EXPECT_EQ(todo.subtasks()[0].content, "Revised");
@@ -221,8 +207,7 @@ TEST(TodoTest, SubtaskEditsAndRemovalUpdateParentModificationContext) {
   EXPECT_EQ(todo.subtasks()[0].content, "Second");
   EXPECT_EQ(todo.modified().timestamp, edited.timestamp);
 
-  const TimestampContext later{Timestamp{std::chrono::seconds{300}}, "UTC",
-                               std::nullopt};
+  const TimestampContext later{Timestamp{std::chrono::seconds{300}}, "UTC", std::nullopt};
   EXPECT_THROW(todo.set_subtask_completed(1, true, later), std::out_of_range);
   EXPECT_THROW(todo.remove_subtask(1, later), std::out_of_range);
   EXPECT_EQ(todo.modified().timestamp, edited.timestamp);
@@ -230,17 +215,17 @@ TEST(TodoTest, SubtaskEditsAndRemovalUpdateParentModificationContext) {
 }
 
 TEST(TodoTest, SnapshotRestorePreservesAllFieldsAndExactContexts) {
-  const TimestampContext created{Timestamp{std::chrono::milliseconds{123456789}},
-                                 "Asia/Shanghai", std::string("Shanghai")};
-  const TimestampContext modified{Timestamp{std::chrono::milliseconds{987654321}},
-                                  "Europe/Paris", std::string("Paris")};
+  const TimestampContext created{Timestamp{std::chrono::milliseconds{123456789}}, "Asia/Shanghai",
+                                 std::string("Shanghai")};
+  const TimestampContext modified{Timestamp{std::chrono::milliseconds{987654321}}, "Europe/Paris",
+                                  std::string("Paris")};
   Todo todo("Initial task", "First notes", created, Privacy::Hidden);
   todo.set_title("Caf\u00e9 task", modified);
   todo.set_notes("Second notes\n旅行", modified);
   todo.set_status(TodoStatus::Completed, modified);
   todo.set_priority(TodoPriority::High, modified);
-  const DateContext due_date{std::chrono::year{2027} / 6 / 15,
-                             "America/Los_Angeles", std::string("Los Angeles")};
+  const DateContext due_date{std::chrono::year{2027} / 6 / 15, "America/Los_Angeles",
+                             std::string("Los Angeles")};
   todo.set_due_date(DueDate{due_date}, modified);
   const Id directory = Id::generate();
   todo.set_directory_id(directory, modified);
@@ -273,40 +258,32 @@ TEST(TodoTest, SnapshotRestorePreservesAllFieldsAndExactContexts) {
   EXPECT_EQ(restored_snapshot.privacy, snapshot.privacy);
   ASSERT_EQ(restored_snapshot.subtasks.size(), snapshot.subtasks.size());
   for (std::size_t index = 0; index < snapshot.subtasks.size(); ++index) {
-    EXPECT_EQ(restored_snapshot.subtasks[index].content,
-              snapshot.subtasks[index].content);
-    EXPECT_EQ(restored_snapshot.subtasks[index].completed,
-              snapshot.subtasks[index].completed);
+    EXPECT_EQ(restored_snapshot.subtasks[index].content, snapshot.subtasks[index].content);
+    EXPECT_EQ(restored_snapshot.subtasks[index].completed, snapshot.subtasks[index].completed);
   }
   EXPECT_EQ(todo.snapshot().modified.timestamp, modified.timestamp);
   ASSERT_EQ(todo.snapshot().subtasks.size(), snapshot.subtasks.size());
   for (std::size_t index = 0; index < snapshot.subtasks.size(); ++index) {
-    EXPECT_EQ(todo.snapshot().subtasks[index].content,
-              snapshot.subtasks[index].content);
-    EXPECT_EQ(todo.snapshot().subtasks[index].completed,
-              snapshot.subtasks[index].completed);
+    EXPECT_EQ(todo.snapshot().subtasks[index].content, snapshot.subtasks[index].content);
+    EXPECT_EQ(todo.snapshot().subtasks[index].completed, snapshot.subtasks[index].completed);
   }
 }
 
 TEST(TodoTest, RestoreRejectsInvalidDateOnlyDueDate) {
-  const TimestampContext context{Timestamp{std::chrono::seconds{100}}, "UTC",
-                                 std::nullopt};
+  const TimestampContext context{Timestamp{std::chrono::seconds{100}}, "UTC", std::nullopt};
   Todo todo("Task", "", context);
   auto snapshot = todo.snapshot();
-  snapshot.due_date = DueDate{DateContext{
-      std::chrono::year{2026} / 2 / 30, "UTC", std::nullopt}};
+  snapshot.due_date = DueDate{DateContext{std::chrono::year{2026} / 2 / 30, "UTC", std::nullopt}};
 
   EXPECT_THROW((void)Todo::restore(snapshot), std::invalid_argument);
 }
 
 TEST(TodoTest, SnapshotRestorePreservesDateTimeDueDate) {
-  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC",
-                                 std::nullopt};
-  const TimestampContext due{Timestamp{std::chrono::milliseconds{987654321}},
-                             "Europe/Paris", std::string("Paris")};
+  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC", std::nullopt};
+  const TimestampContext due{Timestamp{std::chrono::milliseconds{987654321}}, "Europe/Paris",
+                             std::string("Paris")};
   Todo todo("Task", "", created);
-  todo.set_due_date(DueDate{due},
-                    {Timestamp{std::chrono::seconds{200}}, "UTC", std::nullopt});
+  todo.set_due_date(DueDate{due}, {Timestamp{std::chrono::seconds{200}}, "UTC", std::nullopt});
 
   const auto restored = Todo::restore(todo.snapshot());
 
@@ -319,8 +296,7 @@ TEST(TodoTest, SnapshotRestorePreservesDateTimeDueDate) {
 }
 
 TEST(TodoTest, RestoreRejectsInvalidStatusAndPriority) {
-  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC",
-                                 std::nullopt};
+  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC", std::nullopt};
   const Todo todo("Task", "", created);
   auto snapshot = todo.snapshot();
   snapshot.status = static_cast<TodoStatus>(99);
@@ -335,4 +311,4 @@ TEST(TodoTest, RestoreRejectsInvalidStatusAndPriority) {
   EXPECT_THROW((void)Todo::restore(snapshot), std::invalid_argument);
 }
 
-}  // namespace
+} // namespace

@@ -22,11 +22,11 @@ namespace core = folio::core;
 namespace storage = folio::core::storage;
 
 class TemporaryDirectory {
- public:
+public:
   TemporaryDirectory() {
     for (unsigned int attempt = 0; attempt < 100; ++attempt) {
-      const auto candidate = fs::temp_directory_path() /
-          ("folio-repository-test-" + core::Id::generate().to_string());
+      const auto candidate =
+          fs::temp_directory_path() / ("folio-repository-test-" + core::Id::generate().to_string());
       if (fs::create_directory(candidate)) {
         path_ = fs::canonical(candidate);
         return;
@@ -45,12 +45,12 @@ class TemporaryDirectory {
 
   const fs::path& path() const { return path_; }
 
- private:
+private:
   fs::path path_;
 };
 
 class NormalRepositoryTest : public testing::Test {
- protected:
+protected:
   TemporaryDirectory temporary;
   fs::path root = temporary.path() / "normal";
   storage::NormalRepository repository{root};
@@ -63,35 +63,47 @@ core::Id id(const char* text) {
 }
 
 core::TimestampContext created() {
-  return {core::Timestamp{std::chrono::seconds{1800000000}},
-          "Asia/Shanghai", std::string{"上海"}};
+  return {core::Timestamp{std::chrono::seconds{1800000000}}, "Asia/Shanghai", std::string{"上海"}};
 }
 
 core::TimestampContext modified() {
-  return {core::Timestamp{std::chrono::seconds{1800000060}},
-          "Europe/Paris", std::string{"Paris"}};
+  return {core::Timestamp{std::chrono::seconds{1800000060}}, "Europe/Paris", std::string{"Paris"}};
 }
 
 core::Log::Snapshot log_snapshot() {
-  return {id("47183823-2574-4bfd-b411-99ed177d3e43"), created(), created(),
-          "Journal 旅行", "first line\n+++\nlast line",
+  return {id("47183823-2574-4bfd-b411-99ed177d3e43"),
+          created(),
+          created(),
+          "Journal 旅行",
+          "first line\n+++\nlast line",
           {{std::chrono::year{2026} / 10 / 25}, "Asia/Shanghai", "上海"},
-          {{"daily"}, {"旅行"}}, core::Privacy::Normal};
+          {{"daily"}, {"旅行"}},
+          core::Privacy::Normal};
 }
 
 core::Memo::Snapshot memo_snapshot() {
-  return {id("55183823-2574-4bfd-b411-99ed177d3e43"), created(), created(),
-          "Memo café", std::string{"body\0with nul", 13}, {{"research"}, {"筆記"}},
-          std::nullopt, core::Privacy::Normal};
+  return {id("55183823-2574-4bfd-b411-99ed177d3e43"),
+          created(),
+          created(),
+          "Memo café",
+          std::string{"body\0with nul", 13},
+          {{"research"}, {"筆記"}},
+          std::nullopt,
+          core::Privacy::Normal};
 }
 
 core::Todo::Snapshot todo_snapshot() {
-  return {id("67183823-2574-4bfd-b411-99ed177d3e43"), created(), created(),
-          "Plan trip", "First line\n第二行 — café",
-          core::TodoStatus::Pending, core::TodoPriority::High,
-          core::DueDate{core::DateContext{{std::chrono::year{2027} / 1 / 2},
-                                          "Asia/Tokyo", std::string{"Tokyo"}}},
-          std::nullopt, core::Privacy::Normal,
+  return {id("67183823-2574-4bfd-b411-99ed177d3e43"),
+          created(),
+          created(),
+          "Plan trip",
+          "First line\n第二行 — café",
+          core::TodoStatus::Pending,
+          core::TodoPriority::High,
+          core::DueDate{core::DateContext{
+              {std::chrono::year{2027} / 1 / 2}, "Asia/Tokyo", std::string{"Tokyo"}}},
+          std::nullopt,
+          core::Privacy::Normal,
           {{"Book train", true}, {"Reserve hotel", false}}};
 }
 
@@ -110,40 +122,41 @@ void write_bytes(const fs::path& path, const std::string& bytes) {
 }
 
 using folio::testing::diagnostic;
-template<class T, class... Errors>
-void expect_error(const std::variant<T, Errors...>& result) {
+template <class T, class... Errors> void expect_error(const std::variant<T, Errors...>& result) {
   EXPECT_FALSE(std::holds_alternative<T>(result));
 }
-template<class T, class... Errors, class Code>
+template <class T, class... Errors, class Code>
 void expect_error_code(const std::variant<T, Errors...>& result, Code code) {
   ASSERT_FALSE(std::holds_alternative<T>(result));
-  std::visit([&](const auto& value) {
-    using Value = std::decay_t<decltype(value)>;
-    if constexpr (!std::is_same_v<Value, T>) EXPECT_EQ(diagnostic(value).code, code);
-  }, result);
+  std::visit(
+      [&](const auto& value) {
+        using Value = std::decay_t<decltype(value)>;
+        if constexpr (!std::is_same_v<Value, T>) EXPECT_EQ(diagnostic(value).code, code);
+      },
+      result);
 }
-template<class T, class... Errors>
+template <class T, class... Errors>
 bool operation_succeeded(const std::variant<T, Errors...>& result) {
   if (std::holds_alternative<T>(result)) return true;
-  std::visit([](const auto& value) {
-    using Value = std::decay_t<decltype(value)>;
-    if constexpr (!std::is_same_v<Value, T>) {
-      const auto error = diagnostic(value);
-      ADD_FAILURE() << error.path << ": " << error.message;
-    }
-  }, result);
+  std::visit(
+      [](const auto& value) {
+        using Value = std::decay_t<decltype(value)>;
+        if constexpr (!std::is_same_v<Value, T>) {
+          const auto error = diagnostic(value);
+          ADD_FAILURE() << error.path << ": " << error.message;
+        }
+      },
+      result);
   return false;
 }
 
-void expect_context(const core::TimestampContext& actual,
-                    const core::TimestampContext& expected) {
+void expect_context(const core::TimestampContext& actual, const core::TimestampContext& expected) {
   EXPECT_EQ(actual.timestamp, expected.timestamp);
   EXPECT_EQ(actual.timezone, expected.timezone);
   EXPECT_EQ(actual.location, expected.location);
 }
 
-void expect_log(const core::Log::Snapshot& actual,
-                const core::Log::Snapshot& expected) {
+void expect_log(const core::Log::Snapshot& actual, const core::Log::Snapshot& expected) {
   EXPECT_EQ(actual.id, expected.id);
   expect_context(actual.created, expected.created);
   expect_context(actual.modified, expected.modified);
@@ -156,8 +169,7 @@ void expect_log(const core::Log::Snapshot& actual,
   EXPECT_EQ(actual.privacy, expected.privacy);
 }
 
-void expect_memo(const core::Memo::Snapshot& actual,
-                 const core::Memo::Snapshot& expected) {
+void expect_memo(const core::Memo::Snapshot& actual, const core::Memo::Snapshot& expected) {
   EXPECT_EQ(actual.id, expected.id);
   expect_context(actual.created, expected.created);
   expect_context(actual.modified, expected.modified);
@@ -168,8 +180,7 @@ void expect_memo(const core::Memo::Snapshot& actual,
   EXPECT_EQ(actual.privacy, expected.privacy);
 }
 
-void expect_todo(const core::Todo::Snapshot& actual,
-                 const core::Todo::Snapshot& expected) {
+void expect_todo(const core::Todo::Snapshot& actual, const core::Todo::Snapshot& expected) {
   EXPECT_EQ(actual.id, expected.id);
   expect_context(actual.created, expected.created);
   expect_context(actual.modified, expected.modified);
@@ -211,11 +222,10 @@ TEST_F(NormalRepositoryTest, CreatesLoadsUpdatesAndReloadsCompleteLogSnapshot) {
   const auto before = repository.locate_record(storage::RecordType::Log, original.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(before));
   EXPECT_EQ(std::get<fs::path>(before).parent_path(), fs::path{"logs"});
-  const auto canonical_name = storage::normal_record_filename(
-      storage::RecordType::Log, original.id, original.created.timestamp);
+  const auto canonical_name = storage::normal_record_filename(storage::RecordType::Log, original.id,
+                                                              original.created.timestamp);
   ASSERT_TRUE(std::holds_alternative<std::string>(canonical_name));
-  EXPECT_EQ(std::get<fs::path>(before).filename(),
-            std::get<std::string>(canonical_name));
+  EXPECT_EQ(std::get<fs::path>(before).filename(), std::get<std::string>(canonical_name));
   original.modified = modified();
   original.title = "Edited journal";
   original.content = "updated\r\nbody";
@@ -243,8 +253,7 @@ TEST_F(NormalRepositoryTest, CreatesLoadsUpdatesAndReloadsCompleteMemoSnapshot) 
   const auto canonical_name = storage::normal_record_filename(
       storage::RecordType::Memo, original.id, original.created.timestamp);
   ASSERT_TRUE(std::holds_alternative<std::string>(canonical_name));
-  EXPECT_EQ(std::get<fs::path>(before).filename(),
-            std::get<std::string>(canonical_name));
+  EXPECT_EQ(std::get<fs::path>(before).filename(), std::get<std::string>(canonical_name));
   original.modified = modified();
   original.title = "Edited memo";
   original.content = "new content";
@@ -271,15 +280,14 @@ TEST_F(NormalRepositoryTest, CreatesLoadsUpdatesAndReloadsCompleteTodoSnapshot) 
   const auto canonical_name = storage::normal_record_filename(
       storage::RecordType::Todo, original.id, original.created.timestamp);
   ASSERT_TRUE(std::holds_alternative<std::string>(canonical_name));
-  EXPECT_EQ(std::get<fs::path>(before).filename(),
-            std::get<std::string>(canonical_name));
+  EXPECT_EQ(std::get<fs::path>(before).filename(), std::get<std::string>(canonical_name));
   original.modified = modified();
   original.title = "Complete trip plan";
   original.notes = "Updated notes\n旅行";
   original.status = core::TodoStatus::Completed;
   original.priority = core::TodoPriority::Medium;
-  original.due_date = core::TimestampContext{
-      core::Timestamp{std::chrono::seconds{1900000000}}, "UTC", std::nullopt};
+  original.due_date = core::TimestampContext{core::Timestamp{std::chrono::seconds{1900000000}},
+                                             "UTC", std::nullopt};
   original.subtasks.push_back({"Pack", false});
   ASSERT_TRUE(operation_succeeded(repository.update_todo(original)));
   const auto second = repository.load_todo(original.id);
@@ -321,8 +329,7 @@ TEST_F(NormalRepositoryTest, SuppliedLogPathBypassesUnrelatedMalformedEntry) {
 
   log.title = "Updated through exact path";
   log.modified = modified();
-  ASSERT_TRUE(operation_succeeded(repository.update_log(
-      log, std::get<fs::path>(locator))));
+  ASSERT_TRUE(operation_succeeded(repository.update_log(log, std::get<fs::path>(locator))));
   const auto reloaded = repository.load_log(log.id, std::get<fs::path>(locator));
   ASSERT_TRUE(std::holds_alternative<core::Log::Snapshot>(reloaded));
   expect_log(std::get<core::Log::Snapshot>(reloaded), log);
@@ -351,22 +358,19 @@ TEST_F(NormalRepositoryTest, SuppliedMemoPathRejectsStaleAndUnsafeLocators) {
   expect_error_code(repository.load_memo(first.id, fs::path{"memos/missing.md"}),
                     storage::StorageErrorCode::StaleLocator);
   first.title = "Must not overwrite another entry";
-  expect_error_code(repository.update_memo(
-      first, std::get<fs::path>(second_locator)),
-      storage::StorageErrorCode::StaleLocator);
+  expect_error_code(repository.update_memo(first, std::get<fs::path>(second_locator)),
+                    storage::StorageErrorCode::StaleLocator);
   expect_error_code(repository.update_memo(first, fs::path{"memos/missing.md"}),
                     storage::StorageErrorCode::StaleLocator);
   EXPECT_EQ(read_bytes(first_path), first_bytes);
   EXPECT_EQ(read_bytes(second_path), second_bytes);
 
-  for (const auto& unsafe : {fs::path{"../outside.md"},
-                             fs::path{"memos/../memos/missing.md"},
+  for (const auto& unsafe : {fs::path{"../outside.md"}, fs::path{"memos/../memos/missing.md"},
                              fs::path{"logs/other.md"}, second_path}) {
     SCOPED_TRACE(unsafe.string());
     expect_error_code(repository.load_memo(first.id, unsafe),
                       folio::io::FileErrorCode::InvalidPath);
-    expect_error_code(repository.update_memo(first, unsafe),
-                      folio::io::FileErrorCode::InvalidPath);
+    expect_error_code(repository.update_memo(first, unsafe), folio::io::FileErrorCode::InvalidPath);
   }
 
   const auto outside = temporary.path() / "outside.md";
@@ -385,19 +389,17 @@ TEST_F(NormalRepositoryTest, SuppliedMemoPathRejectsStaleAndUnsafeLocators) {
 }
 
 TEST_F(NormalRepositoryTest, SuppliedMemoPathValidatesDirectoryMetadata) {
-  const core::Directory::Snapshot directory{
-      id("e7183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
-      "Research"};
-  ASSERT_TRUE(operation_succeeded(repository.create_directory(
-      storage::DirectoryKind::Memo, directory)));
+  const core::Directory::Snapshot directory{id("e7183823-2574-4bfd-b411-99ed177d3e43"),
+                                            storage::DirectoryKind::Memo, "Research"};
+  ASSERT_TRUE(
+      operation_succeeded(repository.create_directory(storage::DirectoryKind::Memo, directory)));
   auto memo = memo_snapshot();
   memo.directory_id = directory.id;
   ASSERT_TRUE(operation_succeeded(repository.create_memo(memo)));
   const auto locator = repository.locate_record(storage::RecordType::Memo, memo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto relative = std::get<fs::path>(locator);
-  EXPECT_EQ(relative.parent_path(),
-            fs::path{"memos"} / directory.id.to_string());
+  EXPECT_EQ(relative.parent_path(), fs::path{"memos"} / directory.id.to_string());
   const auto path = root / relative;
   const auto metadata = path.parent_path() / ".folio-dir.toml";
   const auto first = repository.load_memo(memo.id, relative);
@@ -416,7 +418,8 @@ TEST_F(NormalRepositoryTest, SuppliedMemoPathValidatesDirectoryMetadata) {
   const auto failed_load = repository.load_memo(memo.id, relative);
   ASSERT_TRUE(std::holds_alternative<folio::io::FileError>(failed_load));
   EXPECT_EQ(std::get<folio::io::FileError>(failed_load).code, folio::io::FileErrorCode::IoError);
-  EXPECT_EQ(std::get<folio::io::FileError>(failed_load).system_error, std::errc::no_such_file_or_directory);
+  EXPECT_EQ(std::get<folio::io::FileError>(failed_load).system_error,
+            std::errc::no_such_file_or_directory);
   memo.title = "Must not persist without Directory metadata";
   const auto failed_update = repository.update_memo(memo, relative);
   ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(failed_update));
@@ -434,18 +437,15 @@ TEST_F(NormalRepositoryTest, SuppliedTodoPathBypassesUnrelatedDuplicateId) {
 
   auto unrelated = memo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_memo(unrelated)));
-  const auto unrelated_locator = repository.locate_record(storage::RecordType::Memo,
-                                                          unrelated.id);
+  const auto unrelated_locator = repository.locate_record(storage::RecordType::Memo, unrelated.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(unrelated_locator));
   const auto unrelated_path = root / std::get<fs::path>(unrelated_locator);
   const auto duplicate_path = root / "memos" / "duplicate.md";
   fs::copy_file(unrelated_path, duplicate_path);
   const auto unrelated_bytes = read_bytes(unrelated_path);
 
-  expect_error_code(repository.load_todo(todo.id),
-                    storage::StorageErrorCode::DuplicateId);
-  expect_error_code(repository.update_todo(todo),
-                    storage::StorageErrorCode::DuplicateId);
+  expect_error_code(repository.load_todo(todo.id), storage::StorageErrorCode::DuplicateId);
+  expect_error_code(repository.update_todo(todo), storage::StorageErrorCode::DuplicateId);
   const auto loaded = repository.load_todo(todo.id, std::get<fs::path>(locator));
   ASSERT_TRUE(std::holds_alternative<core::Todo::Snapshot>(loaded));
   expect_todo(std::get<core::Todo::Snapshot>(loaded), todo);
@@ -453,8 +453,7 @@ TEST_F(NormalRepositoryTest, SuppliedTodoPathBypassesUnrelatedDuplicateId) {
   todo.title = "Updated through exact Todo path";
   todo.notes = "Updated exact notes\nCafé";
   todo.modified = modified();
-  ASSERT_TRUE(operation_succeeded(repository.update_todo(
-      todo, std::get<fs::path>(locator))));
+  ASSERT_TRUE(operation_succeeded(repository.update_todo(todo, std::get<fs::path>(locator))));
   const auto reloaded = repository.load_todo(todo.id, std::get<fs::path>(locator));
   ASSERT_TRUE(std::holds_alternative<core::Todo::Snapshot>(reloaded));
   expect_todo(std::get<core::Todo::Snapshot>(reloaded), todo);
@@ -466,20 +465,21 @@ TEST_F(NormalRepositoryTest, SuppliedTodoPathBypassesUnrelatedDuplicateId) {
 TEST_F(NormalRepositoryTest, DirectoryMetadataPreservesUnicodeNameAndPhysicalUuid) {
   core::Directory::Snapshot directory{id("78183823-2574-4bfd-b411-99ed177d3e43"),
                                       storage::DirectoryKind::Memo, "旅行 / 筆記"};
-  ASSERT_TRUE(operation_succeeded(
-      repository.create_directory(storage::DirectoryKind::Memo, directory)));
+  ASSERT_TRUE(
+      operation_succeeded(repository.create_directory(storage::DirectoryKind::Memo, directory)));
   const auto folder = root / "memos" / directory.id.to_string();
   EXPECT_TRUE(fs::is_directory(folder));
   EXPECT_TRUE(fs::is_regular_file(folder / ".folio-dir.toml"));
-  for (const unsigned char byte : folder.filename().string()) EXPECT_LT(byte, 128);
+  for (const unsigned char byte : folder.filename().string())
+    EXPECT_LT(byte, 128);
   const auto loaded = repository.load_directory(storage::DirectoryKind::Memo, directory.id);
   ASSERT_TRUE(std::holds_alternative<core::Directory::Snapshot>(loaded));
   EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).id, directory.id);
   EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).kind, directory.kind);
   EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).name, directory.name);
 
-  ASSERT_TRUE(operation_succeeded(repository.rename_directory(
-      storage::DirectoryKind::Memo, directory.id, "新名稱 café")));
+  ASSERT_TRUE(operation_succeeded(
+      repository.rename_directory(storage::DirectoryKind::Memo, directory.id, "新名稱 café")));
   const auto renamed = repository.load_directory(storage::DirectoryKind::Memo, directory.id);
   ASSERT_TRUE(std::holds_alternative<core::Directory::Snapshot>(renamed));
   EXPECT_EQ(std::get<core::Directory::Snapshot>(renamed).kind, directory.kind);
@@ -488,19 +488,16 @@ TEST_F(NormalRepositoryTest, DirectoryMetadataPreservesUnicodeNameAndPhysicalUui
 }
 
 TEST_F(NormalRepositoryTest, DirectoryKindMismatchAndLegacyReadsUseModuleContext) {
-  core::Directory::Snapshot directory{
-      id("f7183823-2574-4bfd-b411-99ed177d3e43"),
-      storage::DirectoryKind::Todo, "Kind check"};
-  expect_error_code(repository.create_directory(storage::DirectoryKind::Memo,
-                                                directory),
+  core::Directory::Snapshot directory{id("f7183823-2574-4bfd-b411-99ed177d3e43"),
+                                      storage::DirectoryKind::Todo, "Kind check"};
+  expect_error_code(repository.create_directory(storage::DirectoryKind::Memo, directory),
                     storage::StorageErrorCode::InvalidMetadata);
   EXPECT_FALSE(fs::exists(root / "memos" / directory.id.to_string()));
 
   directory.kind = storage::DirectoryKind::Memo;
-  ASSERT_TRUE(operation_succeeded(repository.create_directory(
-      storage::DirectoryKind::Memo, directory)));
-  const auto metadata = root / "memos" / directory.id.to_string() /
-                        ".folio-dir.toml";
+  ASSERT_TRUE(
+      operation_succeeded(repository.create_directory(storage::DirectoryKind::Memo, directory)));
+  const auto metadata = root / "memos" / directory.id.to_string() / ".folio-dir.toml";
   const auto decoded = storage::codec::parse_toml(read_bytes(metadata));
   ASSERT_TRUE(std::holds_alternative<toml::table>(decoded));
   auto legacy = std::get<toml::table>(decoded);
@@ -508,34 +505,29 @@ TEST_F(NormalRepositoryTest, DirectoryKindMismatchAndLegacyReadsUseModuleContext
   const auto legacy_bytes = storage::codec::serialize_toml(legacy);
   ASSERT_TRUE(std::holds_alternative<std::string>(legacy_bytes));
   ASSERT_NO_FATAL_FAILURE(write_bytes(metadata, std::get<std::string>(legacy_bytes)));
-  const auto loaded = repository.load_directory(storage::DirectoryKind::Memo,
-                                                 directory.id);
+  const auto loaded = repository.load_directory(storage::DirectoryKind::Memo, directory.id);
   ASSERT_TRUE(std::holds_alternative<core::Directory::Snapshot>(loaded));
-  EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).kind,
-            storage::DirectoryKind::Memo);
+  EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).kind, storage::DirectoryKind::Memo);
   EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).name, directory.name);
 
   legacy.insert_or_assign("kind", "Todo");
   const auto conflicting_bytes = storage::codec::serialize_toml(legacy);
   ASSERT_TRUE(std::holds_alternative<std::string>(conflicting_bytes));
   ASSERT_NO_FATAL_FAILURE(write_bytes(metadata, std::get<std::string>(conflicting_bytes)));
-  expect_error_code(repository.load_directory(storage::DirectoryKind::Memo,
-                                              directory.id),
+  expect_error_code(repository.load_directory(storage::DirectoryKind::Memo, directory.id),
                     storage::StorageErrorCode::CodecError);
-  expect_error_code(repository.rename_directory(storage::DirectoryKind::Memo,
-                                                directory.id, "Must not rename"),
-                    storage::StorageErrorCode::CodecError);
+  expect_error_code(
+      repository.rename_directory(storage::DirectoryKind::Memo, directory.id, "Must not rename"),
+      storage::StorageErrorCode::CodecError);
   EXPECT_EQ(read_bytes(metadata), std::get<std::string>(conflicting_bytes));
 }
 
 TEST_F(NormalRepositoryTest, LegacyTodoDirectoryUsesTrustedModuleContext) {
-  const core::Directory::Snapshot directory{
-      id("f8183823-2574-4bfd-b411-99ed177d3e43"),
-      storage::DirectoryKind::Todo, "旧任务"};
-  ASSERT_TRUE(operation_succeeded(repository.create_directory(
-      storage::DirectoryKind::Todo, directory)));
-  const auto metadata = root / "todos" / directory.id.to_string() /
-                        ".folio-dir.toml";
+  const core::Directory::Snapshot directory{id("f8183823-2574-4bfd-b411-99ed177d3e43"),
+                                            storage::DirectoryKind::Todo, "旧任务"};
+  ASSERT_TRUE(
+      operation_succeeded(repository.create_directory(storage::DirectoryKind::Todo, directory)));
+  const auto metadata = root / "todos" / directory.id.to_string() / ".folio-dir.toml";
   const auto decoded = storage::codec::parse_toml(read_bytes(metadata));
   ASSERT_TRUE(std::holds_alternative<toml::table>(decoded));
   auto legacy = std::get<toml::table>(decoded);
@@ -543,30 +535,26 @@ TEST_F(NormalRepositoryTest, LegacyTodoDirectoryUsesTrustedModuleContext) {
   const auto legacy_bytes = storage::codec::serialize_toml(legacy);
   ASSERT_TRUE(std::holds_alternative<std::string>(legacy_bytes));
   ASSERT_NO_FATAL_FAILURE(write_bytes(metadata, std::get<std::string>(legacy_bytes)));
-  const auto loaded = repository.load_directory(storage::DirectoryKind::Todo,
-                                                 directory.id);
+  const auto loaded = repository.load_directory(storage::DirectoryKind::Todo, directory.id);
   ASSERT_TRUE(std::holds_alternative<core::Directory::Snapshot>(loaded));
-  EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).kind,
-            storage::DirectoryKind::Todo);
+  EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).kind, storage::DirectoryKind::Todo);
   EXPECT_EQ(std::get<core::Directory::Snapshot>(loaded).name, directory.name);
 }
 
 TEST_F(NormalRepositoryTest, MovesMemoAndTodoBetweenRootAndDirectories) {
-  const core::Directory::Snapshot memo_directory{
-      id("88183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
-      "Memo folder"};
-  const core::Directory::Snapshot todo_directory{
-      id("98183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Todo,
-      "Todo folder"};
-  const core::Directory::Snapshot second_memo_directory{
-      id("a9183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
-      "Second memo folder"};
-  ASSERT_TRUE(operation_succeeded(repository.create_directory(
-      storage::DirectoryKind::Memo, memo_directory)));
-  ASSERT_TRUE(operation_succeeded(repository.create_directory(
-      storage::DirectoryKind::Memo, second_memo_directory)));
-  ASSERT_TRUE(operation_succeeded(repository.create_directory(
-      storage::DirectoryKind::Todo, todo_directory)));
+  const core::Directory::Snapshot memo_directory{id("88183823-2574-4bfd-b411-99ed177d3e43"),
+                                                 storage::DirectoryKind::Memo, "Memo folder"};
+  const core::Directory::Snapshot todo_directory{id("98183823-2574-4bfd-b411-99ed177d3e43"),
+                                                 storage::DirectoryKind::Todo, "Todo folder"};
+  const core::Directory::Snapshot second_memo_directory{id("a9183823-2574-4bfd-b411-99ed177d3e43"),
+                                                        storage::DirectoryKind::Memo,
+                                                        "Second memo folder"};
+  ASSERT_TRUE(operation_succeeded(
+      repository.create_directory(storage::DirectoryKind::Memo, memo_directory)));
+  ASSERT_TRUE(operation_succeeded(
+      repository.create_directory(storage::DirectoryKind::Memo, second_memo_directory)));
+  ASSERT_TRUE(operation_succeeded(
+      repository.create_directory(storage::DirectoryKind::Todo, todo_directory)));
   auto memo = memo_snapshot();
   auto todo = todo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_memo(memo)));
@@ -576,10 +564,8 @@ TEST_F(NormalRepositoryTest, MovesMemoAndTodoBetweenRootAndDirectories) {
   ASSERT_TRUE(std::holds_alternative<fs::path>(memo_before));
   ASSERT_TRUE(std::holds_alternative<fs::path>(todo_before));
 
-  ASSERT_TRUE(operation_succeeded(repository.move_memo(
-      memo.id, memo_directory.id, modified())));
-  ASSERT_TRUE(operation_succeeded(repository.move_todo(
-      todo.id, todo_directory.id, modified())));
+  ASSERT_TRUE(operation_succeeded(repository.move_memo(memo.id, memo_directory.id, modified())));
+  ASSERT_TRUE(operation_succeeded(repository.move_todo(todo.id, todo_directory.id, modified())));
   const auto memo_in_folder = repository.locate_record(storage::RecordType::Memo, memo.id);
   const auto todo_in_folder = repository.locate_record(storage::RecordType::Todo, todo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(memo_in_folder));
@@ -603,10 +589,9 @@ TEST_F(NormalRepositoryTest, MovesMemoAndTodoBetweenRootAndDirectories) {
   expect_memo(std::get<core::Memo::Snapshot>(loaded_memo), memo);
   expect_todo(std::get<core::Todo::Snapshot>(loaded_todo), todo);
 
-  ASSERT_TRUE(operation_succeeded(repository.move_memo(
-      memo.id, second_memo_directory.id, modified())));
-  const auto memo_in_second_folder = repository.locate_record(storage::RecordType::Memo,
-                                                              memo.id);
+  ASSERT_TRUE(
+      operation_succeeded(repository.move_memo(memo.id, second_memo_directory.id, modified())));
+  const auto memo_in_second_folder = repository.locate_record(storage::RecordType::Memo, memo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(memo_in_second_folder));
   EXPECT_EQ(std::get<fs::path>(memo_in_second_folder).parent_path(),
             fs::path{"memos"} / second_memo_directory.id.to_string());
@@ -617,10 +602,8 @@ TEST_F(NormalRepositoryTest, MovesMemoAndTodoBetweenRootAndDirectories) {
   ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(memo_after_second_move));
   expect_memo(std::get<core::Memo::Snapshot>(memo_after_second_move), memo);
 
-  ASSERT_TRUE(operation_succeeded(repository.move_memo(
-      memo.id, std::nullopt, modified())));
-  ASSERT_TRUE(operation_succeeded(repository.move_todo(
-      todo.id, std::nullopt, modified())));
+  ASSERT_TRUE(operation_succeeded(repository.move_memo(memo.id, std::nullopt, modified())));
+  ASSERT_TRUE(operation_succeeded(repository.move_todo(todo.id, std::nullopt, modified())));
   const auto memo_after = repository.locate_record(storage::RecordType::Memo, memo.id);
   const auto todo_after = repository.locate_record(storage::RecordType::Todo, todo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(memo_after));
@@ -642,18 +625,16 @@ TEST_F(NormalRepositoryTest, RejectsDuplicateIdsAndDuplicatePhysicalPaths) {
 }
 
 TEST_F(NormalRepositoryTest, RejectsDuplicateIdInAnotherPhysicalDirectory) {
-  const core::Directory::Snapshot directory{
-      id("b8183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
-      "Research"};
-  ASSERT_TRUE(operation_succeeded(repository.create_directory(
-      storage::DirectoryKind::Memo, directory)));
+  const core::Directory::Snapshot directory{id("b8183823-2574-4bfd-b411-99ed177d3e43"),
+                                            storage::DirectoryKind::Memo, "Research"};
+  ASSERT_TRUE(
+      operation_succeeded(repository.create_directory(storage::DirectoryKind::Memo, directory)));
   const auto memo = memo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_memo(memo)));
   const auto locator = repository.locate_record(storage::RecordType::Memo, memo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto original = root / std::get<fs::path>(locator);
-  const auto duplicate = root / "memos" / directory.id.to_string() /
-      original.filename();
+  const auto duplicate = root / "memos" / directory.id.to_string() / original.filename();
   fs::copy_file(original, duplicate);
   expect_error(repository.locate_record(storage::RecordType::Memo, memo.id));
   expect_error(repository.load_memo(memo.id));
@@ -663,8 +644,7 @@ TEST_F(NormalRepositoryTest, RejectsDuplicateIdInAnotherPhysicalDirectory) {
 TEST_F(NormalRepositoryTest, UnrelatedDuplicateStoredIdBlocksOtherEntry) {
   auto original = memo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_memo(original)));
-  const auto original_locator = repository.locate_record(storage::RecordType::Memo,
-                                                         original.id);
+  const auto original_locator = repository.locate_record(storage::RecordType::Memo, original.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(original_locator));
   const auto original_path = root / std::get<fs::path>(original_locator);
   const auto original_bytes = read_bytes(original_path);
@@ -674,8 +654,8 @@ TEST_F(NormalRepositoryTest, UnrelatedDuplicateStoredIdBlocksOtherEntry) {
   duplicate.title = "Unrelated duplicate";
   const auto encoded = core::storage::codec::serialize_markdown(duplicate);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
-  const auto first_name = storage::normal_record_filename(
-      storage::RecordType::Memo, duplicate.id, duplicate.created.timestamp);
+  const auto first_name = storage::normal_record_filename(storage::RecordType::Memo, duplicate.id,
+                                                          duplicate.created.timestamp);
   ASSERT_TRUE(std::holds_alternative<std::string>(first_name));
   const auto first_path = root / "memos" / std::get<std::string>(first_name);
   const auto second_path = root / "memos" / "unrelated-renamed.md";
@@ -684,12 +664,10 @@ TEST_F(NormalRepositoryTest, UnrelatedDuplicateStoredIdBlocksOtherEntry) {
 
   const auto located = repository.locate_record(storage::RecordType::Memo, original.id);
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(located));
-  EXPECT_EQ(std::get<storage::StorageError>(located).code,
-            storage::StorageErrorCode::DuplicateId);
+  EXPECT_EQ(std::get<storage::StorageError>(located).code, storage::StorageErrorCode::DuplicateId);
   const auto loaded = repository.load_memo(original.id);
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(loaded));
-  EXPECT_EQ(std::get<storage::StorageError>(loaded).code,
-            storage::StorageErrorCode::DuplicateId);
+  EXPECT_EQ(std::get<storage::StorageError>(loaded).code, storage::StorageErrorCode::DuplicateId);
   original.title = "Must not update while another ID is duplicated";
   expect_error(repository.update_memo(original));
   auto third = memo_snapshot();
@@ -700,25 +678,22 @@ TEST_F(NormalRepositoryTest, UnrelatedDuplicateStoredIdBlocksOtherEntry) {
 }
 
 TEST_F(NormalRepositoryTest, StoredIdSurvivesRenamedFilenameUpdateAndMove) {
-  const core::Directory::Snapshot directory{
-      id("b9183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
-      "Destination"};
-  ASSERT_TRUE(operation_succeeded(repository.create_directory(
-      storage::DirectoryKind::Memo, directory)));
+  const core::Directory::Snapshot directory{id("b9183823-2574-4bfd-b411-99ed177d3e43"),
+                                            storage::DirectoryKind::Memo, "Destination"};
+  ASSERT_TRUE(
+      operation_succeeded(repository.create_directory(storage::DirectoryKind::Memo, directory)));
   auto stored = memo_snapshot();
   ASSERT_TRUE(operation_succeeded(repository.create_memo(stored)));
-  const auto original_locator = repository.locate_record(storage::RecordType::Memo,
-                                                         stored.id);
+  const auto original_locator = repository.locate_record(storage::RecordType::Memo, stored.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(original_locator));
   const auto original_path = root / std::get<fs::path>(original_locator);
   const auto original_bytes = read_bytes(original_path);
 
   const auto filename_id = id("c9183823-2574-4bfd-b411-99ed177d3e43");
-  const auto other_name = storage::normal_record_filename(
-      storage::RecordType::Memo, filename_id, stored.created.timestamp);
+  const auto other_name = storage::normal_record_filename(storage::RecordType::Memo, filename_id,
+                                                          stored.created.timestamp);
   ASSERT_TRUE(std::holds_alternative<std::string>(other_name));
-  const auto mismatched_path = original_path.parent_path() /
-      std::get<std::string>(other_name);
+  const auto mismatched_path = original_path.parent_path() / std::get<std::string>(other_name);
   fs::rename(original_path, mismatched_path);
   ASSERT_FALSE(fs::exists(original_path));
   ASSERT_EQ(read_bytes(mismatched_path), original_bytes);
@@ -726,8 +701,8 @@ TEST_F(NormalRepositoryTest, StoredIdSurvivesRenamedFilenameUpdateAndMove) {
   const auto located = repository.locate_record(storage::RecordType::Memo, stored.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(located));
   EXPECT_EQ(root / std::get<fs::path>(located), mismatched_path);
-  const auto known_path = repository.locate_record(
-      storage::RecordType::Memo, std::get<fs::path>(located));
+  const auto known_path =
+      repository.locate_record(storage::RecordType::Memo, std::get<fs::path>(located));
   ASSERT_TRUE(std::holds_alternative<fs::path>(known_path));
   EXPECT_EQ(std::get<fs::path>(known_path), std::get<fs::path>(located));
   const auto loaded = repository.load_memo(stored.id);
@@ -752,14 +727,12 @@ TEST_F(NormalRepositoryTest, StoredIdSurvivesRenamedFilenameUpdateAndMove) {
   ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(updated));
   expect_memo(std::get<core::Memo::Snapshot>(updated), stored);
 
-  ASSERT_TRUE(operation_succeeded(repository.move_memo(
-      stored.id, directory.id, modified())));
+  ASSERT_TRUE(operation_succeeded(repository.move_memo(stored.id, directory.id, modified())));
   stored.directory_id = directory.id;
   const auto moved = repository.locate_record(storage::RecordType::Memo, stored.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(moved));
   EXPECT_EQ(std::get<fs::path>(moved).filename(), mismatched_path.filename());
-  EXPECT_EQ(std::get<fs::path>(moved).parent_path(),
-            fs::path{"memos"} / directory.id.to_string());
+  EXPECT_EQ(std::get<fs::path>(moved).parent_path(), fs::path{"memos"} / directory.id.to_string());
   const auto moved_snapshot = repository.load_memo(stored.id);
   ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(moved_snapshot));
   expect_memo(std::get<core::Memo::Snapshot>(moved_snapshot), stored);
@@ -769,12 +742,11 @@ TEST_F(NormalRepositoryTest, StoredIdSurvivesRenamedFilenameUpdateAndMove) {
   const auto moved_path = root / std::get<fs::path>(moved);
   const auto arbitrary_path = moved_path.parent_path() / ".notes.tmp-draft.md";
   fs::rename(moved_path, arbitrary_path);
-  const auto arbitrary_locator = repository.locate_record(storage::RecordType::Memo,
-                                                          stored.id);
+  const auto arbitrary_locator = repository.locate_record(storage::RecordType::Memo, stored.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(arbitrary_locator));
   EXPECT_EQ(root / std::get<fs::path>(arbitrary_locator), arbitrary_path);
-  const auto known_arbitrary = repository.locate_record(
-      storage::RecordType::Memo, std::get<fs::path>(arbitrary_locator));
+  const auto known_arbitrary =
+      repository.locate_record(storage::RecordType::Memo, std::get<fs::path>(arbitrary_locator));
   ASSERT_TRUE(std::holds_alternative<fs::path>(known_arbitrary));
   EXPECT_EQ(std::get<fs::path>(known_arbitrary), std::get<fs::path>(arbitrary_locator));
   const auto arbitrary_loaded = repository.load_memo(stored.id);
@@ -783,8 +755,7 @@ TEST_F(NormalRepositoryTest, StoredIdSurvivesRenamedFilenameUpdateAndMove) {
 
   stored.title = "Updated after basename changed";
   ASSERT_TRUE(operation_succeeded(repository.update_memo(stored)));
-  const auto after_rename_update = repository.locate_record(
-      storage::RecordType::Memo, stored.id);
+  const auto after_rename_update = repository.locate_record(storage::RecordType::Memo, stored.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(after_rename_update));
   EXPECT_EQ(root / std::get<fs::path>(after_rename_update), arbitrary_path);
   const auto updated_after_rename = repository.load_memo(stored.id);
@@ -818,8 +789,8 @@ TEST_F(NormalRepositoryTest, OldIdCannotOverwriteDifferentEntryAtSamePath) {
   const auto by_stored_id = repository.locate_record(storage::RecordType::Memo, injected.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(by_stored_id));
   EXPECT_EQ(std::get<fs::path>(by_stored_id), std::get<fs::path>(locator));
-  const auto by_known_path = repository.locate_record(
-      storage::RecordType::Memo, std::get<fs::path>(locator));
+  const auto by_known_path =
+      repository.locate_record(storage::RecordType::Memo, std::get<fs::path>(locator));
   ASSERT_TRUE(std::holds_alternative<fs::path>(by_known_path));
   EXPECT_EQ(std::get<fs::path>(by_known_path), std::get<fs::path>(locator));
   const auto loaded = repository.load_memo(injected.id);
@@ -851,10 +822,10 @@ TEST_F(NormalRepositoryTest, IgnoresNonformalFilesAndRejectsThemAsKnownPaths) {
   const auto loaded = repository.load_memo(memo.id);
   ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(loaded));
   expect_memo(std::get<core::Memo::Snapshot>(loaded), memo);
-  expect_error(repository.locate_record(
-      storage::RecordType::Memo, fs::path{"memos/copied-entry.txt"}));
-  expect_error(repository.locate_record(
-      storage::RecordType::Memo, fs::path{"memos/malformed.txt"}));
+  expect_error(
+      repository.locate_record(storage::RecordType::Memo, fs::path{"memos/copied-entry.txt"}));
+  expect_error(
+      repository.locate_record(storage::RecordType::Memo, fs::path{"memos/malformed.txt"}));
 
   auto other = memo_snapshot();
   other.id = id("d7183823-2574-4bfd-b411-99ed177d3e43");
@@ -865,14 +836,13 @@ TEST_F(NormalRepositoryTest, IgnoresNonformalFilesAndRejectsThemAsKnownPaths) {
 }
 
 TEST_F(NormalRepositoryTest, RejectsMissingOrInvalidDirectoryMetadataAndReferences) {
-  const core::Directory::Snapshot directory{
-      id("a8183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
-      "Research"};
+  const core::Directory::Snapshot directory{id("a8183823-2574-4bfd-b411-99ed177d3e43"),
+                                            storage::DirectoryKind::Memo, "Research"};
   auto memo = memo_snapshot();
   memo.directory_id = directory.id;
   expect_error(repository.create_memo(memo));
-  ASSERT_TRUE(operation_succeeded(repository.create_directory(
-      storage::DirectoryKind::Memo, directory)));
+  ASSERT_TRUE(
+      operation_succeeded(repository.create_directory(storage::DirectoryKind::Memo, directory)));
   const auto metadata = root / "memos" / directory.id.to_string() / ".folio-dir.toml";
   const auto original_metadata = read_bytes(metadata);
   ASSERT_TRUE(fs::remove(metadata));
@@ -903,8 +873,8 @@ TEST_F(NormalRepositoryTest, RejectsMissingOrInvalidDirectoryMetadataAndReferenc
   expect_error(repository.load_directory(storage::DirectoryKind::Memo, directory.id));
   expect_error(repository.locate_record(storage::RecordType::Memo, memo.id));
   expect_error(repository.load_memo(memo.id));
-  expect_error(repository.rename_directory(storage::DirectoryKind::Memo,
-                                           directory.id, "Must not rename"));
+  expect_error(
+      repository.rename_directory(storage::DirectoryKind::Memo, directory.id, "Must not rename"));
   auto other_memo = memo_snapshot();
   other_memo.id = id("f9183823-2574-4bfd-b411-99ed177d3e43");
   other_memo.directory_id.reset();
@@ -914,11 +884,10 @@ TEST_F(NormalRepositoryTest, RejectsMissingOrInvalidDirectoryMetadataAndReferenc
 }
 
 TEST_F(NormalRepositoryTest, RejectsDirectoryReferenceFromWrongEntryModule) {
-  const core::Directory::Snapshot todo_directory{
-      id("d8183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Todo,
-      "Todo only"};
-  ASSERT_TRUE(operation_succeeded(repository.create_directory(
-      storage::DirectoryKind::Todo, todo_directory)));
+  const core::Directory::Snapshot todo_directory{id("d8183823-2574-4bfd-b411-99ed177d3e43"),
+                                                 storage::DirectoryKind::Todo, "Todo only"};
+  ASSERT_TRUE(operation_succeeded(
+      repository.create_directory(storage::DirectoryKind::Todo, todo_directory)));
   auto memo = memo_snapshot();
   memo.directory_id = todo_directory.id;
   expect_error(repository.create_memo(memo));
@@ -940,10 +909,9 @@ TEST_F(NormalRepositoryTest, RejectsMalformedEntryWithoutReplacingItsBytes) {
 }
 
 TEST_F(NormalRepositoryTest, RejectsTraversalAndSymbolicLinkEscape) {
-  expect_error(repository.locate_record(storage::RecordType::Memo,
-                                       fs::path{"../outside.md"}));
-  expect_error(repository.locate_record(storage::RecordType::Memo,
-                                       fs::path{"memos/../logs/entry.md"}));
+  expect_error(repository.locate_record(storage::RecordType::Memo, fs::path{"../outside.md"}));
+  expect_error(
+      repository.locate_record(storage::RecordType::Memo, fs::path{"memos/../logs/entry.md"}));
 
   const auto outside = temporary.path() / "outside";
   ASSERT_TRUE(fs::create_directory(outside));
@@ -977,11 +945,10 @@ TEST_F(NormalRepositoryTest, RejectsSymbolicLinkEntry) {
 }
 
 TEST_F(NormalRepositoryTest, RejectsSymbolicLinkChildDirectory) {
-  const core::Directory::Snapshot directory{
-      id("e8183823-2574-4bfd-b411-99ed177d3e43"), storage::DirectoryKind::Memo,
-      "Child"};
-  ASSERT_TRUE(operation_succeeded(repository.create_directory(
-      storage::DirectoryKind::Memo, directory)));
+  const core::Directory::Snapshot directory{id("e8183823-2574-4bfd-b411-99ed177d3e43"),
+                                            storage::DirectoryKind::Memo, "Child"};
+  ASSERT_TRUE(
+      operation_succeeded(repository.create_directory(storage::DirectoryKind::Memo, directory)));
   const auto child = root / "memos" / directory.id.to_string();
   const auto outside_child = temporary.path() / "outside-child";
   fs::rename(child, outside_child);
@@ -1006,12 +973,10 @@ TEST_F(NormalRepositoryTest, FailedAtomicUpdatePreservesExistingBytesAndSnapshot
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto path = root / std::get<fs::path>(locator);
   const auto original_bytes = read_bytes(path);
-  const auto pending = path.parent_path() /
-      ("." + path.filename().string() + ".tmp-" +
-       core::Id::generate().to_string());
+  const auto pending = path.parent_path() / ("." + path.filename().string() + ".tmp-" +
+                                             core::Id::generate().to_string());
   ASSERT_NO_FATAL_FAILURE(write_bytes(pending, original_bytes));
-  const auto while_pending = repository.locate_record(storage::RecordType::Memo,
-                                                      memo.id);
+  const auto while_pending = repository.locate_record(storage::RecordType::Memo, memo.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(while_pending));
   EXPECT_EQ(std::get<fs::path>(while_pending), std::get<fs::path>(locator));
   const auto loaded_while_pending = repository.load_memo(memo.id);
@@ -1033,4 +998,4 @@ TEST_F(NormalRepositoryTest, FailedAtomicUpdatePreservesExistingBytesAndSnapshot
   EXPECT_EQ(std::get<core::Memo::Snapshot>(loaded).title, "Memo café");
 }
 
-}  // namespace
+} // namespace

@@ -24,25 +24,31 @@ namespace fs = std::filesystem;
 using namespace std::chrono_literals;
 
 class MetadataAccessIntegration : public testing::Test {
- protected:
+protected:
 #ifdef __APPLE__
-  fs::path base = fs::path("/private/tmp") / ("fread-" + core::Id::generate().to_string().substr(0, 8));
+  fs::path base =
+      fs::path("/private/tmp") / ("fread-" + core::Id::generate().to_string().substr(0, 8));
 #else
-  fs::path base = fs::temp_directory_path() / ("fread-" + core::Id::generate().to_string().substr(0, 8));
+  fs::path base =
+      fs::temp_directory_path() / ("fread-" + core::Id::generate().to_string().substr(0, 8));
 #endif
   core::TimestampContext time{core::Timestamp{std::chrono::seconds{1800000000}}, "UTC", {}};
-  storage::StoragePaths paths{base / "normal", base / "vault",
-      {base / "config", base / "data", base / "state", base / "cache", base / "logs", base / "runtime"}};
+  storage::StoragePaths paths{base / "normal",
+                              base / "vault",
+                              {base / "config", base / "data", base / "state", base / "cache",
+                               base / "logs", base / "runtime"}};
   storage::NormalRepository repository{paths.normal_root};
   core::Memo memo{"Long memo", std::string(80 * 1024, 'x'), time};
-  struct Child { std::uint64_t pid; fs::path result; };
+  struct Child {
+    std::uint64_t pid;
+    fs::path result;
+  };
   std::vector<Child> children;
   bool all_exited() const {
-    return std::all_of(children.begin(), children.end(), [](const Child& child) {
-      return fs::exists(child.result);
-    });
+    return std::all_of(children.begin(), children.end(),
+                       [](const Child& child) { return fs::exists(child.result); });
   }
-  template<class F> bool until(F predicate) {
+  template <class F> bool until(F predicate) {
     auto deadline = std::chrono::steady_clock::now() + 8s;
     while (std::chrono::steady_clock::now() < deadline) {
       if (predicate()) return true;
@@ -56,12 +62,17 @@ class MetadataAccessIntegration : public testing::Test {
   }
   void TearDown() override {
     for (const auto& child : children) {
-      if (until([&]{return fs::exists(child.result);})) continue;
+      if (until([&] { return fs::exists(child.result); })) continue;
 #ifndef _WIN32
       kill(static_cast<pid_t>(child.pid), SIGKILL);
 #else
-      auto handle = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, static_cast<DWORD>(child.pid));
-      if (handle) { TerminateProcess(handle, 9); WaitForSingleObject(handle, 5000); CloseHandle(handle); }
+      auto handle =
+          OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, static_cast<DWORD>(child.pid));
+      if (handle) {
+        TerminateProcess(handle, 9);
+        WaitForSingleObject(handle, 5000);
+        CloseHandle(handle);
+      }
 #endif
       ADD_FAILURE() << "Backend candidate failed orderly shutdown: " << child.pid;
     }
@@ -71,7 +82,8 @@ class MetadataAccessIntegration : public testing::Test {
   bool send_bytes(ipc::IpcStream& stream, std::string_view bytes) {
     std::size_t offset = 0;
     return until([&] {
-      auto sent = stream.write(std::as_bytes(std::span(bytes.data(), bytes.size())).subspan(offset));
+      auto sent =
+          stream.write(std::as_bytes(std::span(bytes.data(), bytes.size())).subspan(offset));
       if (std::holds_alternative<ipc::IpcError>(sent)) return false;
       offset += std::get<std::size_t>(sent);
       return offset == bytes.size();
@@ -89,7 +101,8 @@ class MetadataAccessIntegration : public testing::Test {
   ipc::IpcStream raw_connection() {
     auto settings = std::get<ipc::ConnectionSettings>(ipc::connection_settings(paths));
     auto connected = ipc::IpcStream::connect(settings.endpoint);
-    if (!std::holds_alternative<ipc::IpcStream>(connected)) throw std::runtime_error("Raw connection failed");
+    if (!std::holds_alternative<ipc::IpcStream>(connected))
+      throw std::runtime_error("Raw connection failed");
     auto stream = std::get<ipc::IpcStream>(std::move(connected));
     if (!send(stream, {ipc::MessageKind::Hello, {}})) throw std::runtime_error("Hello failed");
     auto ready = receive(stream);
@@ -98,7 +111,8 @@ class MetadataAccessIntegration : public testing::Test {
   }
   app::BackendConnectionHandle connect() {
     auto connection = app::connect_or_start_backend(
-        std::get<ipc::ConnectionSettings>(ipc::connection_settings(paths)), [&] {
+        std::get<ipc::ConnectionSettings>(ipc::connection_settings(paths)),
+        [&] {
           // Startup can launch multiple candidates. Each must report separately:
           // an AlreadyOwned loser exiting does not mean the active Backend ended.
           const auto result_file = base / ("exited-" + std::to_string(children.size()));
@@ -106,7 +120,8 @@ class MetadataAccessIntegration : public testing::Test {
           if (auto* process = std::get_if<app::LaunchedProcess>(&launched))
             children.push_back({process->id, result_file});
           return launched;
-        }, 8s);
+        },
+        8s);
     if (!std::holds_alternative<app::BackendConnectionHandle>(connection))
       throw std::runtime_error(std::get<ipc::IpcError>(connection).message);
     return std::get<app::BackendConnectionHandle>(std::move(connection));
@@ -115,8 +130,8 @@ class MetadataAccessIntegration : public testing::Test {
 
 TEST_F(MetadataAccessIntegration, OneBrowseOperationHandlesRootsAndUserDirectories) {
   core::Directory directory{core::DirectoryKind::Memo, "Projects"};
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_directory(
-      directory.kind(), directory.snapshot())));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      repository.create_directory(directory.kind(), directory.snapshot())));
   core::Memo member{"Member", "body", time};
   member.set_directory_id(directory.id(), time);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(member.snapshot())));
@@ -139,7 +154,8 @@ TEST_F(MetadataAccessIntegration, OneBrowseOperationHandlesRootsAndUserDirectori
 
   auto logs = connection.browse(core::RecordType::Log);
   ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<app::BrowseResult>>(logs));
-  EXPECT_TRUE(std::get<app::ApplicationResponse<app::BrowseResult>>(logs).value.directories.empty());
+  EXPECT_TRUE(
+      std::get<app::ApplicationResponse<app::BrowseResult>>(logs).value.directories.empty());
   auto missing = connection.browse(core::Id::generate());
   ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(missing));
   EXPECT_EQ(std::get<app::ApplicationError>(missing).reason, app::ErrorReason::NotFound);
@@ -163,24 +179,27 @@ TEST_F(MetadataAccessIntegration, LargeContentAndMetadataMessagesAllowTwoPeersAn
     EXPECT_EQ(std::get<core::Memo::Snapshot>(loaded).content, memo.content());
     EXPECT_EQ(std::get<core::Memo::Snapshot>(loaded).title, changed.title);
     auto metadata = second.query_records();
-    ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(metadata));
-    const auto& records = std::get<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(metadata).value;
+    ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(
+        metadata));
+    const auto& records =
+        std::get<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(metadata).value;
     ASSERT_EQ(records.size(), 1u);
     EXPECT_EQ(std::get<core::MemoMetadata>(records[0]).title, changed.title);
     EXPECT_TRUE(std::holds_alternative<std::monostate>(first.ping()));
     EXPECT_TRUE(std::holds_alternative<std::monostate>(second.ping()));
     EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
   }
-  ASSERT_TRUE(until([&]{return all_exited();}));
+  ASSERT_TRUE(until([&] { return all_exited(); }));
   EXPECT_TRUE(fs::exists(paths.application.cache / "index/normal.msgpack"));
   EXPECT_FALSE(fs::exists(paths.application.state / "session.marker"));
 }
 
-TEST_F(MetadataAccessIntegration, MissingWrongTypeAndStaleErrorsLeaveConnectionUsableWithoutDiscovery) {
+TEST_F(MetadataAccessIntegration,
+       MissingWrongTypeAndStaleErrorsLeaveConnectionUsableWithoutDiscovery) {
   auto connection = connect();
   auto other = connect();
   app::RecordQuery invalid;
-  invalid.filters.log_date.from = std::chrono::year{2027}/2/30;
+  invalid.filters.log_date.from = std::chrono::year{2027} / 2 / 30;
   auto rejected = connection.query_records(invalid);
   ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(rejected));
   EXPECT_EQ(std::get<app::ApplicationError>(rejected).category, app::ErrorCategory::InvalidRequest);
@@ -205,7 +224,8 @@ TEST_F(MetadataAccessIntegration, MissingWrongTypeAndStaleErrorsLeaveConnectionU
   // Request-specific failures must not be broadcast or terminate other sessions.
   auto browsed = other.browse(core::RecordType::Memo);
   ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<app::BrowseResult>>(browsed));
-  EXPECT_EQ(std::get<app::ApplicationResponse<app::BrowseResult>>(browsed).value.records.size(), 1u);
+  EXPECT_EQ(std::get<app::ApplicationResponse<app::BrowseResult>>(browsed).value.records.size(),
+            1u);
   EXPECT_TRUE(std::holds_alternative<std::monostate>(other.ping()));
 }
 TEST_F(MetadataAccessIntegration, LargeQueryRequestUsesOneMessageAndConnectionRemainsUsable) {
@@ -214,19 +234,24 @@ TEST_F(MetadataAccessIntegration, LargeQueryRequestUsesOneMessageAndConnectionRe
   query.type = core::RecordType::Memo;
   query.filters.title_contains = std::string(150000, 'z');
   auto result = connection.query_records(query);
-  ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(result));
-  EXPECT_TRUE(std::get<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(result).value.empty());
+  ASSERT_TRUE(
+      std::holds_alternative<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(result));
+  EXPECT_TRUE(
+      std::get<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(result).value.empty());
   EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
   EXPECT_TRUE(std::holds_alternative<core::Memo::Snapshot>(connection.load_memo(memo.id())));
-  EXPECT_TRUE(std::holds_alternative<app::ApplicationError>(connection.load_log(core::Id::generate())));
-  EXPECT_TRUE(std::holds_alternative<app::ApplicationResponse<std::vector<core::DirectoryMetadata>>>(
-      connection.list_directories(core::DirectoryKind::Memo)));
+  EXPECT_TRUE(
+      std::holds_alternative<app::ApplicationError>(connection.load_log(core::Id::generate())));
+  EXPECT_TRUE(
+      std::holds_alternative<app::ApplicationResponse<std::vector<core::DirectoryMetadata>>>(
+          connection.list_directories(core::DirectoryKind::Memo)));
 }
 
 TEST_F(MetadataAccessIntegration, PartialRequestWaitsForCompletionWithoutBlockingOtherConnections) {
   auto keeper = connect();
   auto stream = raw_connection();
-  const auto request = std::get<std::string>(ipc::codec::encode<ipc::OperationRequest>(ipc::LoadMemoRequest{memo.id()}));
+  const auto request = std::get<std::string>(
+      ipc::codec::encode<ipc::OperationRequest>(ipc::LoadMemoRequest{memo.id()}));
   const auto bytes = ipc::encode_message({ipc::MessageKind::Request, ipc::payload_bytes(request)});
   ASSERT_TRUE(send_bytes(stream, std::string_view(bytes).substr(0, bytes.size() - 1)));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(keeper.ping()));
@@ -244,14 +269,17 @@ TEST_F(MetadataAccessIntegration, PartialRequestWaitsForCompletionWithoutBlockin
   EXPECT_EQ(response->kind, ipc::MessageKind::Response);
   auto decoded = ipc::codec::decode<ipc::OperationResponse>(ipc::payload_text(response->payload));
   ASSERT_TRUE(std::holds_alternative<ipc::OperationResponse>(decoded));
-  EXPECT_TRUE(std::holds_alternative<core::Memo::Snapshot>(std::get<ipc::OperationResponse>(decoded)));
+  EXPECT_TRUE(
+      std::holds_alternative<core::Memo::Snapshot>(std::get<ipc::OperationResponse>(decoded)));
 }
 
-TEST_F(MetadataAccessIntegration, PrematureDisconnectAndInvalidMessagesDoNotAffectOtherConnections) {
+TEST_F(MetadataAccessIntegration,
+       PrematureDisconnectAndInvalidMessagesDoNotAffectOtherConnections) {
   auto keeper = connect();
   {
     auto stream = raw_connection();
-    const auto bytes = ipc::encode_message({ipc::MessageKind::Request, ipc::payload_bytes("incomplete")});
+    const auto bytes =
+        ipc::encode_message({ipc::MessageKind::Request, ipc::payload_bytes("incomplete")});
     ASSERT_TRUE(send_bytes(stream, std::string_view(bytes).substr(0, bytes.size() - 1)));
     // Closing the stream must not dispatch its incomplete request.
   }
@@ -283,19 +311,22 @@ TEST_F(MetadataAccessIntegration, MalformedCompleteRequestsKeepApplicationErrorS
     EXPECT_EQ(pong->kind, ipc::MessageKind::Pong);
   }
 }
-}  // namespace
+} // namespace
 
-TEST_F(MetadataAccessIntegration, MutationOrchestratorAndEditLocksShareExistingConnectionAndBackend) {
+TEST_F(MetadataAccessIntegration,
+       MutationOrchestratorAndEditLocksShareExistingConnectionAndBackend) {
   {
     auto first = connect();
     auto second = connect();
-    auto dir_result = first.create(app::MutationId::generate(), core::DirectoryKind::Memo, "Projects");
+    auto dir_result =
+        first.create(app::MutationId::generate(), core::DirectoryKind::Memo, "Projects");
     ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::DirectoryMetadata>>(dir_result));
     auto dir_response = std::get<app::MutationResponse<core::DirectoryMetadata>>(dir_result);
     ASSERT_TRUE(std::holds_alternative<core::DirectoryMetadata>(dir_response.result));
     auto directory = std::get<core::DirectoryMetadata>(dir_response.result);
     auto create_id = app::MutationId::generate();
-    auto created = first.create(create_id, app::MemoEditableFields{"Created", "original body", {{"tag"}}}, time, time, {});
+    auto created = first.create(
+        create_id, app::MemoEditableFields{"Created", "original body", {{"tag"}}}, time, time, {});
     ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::MemoMetadata>>(created));
     auto response = std::get<app::MutationResponse<core::MemoMetadata>>(created);
     EXPECT_EQ(response.mutation_id, create_id);
@@ -304,10 +335,12 @@ TEST_F(MetadataAccessIntegration, MutationOrchestratorAndEditLocksShareExistingC
     EXPECT_NE(record.id, memo.id());
     auto editing = first.acquire_edit(record.id);
     ASSERT_TRUE(std::holds_alternative<app::EditSnapshot>(editing));
-    EXPECT_EQ(std::get<core::Memo::Snapshot>(std::get<app::EditSnapshot>(editing)).content, "original body");
+    EXPECT_EQ(std::get<core::Memo::Snapshot>(std::get<app::EditSnapshot>(editing)).content,
+              "original body");
     auto denied = second.move(app::MutationId::generate(), record.id, directory.id, time);
     ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::RecordMetadata>>(denied));
-    auto rejected = std::get<app::MutationFailure>(std::get<app::MutationResponse<core::RecordMetadata>>(denied).result);
+    auto rejected = std::get<app::MutationFailure>(
+        std::get<app::MutationResponse<core::RecordMetadata>>(denied).result);
     EXPECT_EQ(rejected.error.reason, app::ErrorReason::LockConflict);
     EXPECT_EQ(rejected.status, app::AuthoritativeChangeStatus::NotApplied);
     EXPECT_TRUE(std::holds_alternative<std::monostate>(first.ping()));
@@ -315,13 +348,19 @@ TEST_F(MetadataAccessIntegration, MutationOrchestratorAndEditLocksShareExistingC
     const core::TimestampContext changed{time.timestamp + 1h, "Asia/Shanghai", "frontend"};
     auto moved = first.move(app::MutationId::generate(), record.id, directory.id, changed);
 #ifdef _WIN32
-    EXPECT_EQ(std::get<app::MutationFailure>(std::get<app::MutationResponse<core::RecordMetadata>>(moved).result).status,
+    EXPECT_EQ(std::get<app::MutationFailure>(
+                  std::get<app::MutationResponse<core::RecordMetadata>>(moved).result)
+                  .status,
               app::AuthoritativeChangeStatus::Unknown);
 #else
-    ASSERT_TRUE(std::holds_alternative<core::RecordMetadata>(std::get<app::MutationResponse<core::RecordMetadata>>(moved).result));
+    ASSERT_TRUE(std::holds_alternative<core::RecordMetadata>(
+        std::get<app::MutationResponse<core::RecordMetadata>>(moved).result));
 #endif
-    auto updated = first.update(app::MutationId::generate(), record.id, app::MemoEditableFields{"Edited", std::string(100 * 1024, 'e'), {{"edited"}}}, changed);
-    ASSERT_TRUE(std::holds_alternative<core::MemoMetadata>(std::get<app::MutationResponse<core::MemoMetadata>>(updated).result));
+    auto updated = first.update(
+        app::MutationId::generate(), record.id,
+        app::MemoEditableFields{"Edited", std::string(100 * 1024, 'e'), {{"edited"}}}, changed);
+    ASSERT_TRUE(std::holds_alternative<core::MemoMetadata>(
+        std::get<app::MutationResponse<core::MemoMetadata>>(updated).result));
     auto loaded = second.load_memo(record.id);
     ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(loaded));
     auto state = std::get<core::Memo::Snapshot>(loaded);
@@ -334,10 +373,13 @@ TEST_F(MetadataAccessIntegration, MutationOrchestratorAndEditLocksShareExistingC
     // Directory rename uses the same ownership rules, without locking members.
     EXPECT_TRUE(std::holds_alternative<app::EditSnapshot>(first.acquire_edit(directory.id)));
     auto blocked = second.rename_directory(app::MutationId::generate(), directory.id, "Denied");
-    EXPECT_EQ(std::get<app::MutationFailure>(std::get<app::MutationResponse<core::DirectoryMetadata>>(blocked).result).error.reason,
+    EXPECT_EQ(std::get<app::MutationFailure>(
+                  std::get<app::MutationResponse<core::DirectoryMetadata>>(blocked).result)
+                  .error.reason,
               app::ErrorReason::LockConflict);
     auto renamed = first.rename_directory(app::MutationId::generate(), directory.id, "Renamed");
-    EXPECT_TRUE(std::holds_alternative<core::DirectoryMetadata>(std::get<app::MutationResponse<core::DirectoryMetadata>>(renamed).result));
+    EXPECT_TRUE(std::holds_alternative<core::DirectoryMetadata>(
+        std::get<app::MutationResponse<core::DirectoryMetadata>>(renamed).result));
     auto root = second.browse(directory.id);
     ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<app::BrowseResult>>(root));
     EXPECT_EQ(std::get<app::ApplicationResponse<app::BrowseResult>>(root).value.records.size(), 1u);

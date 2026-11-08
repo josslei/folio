@@ -26,37 +26,40 @@
 #endif
 
 namespace folio::core::storage {
-::folio::core::Result<std::string, StorageError> normal_record_filename(RecordType type, const core::Id& id,
-                                         core::Timestamp created) {
+::folio::core::Result<std::string, StorageError>
+normal_record_filename(RecordType type, const core::Id& id, core::Timestamp created) {
   using namespace std::chrono;
   const char* extension;
   switch (type) {
-    case RecordType::Log:
-    case RecordType::Memo:
-      extension = ".md";
-      break;
-    case RecordType::Todo:
-      extension = ".toml";
-      break;
-    default:
-      return StorageError{StorageErrorCode::InvalidRecordType, {}, "Invalid entry type", {}, false};
+  case RecordType::Log:
+  case RecordType::Memo:
+    extension = ".md";
+    break;
+  case RecordType::Todo:
+    extension = ".toml";
+    break;
+  default:
+    return StorageError{StorageErrorCode::InvalidRecordType, {}, "Invalid entry type", {}, false};
   }
   const auto whole_seconds = floor<seconds>(created);
   const auto day = floor<days>(whole_seconds);
   const year_month_day date{day};
   const auto year = static_cast<int>(date.year());
   if (!date.ok() || year < 0 || year > 9999) {
-    return StorageError{StorageErrorCode::InvalidTimestamp, {}, "Creation year is outside 0000 through 9999", {}, false};
+    return StorageError{StorageErrorCode::InvalidTimestamp,
+                        {},
+                        "Creation year is outside 0000 through 9999",
+                        {},
+                        false};
   }
   const hh_mm_ss time{whole_seconds - day};
   std::ostringstream output;
   output.imbue(std::locale::classic());
-  output << std::setfill('0') << std::setw(4) << year << '-'
-         << std::setw(2) << static_cast<unsigned>(date.month()) << '-'
-         << std::setw(2) << static_cast<unsigned>(date.day()) << '_'
-         << std::setw(2) << time.hours().count()
-         << std::setw(2) << time.minutes().count()
-         << std::setw(2) << time.seconds().count() << '_' << id.to_string() << extension;
+  output << std::setfill('0') << std::setw(4) << year << '-' << std::setw(2)
+         << static_cast<unsigned>(date.month()) << '-' << std::setw(2)
+         << static_cast<unsigned>(date.day()) << '_' << std::setw(2) << time.hours().count()
+         << std::setw(2) << time.minutes().count() << std::setw(2) << time.seconds().count() << '_'
+         << id.to_string() << extension;
   return output.str();
 }
 
@@ -66,26 +69,30 @@ namespace {
 namespace fs = std::filesystem;
 namespace codec = ::folio::core::storage::codec;
 
-StorageResult<std::monostate> write_entry_file(
-    const fs::path& path, std::string_view bytes, bool create_only, bool& changed, PersistenceObservation& observation) {
+StorageResult<std::monostate> write_entry_file(const fs::path& path, std::string_view bytes,
+                                               bool create_only, bool& changed,
+                                               PersistenceObservation& observation) {
   observation = PersistenceObservation::Unknown;
   try {
     auto result = internal::repository_test_hooks.write
-        ? internal::repository_test_hooks.write(path, bytes, create_only)
-        : ([&]() -> StorageResult<std::monostate> {
-          auto written = create_only ? io::create_file_atomic(path, bytes) : io::replace_file_atomic(path, bytes);
-          if (auto* error = std::get_if<io::FileError>(&written)) return *error;
-          return std::monostate{};
-        })();
+                      ? internal::repository_test_hooks.write(path, bytes, create_only)
+                      : ([&]() -> StorageResult<std::monostate> {
+                          auto written = create_only ? io::create_file_atomic(path, bytes)
+                                                     : io::replace_file_atomic(path, bytes);
+                          if (auto* error = std::get_if<io::FileError>(&written)) return *error;
+                          return std::monostate{};
+                        })();
     const auto* problem = std::get_if<io::FileError>(&result);
-    if (std::holds_alternative<std::monostate>(result) || (problem && problem->replacement_completed))
+    if (std::holds_alternative<std::monostate>(result) ||
+        (problem && problem->replacement_completed))
       changed = true;
     if (std::holds_alternative<std::monostate>(result))
       observation = PersistenceObservation::DurabilityConfirmed;
     else if (problem)
-      observation = problem->durability_confirmed ? PersistenceObservation::DurabilityConfirmed
-          : (problem->replacement_completed ? PersistenceObservation::Published
-                                            : PersistenceObservation::NotCompleted);
+      observation = problem->durability_confirmed
+                        ? PersistenceObservation::DurabilityConfirmed
+                        : (problem->replacement_completed ? PersistenceObservation::Published
+                                                          : PersistenceObservation::NotCompleted);
     return result;
   } catch (...) {
     // An unexpected exception escaping the writer cannot certify no publication.
@@ -107,18 +114,22 @@ StorageError codec_failure(const fs::path& path, const codec::CodecError& error)
 // Propagate either diagnostic without translating its category or payload.
 struct Failure {
   RepositoryError error;
-  fs::path path() const { return std::visit([](const auto& e) { return e.path; }, error); }
-  std::error_code system_error() const { return std::visit([](const auto& e) { return e.system_error; }, error); }
-  template<class T> operator StorageResult<T>() const {
+  fs::path path() const {
+    return std::visit([](const auto& e) { return e.path; }, error);
+  }
+  std::error_code system_error() const {
+    return std::visit([](const auto& e) { return e.system_error; }, error);
+  }
+  template <class T> operator StorageResult<T>() const {
     return std::visit([](const auto& value) -> StorageResult<T> { return value; }, error);
   }
 };
-template<class T> std::optional<Failure> failure(const StorageResult<T>& result) {
+template <class T> std::optional<Failure> failure(const StorageResult<T>& result) {
   if (auto* error = std::get_if<StorageError>(&result)) return Failure{*error};
   if (auto* error = std::get_if<io::FileError>(&result)) return Failure{*error};
   return std::nullopt;
 }
-template<class T> std::optional<Failure> failure(const core::Result<T, StorageError>& result) {
+template <class T> std::optional<Failure> failure(const core::Result<T, StorageError>& result) {
   if (auto* error = std::get_if<StorageError>(&result)) return Failure{*error};
   return std::nullopt;
 }
@@ -129,9 +140,12 @@ io::FileError fail(io::FileErrorCode code, const fs::path& path, std::string mes
 
 fs::path module_name(RecordType type) {
   switch (type) {
-    case RecordType::Log: return "logs";
-    case RecordType::Memo: return "memos";
-    case RecordType::Todo: return "todos";
+  case RecordType::Log:
+    return "logs";
+  case RecordType::Memo:
+    return "memos";
+  case RecordType::Todo:
+    return "todos";
   }
   return {};
 }
@@ -165,10 +179,9 @@ bool has_nul(const fs::path& path) {
 // existing alias in the system's temporary-directory ancestry is outside
 // the repository boundary; a symlink at or below the root is rejected.
 StorageResult<std::monostate> safe_path(const fs::path& root, const fs::path& path,
-                                bool allow_missing = false) {
+                                        bool allow_missing = false) {
   if (!root.is_absolute() || has_nul(root) || path.empty() || has_nul(path) ||
-      !path.is_absolute() ||
-      !under(root.lexically_normal(), path.lexically_normal()) ||
+      !path.is_absolute() || !under(root.lexically_normal(), path.lexically_normal()) ||
       path != path.lexically_normal()) {
     return fail(io::FileErrorCode::InvalidPath, path, "Path escapes the Normal repository");
   }
@@ -246,7 +259,7 @@ StorageResult<std::string> encode(const Snapshot& snapshot, const fs::path& path
 
 template <class Snapshot>
 StorageResult<Snapshot> decode(std::string_view text, const fs::path& path,
-                        std::optional<DirectoryKind> trusted_legacy_kind = std::nullopt) {
+                               std::optional<DirectoryKind> trusted_legacy_kind = std::nullopt) {
   if constexpr (std::is_same_v<Snapshot, core::Log::Snapshot>) {
     auto decoded = codec::log_snapshot_from_markdown(text);
     if (auto* problem = std::get_if<codec::CodecError>(&decoded)) {
@@ -271,8 +284,8 @@ StorageResult<Snapshot> decode(std::string_view text, const fs::path& path,
       }
       return std::get<Snapshot>(std::move(decoded));
     } else {
-      auto decoded = codec::directory_snapshot_from_toml(
-          std::get<toml::table>(parsed), trusted_legacy_kind);
+      auto decoded =
+          codec::directory_snapshot_from_toml(std::get<toml::table>(parsed), trusted_legacy_kind);
       if (auto* problem = std::get_if<codec::CodecError>(&decoded)) {
         return codec_failure(path, *problem);
       }
@@ -297,7 +310,7 @@ StorageResult<std::string> checked_encoding(const Snapshot& snapshot, const fs::
 }
 
 StorageResult<std::string> filename(RecordType type, const core::Id& id,
-                             const core::TimestampContext& created) {
+                                    const core::TimestampContext& created) {
   auto named = normal_record_filename(type, id, created.timestamp);
   if (auto problem = failure(named)) return *problem;
   return std::get<std::string>(named);
@@ -311,11 +324,11 @@ struct Match {
 template <class Snapshot>
 StorageResult<Snapshot> load_at(const fs::path& root, RecordType type, const fs::path& path);
 
-StorageResult<core::Directory::Snapshot> load_directory_at(
-    const fs::path& root, DirectoryKind kind, const core::Id& id);
+StorageResult<core::Directory::Snapshot> load_directory_at(const fs::path& root, DirectoryKind kind,
+                                                           const core::Id& id);
 
 StorageResult<core::Id> checked_entry_id(const fs::path& root, RecordType type,
-                                   const fs::path& path);
+                                         const fs::path& path);
 
 StorageResult<std::vector<Match>> scan_for_id(const fs::path& root, const core::Id& id) {
   std::vector<Match> matches;
@@ -372,8 +385,8 @@ StorageResult<std::vector<Match>> scan_for_id(const fs::path& root, const core::
         if (ec) break;
         const auto folder_id = core::Id::parse(folder.filename().string());
         if (folder_id && folder_id->to_string() == folder.filename().string()) {
-          auto metadata = load_directory_at(root,
-              type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo,
+          auto metadata = load_directory_at(
+              root, type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo,
               *folder_id);
           if (failure(metadata)) return *failure(metadata);
           if (auto checked = visit(folder); failure(checked)) return *failure(checked);
@@ -401,7 +414,8 @@ StorageResult<fs::path> locate(const fs::path& root, RecordType type, const core
                 std::make_error_code(std::errc::no_such_file_or_directory));
   }
   if (matches.size() != 1 || matches.front().type != type) {
-    return fail(StorageErrorCode::DuplicateId, root, "Entry ID conflicts with another path or type");
+    return fail(StorageErrorCode::DuplicateId, root,
+                "Entry ID conflicts with another path or type");
   }
   return matches.front().path;
 }
@@ -424,8 +438,8 @@ StorageResult<std::monostate> unique_id(const fs::path& root, const core::Id& id
   return std::monostate{};
 }
 
-StorageResult<core::Directory::Snapshot> load_directory_at(
-    const fs::path& root, DirectoryKind kind, const core::Id& id) {
+StorageResult<core::Directory::Snapshot> load_directory_at(const fs::path& root, DirectoryKind kind,
+                                                           const core::Id& id) {
   const auto folder = root / module_name(record_type(kind)) / id.to_string();
   if (auto checked = safe_path(root, folder); failure(checked)) return *failure(checked);
   std::error_code ec;
@@ -435,8 +449,7 @@ StorageResult<core::Directory::Snapshot> load_directory_at(
   const auto metadata = folder / ".folio-dir.toml";
   auto text = read_text(root, metadata);
   if (failure(text)) return *failure(text);
-  auto snapshot = decode<core::Directory::Snapshot>(
-      std::get<std::string>(text), metadata, kind);
+  auto snapshot = decode<core::Directory::Snapshot>(std::get<std::string>(text), metadata, kind);
   if (failure(snapshot)) return *failure(snapshot);
   if (std::get<core::Directory::Snapshot>(snapshot).id != id) {
     return fail(StorageErrorCode::IdentityMismatch, metadata,
@@ -474,15 +487,15 @@ StorageResult<Snapshot> load_at(const fs::path& root, RecordType type, const fs:
     }
   } else {
     const auto& directory_id = value.directory_id;
-    const auto expected_parent = directory_id
-        ? root / module / directory_id->to_string() : root / module;
+    const auto expected_parent =
+        directory_id ? root / module / directory_id->to_string() : root / module;
     if (path.parent_path() != expected_parent) {
       return fail(StorageErrorCode::IdentityMismatch, path,
                   "Entry directory reference does not match its physical folder");
     }
     if (directory_id) {
-      auto directory = load_directory_at(root,
-          type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo,
+      auto directory = load_directory_at(
+          root, type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo,
           *directory_id);
       if (failure(directory)) return *failure(directory);
     }
@@ -491,35 +504,34 @@ StorageResult<Snapshot> load_at(const fs::path& root, RecordType type, const fs:
 }
 
 StorageResult<core::Id> checked_entry_id(const fs::path& root, RecordType type,
-                                   const fs::path& path) {
+                                         const fs::path& path) {
   switch (type) {
-    case RecordType::Log: {
-      auto loaded = load_at<core::Log::Snapshot>(root, type, path);
-      if (failure(loaded)) return *failure(loaded);
-      return std::get<core::Log::Snapshot>(loaded).id;
-    }
-    case RecordType::Memo: {
-      auto loaded = load_at<core::Memo::Snapshot>(root, type, path);
-      if (failure(loaded)) return *failure(loaded);
-      return std::get<core::Memo::Snapshot>(loaded).id;
-    }
-    case RecordType::Todo: {
-      auto loaded = load_at<core::Todo::Snapshot>(root, type, path);
-      if (failure(loaded)) return *failure(loaded);
-      return std::get<core::Todo::Snapshot>(loaded).id;
-    }
+  case RecordType::Log: {
+    auto loaded = load_at<core::Log::Snapshot>(root, type, path);
+    if (failure(loaded)) return *failure(loaded);
+    return std::get<core::Log::Snapshot>(loaded).id;
+  }
+  case RecordType::Memo: {
+    auto loaded = load_at<core::Memo::Snapshot>(root, type, path);
+    if (failure(loaded)) return *failure(loaded);
+    return std::get<core::Memo::Snapshot>(loaded).id;
+  }
+  case RecordType::Todo: {
+    auto loaded = load_at<core::Todo::Snapshot>(root, type, path);
+    if (failure(loaded)) return *failure(loaded);
+    return std::get<core::Todo::Snapshot>(loaded).id;
+  }
   }
   return fail(StorageErrorCode::InvalidRecordType, path, "Invalid entry type");
 }
 
 StorageResult<fs::path> exact_entry_path(const fs::path& root, RecordType type,
-                                  const fs::path& relative_path) {
+                                         const fs::path& relative_path) {
   if (!valid_type(type)) {
     return fail(StorageErrorCode::InvalidRecordType, relative_path, "Invalid entry type");
   }
   if (relative_path.empty() || relative_path.is_absolute() ||
-      relative_path != relative_path.lexically_normal() ||
-      relative_path.filename().empty()) {
+      relative_path != relative_path.lexically_normal() || relative_path.filename().empty()) {
     return fail(io::FileErrorCode::InvalidPath, relative_path, "Expected a safe relative locator");
   }
   std::vector<fs::path> parts;
@@ -542,8 +554,7 @@ StorageResult<fs::path> exact_entry_path(const fs::path& root, RecordType type,
     }
   }
   const auto extension = type == RecordType::Todo ? ".toml" : ".md";
-  if (relative_path.extension() != extension ||
-      relative_path.filename() == ".folio-dir.toml") {
+  if (relative_path.extension() != extension || relative_path.filename() == ".folio-dir.toml") {
     return fail(io::FileErrorCode::InvalidPath, relative_path,
                 "Locator is not a formal entry file");
   }
@@ -555,11 +566,11 @@ StorageResult<fs::path> exact_entry_path(const fs::path& root, RecordType type,
   const auto status = fs::symlink_status(absolute, ec);
   if (ec == std::errc::no_such_file_or_directory ||
       (!ec && status.type() == fs::file_type::not_found)) {
-    return fail(StorageErrorCode::StaleLocator, relative_path,
-                "Entry locator no longer exists", ec);
+    return fail(StorageErrorCode::StaleLocator, relative_path, "Entry locator no longer exists",
+                ec);
   }
-  if (ec) return fail(io::FileErrorCode::IoError, relative_path,
-                      "Could not inspect entry locator", ec);
+  if (ec)
+    return fail(io::FileErrorCode::IoError, relative_path, "Could not inspect entry locator", ec);
   if (!fs::is_regular_file(status)) {
     return fail(io::FileErrorCode::InvalidPath, relative_path,
                 "Entry locator is not a regular file");
@@ -568,15 +579,14 @@ StorageResult<fs::path> exact_entry_path(const fs::path& root, RecordType type,
 }
 
 StorageResult<fs::path> resolve_entry_path(const fs::path& root, RecordType type,
-                                     const core::Id& id,
-                                     const std::optional<fs::path>& relative_path) {
-  return relative_path ? exact_entry_path(root, type, *relative_path)
-                       : locate(root, type, id);
+                                           const core::Id& id,
+                                           const std::optional<fs::path>& relative_path) {
+  return relative_path ? exact_entry_path(root, type, *relative_path) : locate(root, type, id);
 }
 
 template <class Snapshot>
 StorageResult<Snapshot> load_by_id(const fs::path& root, RecordType type, const core::Id& id,
-                            const std::optional<fs::path>& relative_path) {
+                                   const std::optional<fs::path>& relative_path) {
   auto path = resolve_entry_path(root, type, id, relative_path);
   if (failure(path)) return *failure(path);
   auto loaded = load_at<Snapshot>(root, type, std::get<fs::path>(path));
@@ -584,14 +594,13 @@ StorageResult<Snapshot> load_by_id(const fs::path& root, RecordType type, const 
     const auto problem = *failure(loaded);
     if (relative_path && problem.path() == std::get<fs::path>(path) &&
         problem.system_error() == std::errc::no_such_file_or_directory) {
-      return fail(StorageErrorCode::StaleLocator, *relative_path,
-                  "Entry locator no longer exists", problem.system_error());
+      return fail(StorageErrorCode::StaleLocator, *relative_path, "Entry locator no longer exists",
+                  problem.system_error());
     }
     return problem;
   }
   if (std::get<Snapshot>(loaded).id != id) {
-    return fail(relative_path ? StorageErrorCode::StaleLocator
-                              : StorageErrorCode::IdentityMismatch,
+    return fail(relative_path ? StorageErrorCode::StaleLocator : StorageErrorCode::IdentityMismatch,
                 relative_path ? *relative_path : std::get<fs::path>(path),
                 "Stored entry ID differs from requested ID");
   }
@@ -601,8 +610,8 @@ StorageResult<Snapshot> load_by_id(const fs::path& root, RecordType type, const 
 // Track publication/partial changes before subsequent steps can throw. Return a
 // classified error without knowing whether a Catalog or Coordinator exists.
 template <class Callback, class Operation>
-::folio::core::Result<std::monostate, RepositoryMutationError> run_mutation(
-    const fs::path& root, const Callback& callback, Operation operation) {
+::folio::core::Result<std::monostate, RepositoryMutationError>
+run_mutation(const fs::path& root, const Callback& callback, Operation operation) {
   bool changed = false;
   bool callback_invoked = false;
   RepositoryMutationEvidence evidence;
@@ -618,15 +627,20 @@ template <class Callback, class Operation>
   }();
   if (auto problem = failure(result)) {
     const auto* storage = std::get_if<StorageError>(&problem->error);
-    const bool published = std::visit([](const auto& error) { return error.replacement_completed; }, problem->error);
-    const auto stage = storage && storage->code == StorageErrorCode::PostPersistFailure
-        ? MutationFailureStage::CatalogSynchronizationFailed
-        : (changed || published ? MutationFailureStage::AuthoritativeStateMayHaveChanged
-                                : MutationFailureStage::BeforeAuthoritativeChange);
+    const bool published =
+        std::visit([](const auto& error) { return error.replacement_completed; }, problem->error);
+    const auto stage =
+        storage && storage->code == StorageErrorCode::PostPersistFailure
+            ? MutationFailureStage::CatalogSynchronizationFailed
+            : (changed || published ? MutationFailureStage::AuthoritativeStateMayHaveChanged
+                                    : MutationFailureStage::BeforeAuthoritativeChange);
     RepositoryMutationError error{stage, std::move(problem->error), evidence};
     if (callback && !callback_invoked) {
       // The original operation diagnostic wins over any notification failure.
-      try { (void)callback(std::cref(error)); } catch (...) {}
+      try {
+        (void)callback(std::cref(error));
+      } catch (...) {
+      }
     }
     return error;
   }
@@ -636,9 +650,9 @@ template <class Callback, class Operation>
 // Repository stays independent of Catalog ownership. Projection and callback
 // errors are reported separately from failed persistence; saved data is retained.
 template <class Snapshot, class Callback>
-StorageResult<std::monostate> notify_persisted(
-    const Snapshot& snapshot, const fs::path& root, const fs::path& path,
-    const Callback& callback, bool& callback_invoked) {
+StorageResult<std::monostate> notify_persisted(const Snapshot& snapshot, const fs::path& root,
+                                               const fs::path& path, const Callback& callback,
+                                               bool& callback_invoked) {
   if (!callback) return std::monostate{};
   try {
     if (internal::repository_test_hooks.before_projection)
@@ -649,40 +663,48 @@ StorageResult<std::monostate> notify_persisted(
         callback_invoked = true;
         return callback(std::cref(metadata));
       } else {
-        using Metadata = std::conditional_t<std::is_same_v<Snapshot, core::Log::Snapshot>,
-            LogMetadata, std::conditional_t<std::is_same_v<Snapshot, core::Memo::Snapshot>,
-                                           MemoMetadata, TodoMetadata>>;
+        using Metadata =
+            std::conditional_t<std::is_same_v<Snapshot, core::Log::Snapshot>, LogMetadata,
+                               std::conditional_t<std::is_same_v<Snapshot, core::Memo::Snapshot>,
+                                                  MemoMetadata, TodoMetadata>>;
         callback_invoked = true;
         return callback(std::cref(std::get<Metadata>(metadata)));
       }
     };
     auto notified = notify();
     if (const auto* problem = std::get_if<StorageError>(&notified))
-      return fail(StorageErrorCode::PostPersistFailure, path,
+      return fail(
+          StorageErrorCode::PostPersistFailure, path,
           "Authoritative data was saved, but metadata callback failed; reconciliation required: " +
-              problem->message, problem->system_error, true);
+              problem->message,
+          problem->system_error, true);
   } catch (const std::exception& exception) {
     return fail(StorageErrorCode::PostPersistFailure, path,
-        std::string{"Authoritative data was saved, but metadata projection/callback failed; reconciliation required: "} +
-            exception.what(), {}, true);
+                std::string{"Authoritative data was saved, but metadata projection/callback "
+                            "failed; reconciliation required: "} +
+                    exception.what(),
+                {}, true);
   } catch (...) {
-    return fail(StorageErrorCode::PostPersistFailure, path,
-        "Authoritative data was saved, but metadata callback threw; reconciliation required", {}, true);
+    return fail(
+        StorageErrorCode::PostPersistFailure, path,
+        "Authoritative data was saved, but metadata callback threw; reconciliation required", {},
+        true);
   }
   return std::monostate{};
 }
 
 template <class Snapshot, class Callback>
-StorageResult<std::monostate> create_entry(const fs::path& root, RecordType type,
-                                    const Snapshot& snapshot,
-    const Callback& on_result, const CreationCheck& check_creation, bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence) {
+StorageResult<std::monostate>
+create_entry(const fs::path& root, RecordType type, const Snapshot& snapshot,
+             const Callback& on_result, const CreationCheck& check_creation, bool& changed,
+             bool& callback_invoked, RepositoryMutationEvidence& evidence) {
   auto name = filename(type, snapshot.id, snapshot.created);
   if (failure(name)) return *failure(name);
   fs::path parent = root / module_name(type);
   if constexpr (!std::is_same_v<Snapshot, core::Log::Snapshot>) {
     if (snapshot.directory_id) {
-      auto directory = load_directory_at(root,
-          type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo,
+      auto directory = load_directory_at(
+          root, type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo,
           *snapshot.directory_id);
       if (failure(directory)) return *failure(directory);
       parent /= snapshot.directory_id->to_string();
@@ -692,26 +714,27 @@ StorageResult<std::monostate> create_entry(const fs::path& root, RecordType type
   auto encoded = checked_encoding(snapshot, path);
   if (failure(encoded)) return *failure(encoded);
   if (check_creation) {
-      auto checked = check_creation(snapshot.id);
-      if (auto problem = failure(checked)) return *problem;
-    } else {
-      auto checked = unique_id(root, snapshot.id);
-      if (auto problem = failure(checked)) return *problem;
-    }
+    auto checked = check_creation(snapshot.id);
+    if (auto problem = failure(checked)) return *problem;
+  } else {
+    auto checked = unique_id(root, snapshot.id);
+    if (auto problem = failure(checked)) return *problem;
+  }
   // TODO(Phase 5): journal and sync root/module bootstrap. If the atomic
   // create fails, newly made empty parent directories may remain.
   if (auto checked = ensure_directory(root, parent); failure(checked)) return *failure(checked);
-  auto written = write_entry_file(path, std::get<std::string>(encoded), true, changed, evidence.write);
+  auto written =
+      write_entry_file(path, std::get<std::string>(encoded), true, changed, evidence.write);
   if (failure(written)) return *failure(written);
   changed = true;
   return notify_persisted(snapshot, root, path, on_result, callback_invoked);
 }
 
 template <class Snapshot, class Callback>
-StorageResult<std::monostate> update_record(const fs::path& root, RecordType type,
-                                    const Snapshot& snapshot,
-                                    const std::optional<fs::path>& relative_path,
-    const Callback& on_result, bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence) {
+StorageResult<std::monostate>
+update_record(const fs::path& root, RecordType type, const Snapshot& snapshot,
+              const std::optional<fs::path>& relative_path, const Callback& on_result,
+              bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence) {
   auto path = resolve_entry_path(root, type, snapshot.id, relative_path);
   if (failure(path)) return *failure(path);
   const auto& destination = std::get<fs::path>(path);
@@ -720,22 +743,20 @@ StorageResult<std::monostate> update_record(const fs::path& root, RecordType typ
     const auto problem = *failure(existing);
     if (relative_path && problem.path() == destination &&
         problem.system_error() == std::errc::no_such_file_or_directory) {
-      return fail(StorageErrorCode::StaleLocator, *relative_path,
-                  "Entry locator no longer exists", problem.system_error());
+      return fail(StorageErrorCode::StaleLocator, *relative_path, "Entry locator no longer exists",
+                  problem.system_error());
     }
     return problem;
   }
   const auto& prior = std::get<Snapshot>(existing);
   if (prior.id != snapshot.id) {
-    return fail(relative_path ? StorageErrorCode::StaleLocator
-                              : StorageErrorCode::IdentityMismatch,
+    return fail(relative_path ? StorageErrorCode::StaleLocator : StorageErrorCode::IdentityMismatch,
                 relative_path ? *relative_path : destination,
                 "Entry locator contains a different stored UUID");
   }
   if (prior.created.timestamp != snapshot.created.timestamp ||
       prior.created.timezone != snapshot.created.timezone ||
-      prior.created.location != snapshot.created.location ||
-      prior.privacy != snapshot.privacy) {
+      prior.created.location != snapshot.created.location || prior.privacy != snapshot.privacy) {
     return fail(StorageErrorCode::IdentityMismatch, destination,
                 "Update changed immutable entry identity, creation context, or privacy");
   }
@@ -747,7 +768,8 @@ StorageResult<std::monostate> update_record(const fs::path& root, RecordType typ
   }
   auto encoded = checked_encoding(snapshot, destination);
   if (failure(encoded)) return *failure(encoded);
-  auto written = write_entry_file(destination, std::get<std::string>(encoded), false, changed, evidence.write);
+  auto written =
+      write_entry_file(destination, std::get<std::string>(encoded), false, changed, evidence.write);
   if (failure(written)) return *failure(written);
   changed = true;
   return notify_persisted(snapshot, root, destination, on_result, callback_invoked);
@@ -758,13 +780,17 @@ StorageResult<std::monostate> sync_parent(const fs::path& path) {
   const int descriptor = open(path.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
   if (descriptor == -1) {
     return fail(io::FileErrorCode::DurabilityFailure, path,
-                "Could not open source directory for move sync", {errno, std::generic_category()}, true);
+                "Could not open source directory for move sync", {errno, std::generic_category()},
+                true);
   }
   int status;
-  do { status = internal::repository_test_hooks.sync_source
-      ? (internal::repository_test_hooks.sync_source(descriptor) ? 0 : -1)
-      : fsync(descriptor); } while (status == -1 && errno == EINTR);
-  const auto ec = status == -1 ? std::error_code{errno, std::generic_category()} : std::error_code{};
+  do {
+    status = internal::repository_test_hooks.sync_source
+                 ? (internal::repository_test_hooks.sync_source(descriptor) ? 0 : -1)
+                 : fsync(descriptor);
+  } while (status == -1 && errno == EINTR);
+  const auto ec =
+      status == -1 ? std::error_code{errno, std::generic_category()} : std::error_code{};
   close(descriptor);
   if (status == -1) {
     return fail(io::FileErrorCode::DurabilityFailure, path,
@@ -775,10 +801,11 @@ StorageResult<std::monostate> sync_parent(const fs::path& path) {
 #endif
 
 template <class Snapshot, class Callback>
-StorageResult<std::monostate> move_entry(const fs::path& root, RecordType type,
-                                  const core::Id& id, std::optional<core::Id> directory_id,
-                                  core::TimestampContext modified,
-    const Callback& on_result, const std::optional<fs::path>& relative_path, bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence) {
+StorageResult<std::monostate>
+move_entry(const fs::path& root, RecordType type, const core::Id& id,
+           std::optional<core::Id> directory_id, core::TimestampContext modified,
+           const Callback& on_result, const std::optional<fs::path>& relative_path, bool& changed,
+           bool& callback_invoked, RepositoryMutationEvidence& evidence) {
   auto source = resolve_entry_path(root, type, id, relative_path);
   if (failure(source)) return *failure(source);
   const auto old_path = std::get<fs::path>(source);
@@ -787,8 +814,8 @@ StorageResult<std::monostate> move_entry(const fs::path& root, RecordType type,
     const auto problem = *failure(loaded);
     if (relative_path && problem.path() == old_path &&
         problem.system_error() == std::errc::no_such_file_or_directory)
-      return fail(StorageErrorCode::StaleLocator, *relative_path,
-                  "Entry locator no longer exists", problem.system_error());
+      return fail(StorageErrorCode::StaleLocator, *relative_path, "Entry locator no longer exists",
+                  problem.system_error());
     return problem;
   }
   if (std::get<Snapshot>(loaded).id != id)
@@ -800,8 +827,8 @@ StorageResult<std::monostate> move_entry(const fs::path& root, RecordType type,
     return notify_persisted(snapshot, root, old_path, on_result, callback_invoked);
   fs::path parent = root / module_name(type);
   if (directory_id) {
-    auto directory = load_directory_at(root,
-        type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo, *directory_id);
+    auto directory = load_directory_at(
+        root, type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo, *directory_id);
     if (failure(directory)) return *failure(directory);
     parent /= directory_id->to_string();
   }
@@ -813,7 +840,8 @@ StorageResult<std::monostate> move_entry(const fs::path& root, RecordType type,
   if (auto checked = safe_path(root, destination, true); failure(checked)) return *failure(checked);
   // TODO(Phase 5): journal this two-path operation. Destination is created
   // first, so an interruption may leave both versions and needs recovery.
-  auto created = write_entry_file(destination, std::get<std::string>(encoded), true, changed, evidence.destination);
+  auto created = write_entry_file(destination, std::get<std::string>(encoded), true, changed,
+                                  evidence.destination);
   if (failure(created)) return *failure(created);
   changed = true;
   std::error_code ec;
@@ -833,159 +861,191 @@ StorageResult<std::monostate> move_entry(const fs::path& root, RecordType type,
   return notify_persisted(snapshot, root, destination, on_result, callback_invoked);
 }
 
-}  // namespace
+} // namespace
 
 NormalRepository::NormalRepository(fs::path normal_root) : root_(std::move(normal_root)) {}
 
-::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::create_log(const core::Log::Snapshot& snapshot,
-    const MutationResultCallback<LogMetadata>& on_result, const CreationCheck& check_creation) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
-      -> StorageResult<std::monostate> {
-    return create_entry(root_, RecordType::Log, snapshot, on_result, check_creation, changed, callback_invoked, evidence);
-  });
+::folio::core::Result<std::monostate, RepositoryMutationError>
+NormalRepository::create_log(const core::Log::Snapshot& snapshot,
+                             const MutationResultCallback<LogMetadata>& on_result,
+                             const CreationCheck& check_creation) {
+  return run_mutation(root_, on_result,
+                      [&](bool& changed, bool& callback_invoked,
+                          RepositoryMutationEvidence& evidence) -> StorageResult<std::monostate> {
+                        return create_entry(root_, RecordType::Log, snapshot, on_result,
+                                            check_creation, changed, callback_invoked, evidence);
+                      });
 }
-::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::create_memo(const core::Memo::Snapshot& snapshot,
-    const MutationResultCallback<MemoMetadata>& on_result, const CreationCheck& check_creation) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
-      -> StorageResult<std::monostate> {
-    return create_entry(root_, RecordType::Memo, snapshot, on_result, check_creation, changed, callback_invoked, evidence);
-  });
+::folio::core::Result<std::monostate, RepositoryMutationError>
+NormalRepository::create_memo(const core::Memo::Snapshot& snapshot,
+                              const MutationResultCallback<MemoMetadata>& on_result,
+                              const CreationCheck& check_creation) {
+  return run_mutation(root_, on_result,
+                      [&](bool& changed, bool& callback_invoked,
+                          RepositoryMutationEvidence& evidence) -> StorageResult<std::monostate> {
+                        return create_entry(root_, RecordType::Memo, snapshot, on_result,
+                                            check_creation, changed, callback_invoked, evidence);
+                      });
 }
-::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::create_todo(const core::Todo::Snapshot& snapshot,
-    const MutationResultCallback<TodoMetadata>& on_result, const CreationCheck& check_creation) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
-      -> StorageResult<std::monostate> {
-    return create_entry(root_, RecordType::Todo, snapshot, on_result, check_creation, changed, callback_invoked, evidence);
-  });
+::folio::core::Result<std::monostate, RepositoryMutationError>
+NormalRepository::create_todo(const core::Todo::Snapshot& snapshot,
+                              const MutationResultCallback<TodoMetadata>& on_result,
+                              const CreationCheck& check_creation) {
+  return run_mutation(root_, on_result,
+                      [&](bool& changed, bool& callback_invoked,
+                          RepositoryMutationEvidence& evidence) -> StorageResult<std::monostate> {
+                        return create_entry(root_, RecordType::Todo, snapshot, on_result,
+                                            check_creation, changed, callback_invoked, evidence);
+                      });
 }
-StorageResult<core::Log::Snapshot> NormalRepository::load_log(
-    const core::Id& id, std::optional<fs::path> relative_path) const {
+StorageResult<core::Log::Snapshot>
+NormalRepository::load_log(const core::Id& id, std::optional<fs::path> relative_path) const {
   return load_by_id<core::Log::Snapshot>(root_, RecordType::Log, id, relative_path);
 }
-StorageResult<core::Memo::Snapshot> NormalRepository::load_memo(
-    const core::Id& id, std::optional<fs::path> relative_path) const {
+StorageResult<core::Memo::Snapshot>
+NormalRepository::load_memo(const core::Id& id, std::optional<fs::path> relative_path) const {
   return load_by_id<core::Memo::Snapshot>(root_, RecordType::Memo, id, relative_path);
 }
-StorageResult<core::Todo::Snapshot> NormalRepository::load_todo(
-    const core::Id& id, std::optional<fs::path> relative_path) const {
+StorageResult<core::Todo::Snapshot>
+NormalRepository::load_todo(const core::Id& id, std::optional<fs::path> relative_path) const {
   return load_by_id<core::Todo::Snapshot>(root_, RecordType::Todo, id, relative_path);
 }
-::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::update_log(
-    const core::Log::Snapshot& snapshot, std::optional<fs::path> relative_path,
-    const MutationResultCallback<LogMetadata>& on_result) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
-      -> StorageResult<std::monostate> {
-    return update_record(root_, RecordType::Log, snapshot, relative_path, on_result, changed, callback_invoked, evidence);
-  });
+::folio::core::Result<std::monostate, RepositoryMutationError>
+NormalRepository::update_log(const core::Log::Snapshot& snapshot,
+                             std::optional<fs::path> relative_path,
+                             const MutationResultCallback<LogMetadata>& on_result) {
+  return run_mutation(root_, on_result,
+                      [&](bool& changed, bool& callback_invoked,
+                          RepositoryMutationEvidence& evidence) -> StorageResult<std::monostate> {
+                        return update_record(root_, RecordType::Log, snapshot, relative_path,
+                                             on_result, changed, callback_invoked, evidence);
+                      });
 }
-::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::update_memo(
-    const core::Memo::Snapshot& snapshot, std::optional<fs::path> relative_path,
-    const MutationResultCallback<MemoMetadata>& on_result) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
-      -> StorageResult<std::monostate> {
-    return update_record(root_, RecordType::Memo, snapshot, relative_path, on_result, changed, callback_invoked, evidence);
-  });
+::folio::core::Result<std::monostate, RepositoryMutationError>
+NormalRepository::update_memo(const core::Memo::Snapshot& snapshot,
+                              std::optional<fs::path> relative_path,
+                              const MutationResultCallback<MemoMetadata>& on_result) {
+  return run_mutation(root_, on_result,
+                      [&](bool& changed, bool& callback_invoked,
+                          RepositoryMutationEvidence& evidence) -> StorageResult<std::monostate> {
+                        return update_record(root_, RecordType::Memo, snapshot, relative_path,
+                                             on_result, changed, callback_invoked, evidence);
+                      });
 }
-::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::update_todo(
-    const core::Todo::Snapshot& snapshot, std::optional<fs::path> relative_path,
-    const MutationResultCallback<TodoMetadata>& on_result) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
-      -> StorageResult<std::monostate> {
-    return update_record(root_, RecordType::Todo, snapshot, relative_path, on_result, changed, callback_invoked, evidence);
-  });
-}
-
-::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::create_directory(
-    DirectoryKind kind, const core::Directory::Snapshot& snapshot,
-    const MutationResultCallback<DirectoryMetadata>& on_result, const CreationCheck& check_creation) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
-      -> StorageResult<std::monostate> {
-    if (!valid_kind(kind)) {
-      return fail(StorageErrorCode::InvalidRecordType, root_, "Invalid Directory kind");
-    }
-    if (snapshot.kind != kind) {
-      return fail(StorageErrorCode::InvalidMetadata, root_,
-                  "Directory snapshot kind does not match target module");
-    }
-    const auto folder = root_ / module_name(record_type(kind)) / snapshot.id.to_string();
-    const auto metadata = folder / ".folio-dir.toml";
-    auto encoded = checked_encoding(snapshot, metadata);
-    if (failure(encoded)) return *failure(encoded);
-    if (check_creation) {
-      auto checked = check_creation(snapshot.id);
-      if (auto problem = failure(checked)) return *problem;
-    } else {
-      auto checked = unique_id(root_, snapshot.id);
-      if (auto problem = failure(checked)) return *problem;
-    }
-    // TODO(Phase 5): journal and sync root/module bootstrap as part of
-    // Directory creation; failure can leave empty parent directories.
-    if (auto checked = ensure_directory(root_, folder.parent_path()); failure(checked)) {
-      return *failure(checked);
-    }
-    std::error_code ec;
-    if (!fs::create_directory(folder, ec) || ec) {
-      return fail(io::FileErrorCode::IoError, folder, "Could not create Directory folder", ec);
-    }
-    changed = true;
-    // TODO(Phase 5): journal folder creation and metadata publication. A
-    // failed metadata write leaves an identifiable incomplete UUID folder.
-    auto written = write_entry_file(metadata, std::get<std::string>(encoded), true, changed, evidence.write);
-    if (failure(written)) return *failure(written);
-    changed = true;
-    return notify_persisted(snapshot, root_, folder, on_result, callback_invoked);
-  });
+::folio::core::Result<std::monostate, RepositoryMutationError>
+NormalRepository::update_todo(const core::Todo::Snapshot& snapshot,
+                              std::optional<fs::path> relative_path,
+                              const MutationResultCallback<TodoMetadata>& on_result) {
+  return run_mutation(root_, on_result,
+                      [&](bool& changed, bool& callback_invoked,
+                          RepositoryMutationEvidence& evidence) -> StorageResult<std::monostate> {
+                        return update_record(root_, RecordType::Todo, snapshot, relative_path,
+                                             on_result, changed, callback_invoked, evidence);
+                      });
 }
 
-StorageResult<core::Directory::Snapshot> NormalRepository::load_directory(
-    DirectoryKind kind, const core::Id& id) const {
+::folio::core::Result<std::monostate, RepositoryMutationError>
+NormalRepository::create_directory(DirectoryKind kind, const core::Directory::Snapshot& snapshot,
+                                   const MutationResultCallback<DirectoryMetadata>& on_result,
+                                   const CreationCheck& check_creation) {
+  return run_mutation(
+      root_, on_result,
+      [&](bool& changed, bool& callback_invoked,
+          RepositoryMutationEvidence& evidence) -> StorageResult<std::monostate> {
+        if (!valid_kind(kind)) {
+          return fail(StorageErrorCode::InvalidRecordType, root_, "Invalid Directory kind");
+        }
+        if (snapshot.kind != kind) {
+          return fail(StorageErrorCode::InvalidMetadata, root_,
+                      "Directory snapshot kind does not match target module");
+        }
+        const auto folder = root_ / module_name(record_type(kind)) / snapshot.id.to_string();
+        const auto metadata = folder / ".folio-dir.toml";
+        auto encoded = checked_encoding(snapshot, metadata);
+        if (failure(encoded)) return *failure(encoded);
+        if (check_creation) {
+          auto checked = check_creation(snapshot.id);
+          if (auto problem = failure(checked)) return *problem;
+        } else {
+          auto checked = unique_id(root_, snapshot.id);
+          if (auto problem = failure(checked)) return *problem;
+        }
+        // TODO(Phase 5): journal and sync root/module bootstrap as part of
+        // Directory creation; failure can leave empty parent directories.
+        if (auto checked = ensure_directory(root_, folder.parent_path()); failure(checked)) {
+          return *failure(checked);
+        }
+        std::error_code ec;
+        if (!fs::create_directory(folder, ec) || ec) {
+          return fail(io::FileErrorCode::IoError, folder, "Could not create Directory folder", ec);
+        }
+        changed = true;
+        // TODO(Phase 5): journal folder creation and metadata publication. A
+        // failed metadata write leaves an identifiable incomplete UUID folder.
+        auto written = write_entry_file(metadata, std::get<std::string>(encoded), true, changed,
+                                        evidence.write);
+        if (failure(written)) return *failure(written);
+        changed = true;
+        return notify_persisted(snapshot, root_, folder, on_result, callback_invoked);
+      });
+}
+
+StorageResult<core::Directory::Snapshot>
+NormalRepository::load_directory(DirectoryKind kind, const core::Id& id) const {
   if (!valid_kind(kind)) {
     return fail(StorageErrorCode::InvalidRecordType, root_, "Invalid Directory kind");
   }
   return load_directory_at(root_, kind, id);
 }
 
-::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::rename_directory(
-    DirectoryKind kind, const core::Id& id, std::string name,
-    const MutationResultCallback<DirectoryMetadata>& on_result) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
-      -> StorageResult<std::monostate> {
-    if (!valid_kind(kind)) {
-      return fail(StorageErrorCode::InvalidRecordType, root_, "Invalid Directory kind");
-    }
-    auto prior = load_directory_at(root_, kind, id);
-    if (failure(prior)) return *failure(prior);
-    const auto folder = root_ / module_name(record_type(kind)) / id.to_string();
-    const auto metadata = folder / ".folio-dir.toml";
-    core::Directory::Snapshot snapshot{id, kind, std::move(name)};
-    auto encoded = checked_encoding(snapshot, metadata);
-    if (failure(encoded)) return *failure(encoded);
-    auto written = write_entry_file(metadata, std::get<std::string>(encoded), false, changed, evidence.write);
-    if (failure(written)) return *failure(written);
-    changed = true;
-    return notify_persisted(snapshot, root_, folder, on_result, callback_invoked);
-  });
+::folio::core::Result<std::monostate, RepositoryMutationError>
+NormalRepository::rename_directory(DirectoryKind kind, const core::Id& id, std::string name,
+                                   const MutationResultCallback<DirectoryMetadata>& on_result) {
+  return run_mutation(
+      root_, on_result,
+      [&](bool& changed, bool& callback_invoked,
+          RepositoryMutationEvidence& evidence) -> StorageResult<std::monostate> {
+        if (!valid_kind(kind)) {
+          return fail(StorageErrorCode::InvalidRecordType, root_, "Invalid Directory kind");
+        }
+        auto prior = load_directory_at(root_, kind, id);
+        if (failure(prior)) return *failure(prior);
+        const auto folder = root_ / module_name(record_type(kind)) / id.to_string();
+        const auto metadata = folder / ".folio-dir.toml";
+        core::Directory::Snapshot snapshot{id, kind, std::move(name)};
+        auto encoded = checked_encoding(snapshot, metadata);
+        if (failure(encoded)) return *failure(encoded);
+        auto written = write_entry_file(metadata, std::get<std::string>(encoded), false, changed,
+                                        evidence.write);
+        if (failure(written)) return *failure(written);
+        changed = true;
+        return notify_persisted(snapshot, root_, folder, on_result, callback_invoked);
+      });
 }
 
 ::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::move_memo(
-    const core::Id& id, std::optional<core::Id> directory_id,
-    core::TimestampContext modified,
+    const core::Id& id, std::optional<core::Id> directory_id, core::TimestampContext modified,
     const MutationResultCallback<MemoMetadata>& on_result, std::optional<fs::path> relative_path) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
-      -> StorageResult<std::monostate> {
-    return move_entry<core::Memo::Snapshot>(root_, RecordType::Memo, id,
-                                             std::move(directory_id), std::move(modified), on_result, relative_path, changed, callback_invoked, evidence);
-  });
+  return run_mutation(root_, on_result,
+                      [&](bool& changed, bool& callback_invoked,
+                          RepositoryMutationEvidence& evidence) -> StorageResult<std::monostate> {
+                        return move_entry<core::Memo::Snapshot>(
+                            root_, RecordType::Memo, id, std::move(directory_id),
+                            std::move(modified), on_result, relative_path, changed,
+                            callback_invoked, evidence);
+                      });
 }
 ::folio::core::Result<std::monostate, RepositoryMutationError> NormalRepository::move_todo(
-    const core::Id& id, std::optional<core::Id> directory_id,
-    core::TimestampContext modified,
+    const core::Id& id, std::optional<core::Id> directory_id, core::TimestampContext modified,
     const MutationResultCallback<TodoMetadata>& on_result, std::optional<fs::path> relative_path) {
-  return run_mutation(root_, on_result, [&](bool& changed, bool& callback_invoked, RepositoryMutationEvidence& evidence)
-      -> StorageResult<std::monostate> {
-    return move_entry<core::Todo::Snapshot>(root_, RecordType::Todo, id,
-                                             std::move(directory_id), std::move(modified), on_result, relative_path, changed, callback_invoked, evidence);
-  });
+  return run_mutation(root_, on_result,
+                      [&](bool& changed, bool& callback_invoked,
+                          RepositoryMutationEvidence& evidence) -> StorageResult<std::monostate> {
+                        return move_entry<core::Todo::Snapshot>(
+                            root_, RecordType::Todo, id, std::move(directory_id),
+                            std::move(modified), on_result, relative_path, changed,
+                            callback_invoked, evidence);
+                      });
 }
 
 StorageResult<fs::path> NormalRepository::locate_record(RecordType type, const core::Id& id) const {
@@ -993,27 +1053,27 @@ StorageResult<fs::path> NormalRepository::locate_record(RecordType type, const c
   if (failure(located)) return *failure(located);
   const auto path = std::get<fs::path>(located);
   switch (type) {
-    case RecordType::Log: {
-      auto loaded = load_at<core::Log::Snapshot>(root_, type, path);
-      if (failure(loaded)) return *failure(loaded);
-      break;
-    }
-    case RecordType::Memo: {
-      auto loaded = load_at<core::Memo::Snapshot>(root_, type, path);
-      if (failure(loaded)) return *failure(loaded);
-      break;
-    }
-    case RecordType::Todo: {
-      auto loaded = load_at<core::Todo::Snapshot>(root_, type, path);
-      if (failure(loaded)) return *failure(loaded);
-      break;
-    }
+  case RecordType::Log: {
+    auto loaded = load_at<core::Log::Snapshot>(root_, type, path);
+    if (failure(loaded)) return *failure(loaded);
+    break;
+  }
+  case RecordType::Memo: {
+    auto loaded = load_at<core::Memo::Snapshot>(root_, type, path);
+    if (failure(loaded)) return *failure(loaded);
+    break;
+  }
+  case RecordType::Todo: {
+    auto loaded = load_at<core::Todo::Snapshot>(root_, type, path);
+    if (failure(loaded)) return *failure(loaded);
+    break;
+  }
   }
   return path.lexically_relative(root_);
 }
 
-StorageResult<fs::path> NormalRepository::locate_record(
-    RecordType type, const fs::path& relative_path) const {
+StorageResult<fs::path> NormalRepository::locate_record(RecordType type,
+                                                        const fs::path& relative_path) const {
   if (!valid_type(type)) {
     return fail(StorageErrorCode::InvalidRecordType, relative_path, "Invalid entry type");
   }
@@ -1043,8 +1103,8 @@ StorageResult<NormalRepositoryScanResult> NormalRepository::scan() const {
   if (auto checked = safe_path(root_, root_, true); failure(checked)) return *failure(checked);
   std::error_code ec;
   const auto root_status = fs::symlink_status(root_, ec);
-  if (ec == std::errc::no_such_file_or_directory ||
-      root_status.type() == fs::file_type::not_found) return inventory;
+  if (ec == std::errc::no_such_file_or_directory || root_status.type() == fs::file_type::not_found)
+    return inventory;
   if (ec) return fail(io::FileErrorCode::IoError, root_, "Could not inspect Normal root", ec);
   if (!fs::is_directory(root_status))
     return fail(io::FileErrorCode::InvalidPath, root_, "Normal root is not a directory");
@@ -1070,11 +1130,13 @@ StorageResult<NormalRepositoryScanResult> NormalRepository::scan() const {
     while (!folder_ec && child != end) {
       const auto path = child->path();
       if (path.filename() == ".folio-dir.toml" ||
-          path.extension() == (type == RecordType::Todo ? ".toml" : ".md")) return true;
+          path.extension() == (type == RecordType::Todo ? ".toml" : ".md"))
+        return true;
       child.increment(folder_ec);
     }
-    if (folder_ec) return fail(io::FileErrorCode::IoError, folder,
-                               "Could not inspect unrelated folder", folder_ec);
+    if (folder_ec)
+      return fail(io::FileErrorCode::IoError, folder, "Could not inspect unrelated folder",
+                  folder_ec);
     return false;
   };
   auto visit_files = [&](RecordType type, const fs::path& folder,
@@ -1088,7 +1150,8 @@ StorageResult<NormalRepositoryScanResult> NormalRepository::scan() const {
       if (iter_ec) break;
       if (in_directory && path.filename() == ".folio-dir.toml") {
         if (!fs::is_regular_file(status))
-          return fail(io::FileErrorCode::InvalidPath, path, "Directory metadata is not a regular file");
+          return fail(io::FileErrorCode::InvalidPath, path,
+                      "Directory metadata is not a regular file");
       } else if (reserved_temp(path) && fs::is_regular_file(status)) {
         // Recovery owns reserved atomic temporary artifacts.
       } else if (reserved_temp(path) && fs::is_symlink(status)) {
@@ -1111,8 +1174,7 @@ StorageResult<NormalRepositoryScanResult> NormalRepository::scan() const {
         if (fs::is_symlink(status) && !in_directory && type != RecordType::Log) {
           const auto id = core::Id::parse(path.filename().string());
           if (id && id->to_string() == path.filename().string())
-            return fail(io::FileErrorCode::InvalidPath, path,
-                        "Symlink at managed Directory path");
+            return fail(io::FileErrorCode::InvalidPath, path, "Symlink at managed Directory path");
         }
         const auto extension = type == RecordType::Todo ? ".toml" : ".md";
         if (path.extension() == extension) {
@@ -1126,30 +1188,31 @@ StorageResult<NormalRepositoryScanResult> NormalRepository::scan() const {
             auto value = std::get<core::Log::Snapshot>(std::move(loaded));
             if (!entry_ids.insert(value.id.to_string()).second)
               return fail(StorageErrorCode::DuplicateId, path, "Duplicate stored Entry UUID");
-            inventory.logs.push_back({{value.id, value.privacy,
-                                      std::move(value.created), std::move(value.modified),
-                                      std::move(value.title), std::move(value.tags),
-                                      std::move(value.log_date)}, relative});
+            inventory.logs.push_back(
+                {{value.id, value.privacy, std::move(value.created), std::move(value.modified),
+                  std::move(value.title), std::move(value.tags), std::move(value.log_date)},
+                 relative});
           } else if (type == RecordType::Memo) {
             auto loaded = load_at<core::Memo::Snapshot>(root_, type, path);
             if (failure(loaded)) return *failure(loaded);
             auto value = std::get<core::Memo::Snapshot>(std::move(loaded));
             if (!entry_ids.insert(value.id.to_string()).second)
               return fail(StorageErrorCode::DuplicateId, path, "Duplicate stored Entry UUID");
-            inventory.memos.push_back({{value.id, value.privacy,
-                                       std::move(value.created), std::move(value.modified),
-                                       std::move(value.title), std::move(value.tags),
-                                       std::move(value.directory_id)}, relative});
+            inventory.memos.push_back(
+                {{value.id, value.privacy, std::move(value.created), std::move(value.modified),
+                  std::move(value.title), std::move(value.tags), std::move(value.directory_id)},
+                 relative});
           } else {
             auto loaded = load_at<core::Todo::Snapshot>(root_, type, path);
             if (failure(loaded)) return *failure(loaded);
             auto value = std::get<core::Todo::Snapshot>(std::move(loaded));
             if (!entry_ids.insert(value.id.to_string()).second)
               return fail(StorageErrorCode::DuplicateId, path, "Duplicate stored Entry UUID");
-            inventory.todos.push_back({{value.id, value.privacy,
-                                       std::move(value.created), std::move(value.modified),
-                                       std::move(value.title), value.status, value.priority,
-                                       std::move(value.due_date), std::move(value.directory_id)}, relative});
+            inventory.todos.push_back(
+                {{value.id, value.privacy, std::move(value.created), std::move(value.modified),
+                  std::move(value.title), value.status, value.priority, std::move(value.due_date),
+                  std::move(value.directory_id)},
+                 relative});
           }
         } else {
           note(path, "Unrelated object was not parsed");
@@ -1157,7 +1220,8 @@ StorageResult<NormalRepositoryScanResult> NormalRepository::scan() const {
       }
       item.increment(iter_ec);
     }
-    if (iter_ec) return fail(io::FileErrorCode::IoError, folder, "Could not enumerate folder", iter_ec);
+    if (iter_ec)
+      return fail(io::FileErrorCode::IoError, folder, "Could not enumerate folder", iter_ec);
     return std::monostate{};
   };
 
@@ -1166,7 +1230,8 @@ StorageResult<NormalRepositoryScanResult> NormalRepository::scan() const {
   while (!ec && root_item != end) {
     const auto path = root_item->path();
     const auto name = path.filename();
-    if (name != "logs" && name != "memos" && name != "todos") note(path, "Unrelated root object was not parsed");
+    if (name != "logs" && name != "memos" && name != "todos")
+      note(path, "Unrelated root object was not parsed");
     root_item.increment(ec);
   }
   if (ec) return fail(io::FileErrorCode::IoError, root_, "Could not enumerate Normal root", ec);
@@ -1175,8 +1240,10 @@ StorageResult<NormalRepositoryScanResult> NormalRepository::scan() const {
     const auto base = root_ / module_name(type);
     if (auto checked = safe_path(root_, base, true); failure(checked)) return *failure(checked);
     const auto status = fs::symlink_status(base, ec);
-    if (ec == std::errc::no_such_file_or_directory ||
-        status.type() == fs::file_type::not_found) { ec.clear(); continue; }
+    if (ec == std::errc::no_such_file_or_directory || status.type() == fs::file_type::not_found) {
+      ec.clear();
+      continue;
+    }
     if (ec) return fail(io::FileErrorCode::IoError, base, "Could not inspect module", ec);
     if (!fs::is_directory(status))
       return fail(io::FileErrorCode::InvalidPath, base, "Module is not a directory");
@@ -1204,26 +1271,23 @@ StorageResult<NormalRepositoryScanResult> NormalRepository::scan() const {
           if (!entry_ids.insert(value.id.to_string()).second)
             return fail(StorageErrorCode::DuplicateId, folder, "Duplicate stored Entry UUID");
           inventory.directories.push_back(metadata_from(value, folder.lexically_relative(root_)));
-          if (auto visited = visit_files(type, folder, true); failure(visited)) return *failure(visited);
+          if (auto visited = visit_files(type, folder, true); failure(visited))
+            return *failure(visited);
         }
       }
       item.increment(ec);
     }
     if (ec) return fail(io::FileErrorCode::IoError, base, "Could not enumerate Directories", ec);
   }
-  auto by_path = [](const auto& a, const auto& b) {
-    return a.relative_path < b.relative_path;
-  };
+  auto by_path = [](const auto& a, const auto& b) { return a.relative_path < b.relative_path; };
   std::sort(inventory.logs.begin(), inventory.logs.end(), by_path);
   std::sort(inventory.memos.begin(), inventory.memos.end(), by_path);
   std::sort(inventory.todos.begin(), inventory.todos.end(), by_path);
-  std::sort(inventory.directories.begin(), inventory.directories.end(), [](const auto& a, const auto& b) {
-    return a.relative_path < b.relative_path;
-  });
-  std::sort(inventory.diagnostics.begin(), inventory.diagnostics.end(), [](const auto& a, const auto& b) {
-    return a.path < b.path;
-  });
+  std::sort(inventory.directories.begin(), inventory.directories.end(),
+            [](const auto& a, const auto& b) { return a.relative_path < b.relative_path; });
+  std::sort(inventory.diagnostics.begin(), inventory.diagnostics.end(),
+            [](const auto& a, const auto& b) { return a.path < b.path; });
   return inventory;
 }
 
-}  // namespace folio::core::storage
+} // namespace folio::core::storage

@@ -8,16 +8,39 @@
 namespace folio::application {
 
 enum class ErrorCategory {
-  InvalidRequest, TargetUnavailable, FilesystemFailure, AuthoritativeDataProblem,
-  ConnectionFailure, InternalFailure, ApplicationUnavailable
+  InvalidRequest,
+  TargetUnavailable,
+  FilesystemFailure,
+  AuthoritativeDataProblem,
+  ConnectionFailure,
+  InternalFailure,
+  ApplicationUnavailable
 };
 
 enum class ErrorReason {
-  InvalidQuery, WrongRecordType, NotFound, StaleLocation, InvalidData,
-  UnsupportedVersion, IdentityConflict, UnsafePath, AccessDenied, IoFailure,
-  ConnectionLost, Timeout, BackendUnavailable, ProtocolError, IncompatibleProtocol,
-  MetadataUnavailable, ResourceLimit, UnexpectedFailure, NotImplemented,
-  InvalidMutation, LockConflict, EditLockRequired, CatalogSynchronizationFailed
+  InvalidQuery,
+  WrongRecordType,
+  NotFound,
+  StaleLocation,
+  InvalidData,
+  UnsupportedVersion,
+  IdentityConflict,
+  UnsafePath,
+  AccessDenied,
+  IoFailure,
+  ConnectionLost,
+  Timeout,
+  BackendUnavailable,
+  ProtocolError,
+  IncompatibleProtocol,
+  MetadataUnavailable,
+  ResourceLimit,
+  UnexpectedFailure,
+  NotImplemented,
+  InvalidMutation,
+  LockConflict,
+  EditLockRequired,
+  CatalogSynchronizationFailed
 };
 
 // Presentation choices, not automatic retries or guarantees of success.
@@ -39,13 +62,11 @@ struct ApplicationWarning {
   std::vector<ErrorAction> available_actions;
 };
 
-template<class T>
-struct ApplicationResponse {
+template <class T> struct ApplicationResponse {
   T value;
   std::vector<ApplicationWarning> warnings;
 };
 
-template<class T>
-using ApplicationResult = core::Result<T, ApplicationError>;
+template <class T> using ApplicationResult = core::Result<T, ApplicationError>;
 
-}  // namespace folio::application
+} // namespace folio::application

@@ -36,9 +36,8 @@ namespace {
 
 namespace fs = std::filesystem;
 
-FileError error(FileErrorCode code, const fs::path& path,
-                   std::string message, std::error_code system_error = {},
-                   bool replacement_completed = false) {
+FileError error(FileErrorCode code, const fs::path& path, std::string message,
+                std::error_code system_error = {}, bool replacement_completed = false) {
   return {code, path, std::move(message), system_error, replacement_completed};
 }
 
@@ -75,7 +74,7 @@ fs::path temporary_name(const fs::path& destination) {
 }
 
 std::variant<std::monostate, FileError> check_pending_temporary(const fs::path& parent,
-                                              const fs::path& destination) {
+                                                                const fs::path& destination) {
   const auto prefix = temporary_prefix(destination).native();
   std::error_code ec;
   fs::directory_iterator item{parent, ec};
@@ -89,8 +88,8 @@ std::variant<std::monostate, FileError> check_pending_temporary(const fs::path& 
     }
     item.increment(ec);
   }
-  if (ec) return error(FileErrorCode::IoError, destination,
-                       "Could not inspect temporary files", ec);
+  if (ec)
+    return error(FileErrorCode::IoError, destination, "Could not inspect temporary files", ec);
   return std::monostate{};
 }
 
@@ -123,7 +122,9 @@ struct DirectoryLock {
 
 #else
 
-std::error_code system_error() { return {errno, std::generic_category()}; }
+std::error_code system_error() {
+  return {errno, std::generic_category()};
+}
 
 struct FileDescriptor {
   int value = -1;
@@ -154,15 +155,15 @@ bool sync_file(int descriptor) {
 
 #endif
 
-}  // namespace
+} // namespace
 
 namespace internal {
 
 std::variant<std::monostate, FileError> write_file_atomic(const fs::path& path,
-                                        std::span<const std::byte> contents,
-                                        bool create_only, SyncFile sync) {
-  if (path.empty() || has_nul(path) || path.filename().empty() ||
-      path.filename() == "." || path.filename() == "..") {
+                                                          std::span<const std::byte> contents,
+                                                          bool create_only, SyncFile sync) {
+  if (path.empty() || has_nul(path) || path.filename().empty() || path.filename() == "." ||
+      path.filename() == "..") {
     return error(FileErrorCode::InvalidPath, path, "Expected a file path without NUL bytes");
   }
   const auto parent = path.has_parent_path() ? path.parent_path() : fs::path{"."};
@@ -176,10 +177,11 @@ std::variant<std::monostate, FileError> write_file_atomic(const fs::path& path,
   }
   BY_HANDLE_FILE_INFORMATION identity{};
   if (!GetFileInformationByHandle(directory.handle, &identity)) {
-    return error(FileErrorCode::IoError, path, "Could not identify parent directory", system_error());
+    return error(FileErrorCode::IoError, path, "Could not identify parent directory",
+                 system_error());
   }
-  const auto lock_name = L"Global\\FolioDirectoryWrite-" +
-      std::to_wstring(identity.dwVolumeSerialNumber) + L"-" +
+  const auto lock_name =
+      L"Global\\FolioDirectoryWrite-" + std::to_wstring(identity.dwVolumeSerialNumber) + L"-" +
       std::to_wstring(identity.nFileIndexHigh) + L"-" + std::to_wstring(identity.nFileIndexLow);
   DirectoryLock lock;
   lock.handle = CreateMutexW(nullptr, FALSE, lock_name.c_str());
@@ -200,8 +202,9 @@ std::variant<std::monostate, FileError> write_file_atomic(const fs::path& path,
     if (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) {
       return error(FileErrorCode::InvalidPath, path, "Destination must be a regular file");
     }
-    if (create_only) return error(FileErrorCode::IoError, path, "Destination already exists",
-                                  std::make_error_code(std::errc::file_exists));
+    if (create_only)
+      return error(FileErrorCode::IoError, path, "Destination already exists",
+                   std::make_error_code(std::errc::file_exists));
   } else if (GetLastError() != ERROR_FILE_NOT_FOUND) {
     return error(FileErrorCode::IoError, path, "Could not inspect destination", system_error());
   } else if (!create_only) {
@@ -212,8 +215,8 @@ std::variant<std::monostate, FileError> write_file_atomic(const fs::path& path,
   for (int attempt = 0; attempt < 128; ++attempt) {
     temporary.path = parent / temporary_name(path);
     if (component_equal(temporary.path.filename(), path.filename())) continue;
-    temporary.handle = CreateFileW(temporary.path.c_str(), GENERIC_WRITE, 0, nullptr,
-                                    CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    temporary.handle = CreateFileW(temporary.path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                   FILE_ATTRIBUTE_NORMAL, nullptr);
     if (temporary.handle != INVALID_HANDLE_VALUE) {
       temporary.owned = true;
       break;
@@ -227,8 +230,8 @@ std::variant<std::monostate, FileError> write_file_atomic(const fs::path& path,
     return error(FileErrorCode::IoError, path, "Could not allocate an exclusive temporary file");
   }
   while (!contents.empty()) {
-    const auto count = static_cast<DWORD>(std::min<std::size_t>(contents.size(),
-                                                               std::numeric_limits<DWORD>::max()));
+    const auto count = static_cast<DWORD>(
+        std::min<std::size_t>(contents.size(), std::numeric_limits<DWORD>::max()));
     DWORD written = 0;
     if (!WriteFile(temporary.handle, contents.data(), count, &written, nullptr)) {
       return error(FileErrorCode::IoError, path, "Could not write temporary file", system_error());
@@ -246,8 +249,7 @@ std::variant<std::monostate, FileError> write_file_atomic(const fs::path& path,
   if (!CloseHandle(handle)) {
     return error(FileErrorCode::IoError, path, "Could not close temporary file", system_error());
   }
-  const auto move_flags = MOVEFILE_WRITE_THROUGH |
-      (create_only ? 0 : MOVEFILE_REPLACE_EXISTING);
+  const auto move_flags = MOVEFILE_WRITE_THROUGH | (create_only ? 0 : MOVEFILE_REPLACE_EXISTING);
   if (!MoveFileExW(temporary.path.c_str(), path.c_str(), move_flags)) {
     return error(FileErrorCode::IoError, path, "Could not replace destination", system_error());
   }
@@ -272,8 +274,9 @@ std::variant<std::monostate, FileError> write_file_atomic(const fs::path& path,
     if (!S_ISREG(status.st_mode)) {
       return error(FileErrorCode::InvalidPath, path, "Destination must be a regular file");
     }
-    if (create_only) return error(FileErrorCode::IoError, path, "Destination already exists",
-                                  std::make_error_code(std::errc::file_exists));
+    if (create_only)
+      return error(FileErrorCode::IoError, path, "Destination already exists",
+                   std::make_error_code(std::errc::file_exists));
   } else if (errno != ENOENT) {
     return error(FileErrorCode::IoError, path, "Could not inspect destination", system_error());
   } else if (!create_only) {
@@ -285,7 +288,7 @@ std::variant<std::monostate, FileError> write_file_atomic(const fs::path& path,
     temporary.name = temporary_name(path).native();
     if (temporary.name == filename) continue;
     temporary.descriptor = openat(directory.value, temporary.name.c_str(),
-                                   O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+                                  O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     if (temporary.descriptor != -1) {
       temporary.owned = true;
       break;
@@ -298,8 +301,8 @@ std::variant<std::monostate, FileError> write_file_atomic(const fs::path& path,
     return error(FileErrorCode::IoError, path, "Could not allocate an exclusive temporary file");
   }
   while (!contents.empty()) {
-    const auto count = std::min<std::size_t>(contents.size(),
-                                            static_cast<std::size_t>(std::numeric_limits<ssize_t>::max()));
+    const auto count = std::min<std::size_t>(
+        contents.size(), static_cast<std::size_t>(std::numeric_limits<ssize_t>::max()));
     const auto written = write(temporary.descriptor, contents.data(), count);
     if (written == -1) {
       if (errno == EINTR) continue;
@@ -335,9 +338,10 @@ std::variant<std::monostate, FileError> write_file_atomic(const fs::path& path,
                  "Could not sync staged temporary file's directory; temporary file removed",
                  sync_error);
   }
-  const auto replacement_status = create_only
-      ? linkat(directory.value, temporary.name.c_str(), directory.value, filename.c_str(), 0)
-      : renameat(directory.value, temporary.name.c_str(), directory.value, filename.c_str());
+  const auto replacement_status =
+      create_only
+          ? linkat(directory.value, temporary.name.c_str(), directory.value, filename.c_str(), 0)
+          : renameat(directory.value, temporary.name.c_str(), directory.value, filename.c_str());
   if (replacement_status == -1) {
     return error(FileErrorCode::IoError, path, "Could not publish destination", system_error());
   }
@@ -354,16 +358,17 @@ std::variant<std::monostate, FileError> write_file_atomic(const fs::path& path,
       temporary.owned = false;
       if (!sync(directory.value)) {
         return error(FileErrorCode::DurabilityFailure, path,
-                     "Temporary link removed but directory cleanup sync failed",
-                     system_error(), true);
+                     "Temporary link removed but directory cleanup sync failed", system_error(),
+                     true);
       }
     }
     return error(FileErrorCode::DurabilityFailure, path,
                  "Publication completed but parent directory sync failed", sync_error, true);
   }
   if (create_only && unlinkat(directory.value, temporary.name.c_str(), 0) == -1) {
-    auto failure = error(FileErrorCode::IoError, path, "Created destination but could not remove temporary link",
-                         system_error(), true);
+    auto failure =
+        error(FileErrorCode::IoError, path,
+              "Created destination but could not remove temporary link", system_error(), true);
     failure.durability_confirmed = true;
     return failure;
   }
@@ -379,9 +384,10 @@ std::variant<std::monostate, FileError> write_file_atomic(const fs::path& path,
   return std::monostate{};
 }
 
-}  // namespace internal
+} // namespace internal
 
-std::variant<std::monostate, FileError> create_file_atomic(const fs::path& path, std::span<const std::byte> contents) {
+std::variant<std::monostate, FileError> create_file_atomic(const fs::path& path,
+                                                           std::span<const std::byte> contents) {
   return internal::write_file_atomic(path, contents, true,
 #ifdef _WIN32
                                      nullptr);
@@ -390,7 +396,8 @@ std::variant<std::monostate, FileError> create_file_atomic(const fs::path& path,
 #endif
 }
 
-std::variant<std::monostate, FileError> replace_file_atomic(const fs::path& path, std::span<const std::byte> contents) {
+std::variant<std::monostate, FileError> replace_file_atomic(const fs::path& path,
+                                                            std::span<const std::byte> contents) {
   return internal::write_file_atomic(path, contents, false,
 #ifdef _WIN32
                                      nullptr);
@@ -398,7 +405,6 @@ std::variant<std::monostate, FileError> replace_file_atomic(const fs::path& path
                                      sync_file);
 #endif
 }
-
 
 namespace {
 // Test-only sync override is thread-local and never installed by production.
@@ -409,8 +415,7 @@ bool lifecycle_sync(int descriptor) {
 }
 #endif
 
-std::variant<std::monostate, FileError>
-validate_lifecycle_file_path(const fs::path& path) {
+std::variant<std::monostate, FileError> validate_lifecycle_file_path(const fs::path& path) {
   if (!path.is_absolute() || has_nul(path) || path != path.lexically_normal() ||
       path.filename().empty() || path.filename() == "." || path.filename() == "..")
     return error(FileErrorCode::InvalidPath, path, "Expected canonical absolute file path");
@@ -425,23 +430,23 @@ validate_lifecycle_file_path(const fs::path& path) {
 #ifdef _WIN32
     const auto attributes = GetFileAttributesW(current.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES)
-      return error(FileErrorCode::IoError, current, "Could not inspect file parent", system_error());
+      return error(FileErrorCode::IoError, current, "Could not inspect file parent",
+                   system_error());
     if (attributes & FILE_ATTRIBUTE_REPARSE_POINT)
       return error(FileErrorCode::InvalidPath, current, "Unsafe file parent");
 #endif
   }
   return std::monostate{};
 }
-}
+} // namespace
 
 namespace internal {
 SyncFile set_lifecycle_sync_for_testing(SyncFile sync) noexcept {
   return std::exchange(lifecycle_test_sync, sync);
 }
-}
+} // namespace internal
 
-std::variant<std::monostate, FileError>
-create_directories_durable(const fs::path& path) {
+std::variant<std::monostate, FileError> create_directories_durable(const fs::path& path) {
   if (!path.is_absolute() || has_nul(path) || path != path.lexically_normal())
     return error(FileErrorCode::InvalidPath, path, "Expected canonical absolute directory path");
 #ifdef _WIN32
@@ -467,63 +472,70 @@ create_directories_durable(const fs::path& path) {
     if (mkdirat(directory.value, component.c_str(), 0700) != 0 && errno != EEXIST)
       return error(FileErrorCode::IoError, path, "Could not create directory", system_error());
     FileDescriptor child{openat(directory.value, component.c_str(),
-        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)};
+                                O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)};
     if (child.value == -1) {
       const auto ec = system_error();
-      const auto code = ec == std::errc::too_many_symbolic_link_levels ||
-                        ec == std::errc::not_a_directory
-          ? FileErrorCode::InvalidPath : FileErrorCode::IoError;
+      const auto code =
+          ec == std::errc::too_many_symbolic_link_levels || ec == std::errc::not_a_directory
+              ? FileErrorCode::InvalidPath
+              : FileErrorCode::IoError;
       return error(code, path, "Could not open safe directory component", ec);
     }
     if (!lifecycle_sync(directory.value))
-      return error(FileErrorCode::DurabilityFailure, path, "Could not sync directory link", system_error());
+      return error(FileErrorCode::DurabilityFailure, path, "Could not sync directory link",
+                   system_error());
     std::swap(directory.value, child.value);
   }
   if (!lifecycle_sync(directory.value))
-    return error(FileErrorCode::DurabilityFailure, path, "Could not sync directory", system_error());
+    return error(FileErrorCode::DurabilityFailure, path, "Could not sync directory",
+                 system_error());
 #endif
   return std::monostate{};
 }
 
-std::variant<std::monostate, FileError>
-create_empty_file_durable(const fs::path& path) {
+std::variant<std::monostate, FileError> create_empty_file_durable(const fs::path& path) {
   auto valid = validate_lifecycle_file_path(path);
   if (auto* problem = std::get_if<FileError>(&valid)) return *problem;
 #ifdef _WIN32
   TemporaryFile file;
-  file.handle = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
-      nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+  file.handle = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW,
+                            FILE_ATTRIBUTE_NORMAL, nullptr);
   if (file.handle == INVALID_HANDLE_VALUE)
-    return error(FileErrorCode::IoError, path, "Could not exclusively create empty file", system_error());
+    return error(FileErrorCode::IoError, path, "Could not exclusively create empty file",
+                 system_error());
   if (!FlushFileBuffers(file.handle))
-    return error(FileErrorCode::DurabilityFailure, path, "Empty file published but flush failed", system_error(), true);
+    return error(FileErrorCode::DurabilityFailure, path, "Empty file published but flush failed",
+                 system_error(), true);
 #else
-  FileDescriptor directory{open(path.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)};
+  FileDescriptor directory{
+      open(path.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)};
   if (directory.value == -1)
     return error(FileErrorCode::IoError, path, "Could not open empty-file parent", system_error());
   FileDescriptor file{openat(directory.value, path.filename().c_str(),
-      O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600)};
+                             O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600)};
   if (file.value == -1)
-    return error(FileErrorCode::IoError, path, "Could not exclusively create empty file", system_error());
+    return error(FileErrorCode::IoError, path, "Could not exclusively create empty file",
+                 system_error());
   // No payload can tear: presence alone is significant. Never unlink on a failed
   // sync, since the next lifecycle must conservatively observe publication.
   if (!lifecycle_sync(file.value))
-    return error(FileErrorCode::DurabilityFailure, path, "Empty file published but sync failed", system_error(), true);
+    return error(FileErrorCode::DurabilityFailure, path, "Empty file published but sync failed",
+                 system_error(), true);
   if (!lifecycle_sync(directory.value))
-    return error(FileErrorCode::DurabilityFailure, path, "Empty file published but parent sync failed", system_error(), true);
+    return error(FileErrorCode::DurabilityFailure, path,
+                 "Empty file published but parent sync failed", system_error(), true);
 #endif
   return std::monostate{};
 }
 
-std::variant<std::monostate, FileError>
-sync_regular_file(const fs::path& path) {
+std::variant<std::monostate, FileError> sync_regular_file(const fs::path& path) {
   auto valid = validate_lifecycle_file_path(path);
   if (auto* problem = std::get_if<FileError>(&valid)) return *problem;
 #ifdef _WIN32
   TemporaryFile file;
   file.handle = CreateFileW(path.c_str(), GENERIC_WRITE,
-      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-      FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                            OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
   if (file.handle == INVALID_HANDLE_VALUE)
     return error(FileErrorCode::IoError, path, "Could not open file for sync", system_error());
   BY_HANDLE_FILE_INFORMATION info{};
@@ -548,8 +560,7 @@ sync_regular_file(const fs::path& path) {
   return std::monostate{};
 }
 
-std::variant<std::monostate, FileError>
-remove_file_durable(const fs::path& path) {
+std::variant<std::monostate, FileError> remove_file_durable(const fs::path& path) {
   auto valid = validate_lifecycle_file_path(path);
   if (auto* problem = std::get_if<FileError>(&valid)) return *problem;
   std::error_code ec;
@@ -563,14 +574,15 @@ remove_file_durable(const fs::path& path) {
   if (exists && !DeleteFileW(path.c_str()))
     return error(FileErrorCode::IoError, path, "Could not remove file", system_error());
 #else
-  FileDescriptor directory{open(path.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)};
+  FileDescriptor directory{
+      open(path.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)};
   if (directory.value == -1)
     return error(FileErrorCode::IoError, path, "Could not open removal parent", system_error());
   if (exists && unlinkat(directory.value, path.filename().c_str(), 0) != 0)
     return error(FileErrorCode::IoError, path, "Could not remove file", system_error());
   if (!lifecycle_sync(directory.value))
-    return error(FileErrorCode::DurabilityFailure, path,
-                 "File removed but parent sync failed", system_error(), exists);
+    return error(FileErrorCode::DurabilityFailure, path, "File removed but parent sync failed",
+                 system_error(), exists);
 #endif
   return std::monostate{};
 }
@@ -579,18 +591,15 @@ std::variant<std::string, ReadError> read_file(const std::filesystem::path& path
                                                std::size_t max_bytes) {
   if (path.empty() || path.native().find(std::filesystem::path::value_type{}) !=
                           std::filesystem::path::string_type::npos)
-    return ReadError{ReadErrorCode::IoError, path,
-                           "Invalid binary file path", std::make_error_code(std::errc::invalid_argument)};
+    return ReadError{ReadErrorCode::IoError, path, "Invalid binary file path",
+                     std::make_error_code(std::errc::invalid_argument)};
   std::error_code ec;
   const auto size = std::filesystem::file_size(path, ec);
-  if (ec) return ReadError{ReadErrorCode::IoError, path,
-                                 "Could not measure binary file", ec};
+  if (ec) return ReadError{ReadErrorCode::IoError, path, "Could not measure binary file", ec};
   if (size > max_bytes)
-    return ReadError{ReadErrorCode::LimitExceeded, path,
-                           "Binary file exceeds byte limit", {}};
+    return ReadError{ReadErrorCode::LimitExceeded, path, "Binary file exceeds byte limit", {}};
   std::ifstream input(path, std::ios::binary);
-  if (!input) return ReadError{ReadErrorCode::IoError, path,
-                                     "Could not open binary file", {}};
+  if (!input) return ReadError{ReadErrorCode::IoError, path, "Could not open binary file", {}};
   std::string bytes;
   bytes.reserve(static_cast<std::size_t>(size));
   std::array<char, 64u * 1024u> chunk{};
@@ -599,16 +608,13 @@ std::variant<std::string, ReadError> read_file(const std::filesystem::path& path
     const auto count = input.gcount();
     if (count > 0) {
       if (static_cast<std::size_t>(count) > max_bytes - bytes.size())
-        return ReadError{ReadErrorCode::LimitExceeded, path,
-                               "Binary file exceeds byte limit", {}};
+        return ReadError{ReadErrorCode::LimitExceeded, path, "Binary file exceeds byte limit", {}};
       bytes.append(chunk.data(), static_cast<std::size_t>(count));
     }
   }
   if (input.bad() || (input.fail() && !input.eof()))
-    return ReadError{ReadErrorCode::IoError, path,
-                           "Could not read binary file", {}};
+    return ReadError{ReadErrorCode::IoError, path, "Could not read binary file", {}};
   return bytes;
 }
 
-
-}  // namespace folio::io
+} // namespace folio::io

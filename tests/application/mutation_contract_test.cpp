@@ -36,13 +36,16 @@ TEST(MutationContract, AppliedFailureStillCarriesConfirmedPersistenceEvidence) {
   const auto mutation_id = app::MutationId::generate();
   const auto entry_id = core::Id::generate();
   app::MutationResult<core::Id> result = app::MutationResponse<core::Id>{
-      mutation_id,
-      app::MutationFailure{
-          {app::ErrorCategory::InternalFailure, app::ErrorReason::UnexpectedFailure,
-           "Metadata synchronization failed", {app::ErrorAction::Dismiss}},
-          app::AuthoritativeChangeStatus::Applied,
-          {entry_id, std::nullopt, std::nullopt,
-           {{app::MutationStep::WriteEntry, app::StepObservation::DurabilityConfirmed}}}}};
+      mutation_id, app::MutationFailure{{app::ErrorCategory::InternalFailure,
+                                         app::ErrorReason::UnexpectedFailure,
+                                         "Metadata synchronization failed",
+                                         {app::ErrorAction::Dismiss}},
+                                        app::AuthoritativeChangeStatus::Applied,
+                                        {entry_id,
+                                         std::nullopt,
+                                         std::nullopt,
+                                         {{app::MutationStep::WriteEntry,
+                                           app::StepObservation::DurabilityConfirmed}}}}};
 
   ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::Id>>(result));
   const auto& response = std::get<app::MutationResponse<core::Id>>(result);
@@ -60,17 +63,22 @@ TEST(MutationContract, ConfirmedUnknownDiffersFromMissingResponseForTheSameInten
   const auto entry_id = core::Id::generate();
   app::MutationResult<std::monostate> confirmed = app::MutationResponse<std::monostate>{
       mutation_id,
-      app::MutationFailure{
-          {app::ErrorCategory::FilesystemFailure, app::ErrorReason::IoFailure,
-           "Durability could not be established", {app::ErrorAction::Dismiss}},
-          app::AuthoritativeChangeStatus::Unknown,
-          {entry_id, std::nullopt, std::nullopt,
-           {{app::MutationStep::WriteEntry, app::StepObservation::Published}}}}};
-  app::MutationResult<std::monostate> unconfirmed = app::NoMutationResponse{
-      mutation_id,
-      {app::ErrorCategory::ConnectionFailure, app::ErrorReason::ConnectionLost,
-       "Connection lost", {app::ErrorAction::Reconnect}},
-      app::SubmissionState::MayHaveBeenSent};
+      app::MutationFailure{{app::ErrorCategory::FilesystemFailure,
+                            app::ErrorReason::IoFailure,
+                            "Durability could not be established",
+                            {app::ErrorAction::Dismiss}},
+                           app::AuthoritativeChangeStatus::Unknown,
+                           {entry_id,
+                            std::nullopt,
+                            std::nullopt,
+                            {{app::MutationStep::WriteEntry, app::StepObservation::Published}}}}};
+  app::MutationResult<std::monostate> unconfirmed =
+      app::NoMutationResponse{mutation_id,
+                              {app::ErrorCategory::ConnectionFailure,
+                               app::ErrorReason::ConnectionLost,
+                               "Connection lost",
+                               {app::ErrorAction::Reconnect}},
+                              app::SubmissionState::MayHaveBeenSent};
 
   ASSERT_TRUE(std::holds_alternative<app::MutationResponse<std::monostate>>(confirmed));
   const auto& response = std::get<app::MutationResponse<std::monostate>>(confirmed);
@@ -92,4 +100,4 @@ TEST(MutationContract, ConfirmedSuccessRetainsMutationAndCreatedEntryIdentities)
   EXPECT_EQ(std::get<core::Id>(response.result), entry_id);
 }
 
-}  // namespace
+} // namespace

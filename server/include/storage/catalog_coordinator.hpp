@@ -17,8 +17,16 @@
 namespace folio::core::storage {
 
 enum class CoordinatorErrorCode {
-  Missing, Corrupt, UnsupportedVersion, LimitExceeded, InvalidPath,
-  IoError, CodecError, StorageFailure, Lifecycle, Unavailable
+  Missing,
+  Corrupt,
+  UnsupportedVersion,
+  LimitExceeded,
+  InvalidPath,
+  IoError,
+  CodecError,
+  StorageFailure,
+  Lifecycle,
+  Unavailable
 };
 
 struct CoordinatorError {
@@ -48,7 +56,7 @@ enum class SaveOutcome { Saved, SkippedPersisted };
 // saving once at shutdown is caller policy and failed saves may be retried.
 // Failed startup cannot be turned into save permission by editing the Catalog.
 class CatalogCoordinator {
- public:
+public:
   CatalogCoordinator(StoragePaths paths, MetadataCatalog& catalog);
   CatalogCoordinator(const CatalogCoordinator&) = delete;
   CatalogCoordinator& operator=(const CatalogCoordinator&) = delete;
@@ -60,12 +68,10 @@ class CatalogCoordinator {
   // or a previous durable Session Marker exists. Ready requires a durable Marker.
   // Uses application.cache/index/normal.msgpack; former State indexes are ignored
   // and are neither migrated nor removed. Construction performs no Index I/O.
-  [[nodiscard]] ::folio::core::Result<InitializationOutcome, CoordinatorError>
-  startup_load();
+  [[nodiscard]] ::folio::core::Result<InitializationOutcome, CoordinatorError> startup_load();
   // Explicit full replacement from authoritative Normal files, not a targeted
   // correction of individual cached records.
-  [[nodiscard]] ::folio::core::Result<std::vector<ExcludedObject>, CoordinatorError>
-  refresh_all();
+  [[nodiscard]] ::folio::core::Result<std::vector<ExcludedObject>, CoordinatorError> refresh_all();
   [[nodiscard]] ::folio::core::Result<SaveOutcome, CoordinatorError> shutdown_save();
   // Backend shutdown entry point: stop work first, then call finish_session().
   // Saves if needed, then durably removes the Marker; failures are retryable.
@@ -82,49 +88,53 @@ class CatalogCoordinator {
   [[nodiscard]] const MutationResultCallback<LogMetadata>& log_update_callback() const noexcept {
     return log_update_callback_;
   }
-  [[nodiscard]] const MutationResultCallback<MemoMetadata>& memo_creation_callback() const noexcept {
+  [[nodiscard]] const MutationResultCallback<MemoMetadata>&
+  memo_creation_callback() const noexcept {
     return memo_creation_callback_;
   }
   [[nodiscard]] const MutationResultCallback<MemoMetadata>& memo_update_callback() const noexcept {
     return memo_update_callback_;
   }
-  [[nodiscard]] const MutationResultCallback<TodoMetadata>& todo_creation_callback() const noexcept {
+  [[nodiscard]] const MutationResultCallback<TodoMetadata>&
+  todo_creation_callback() const noexcept {
     return todo_creation_callback_;
   }
   [[nodiscard]] const MutationResultCallback<TodoMetadata>& todo_update_callback() const noexcept {
     return todo_update_callback_;
   }
-  [[nodiscard]] const MutationResultCallback<DirectoryMetadata>& directory_creation_callback() const noexcept {
+  [[nodiscard]] const MutationResultCallback<DirectoryMetadata>&
+  directory_creation_callback() const noexcept {
     return directory_creation_callback_;
   }
-  [[nodiscard]] const MutationResultCallback<DirectoryMetadata>& directory_update_callback() const noexcept {
+  [[nodiscard]] const MutationResultCallback<DirectoryMetadata>&
+  directory_update_callback() const noexcept {
     return directory_update_callback_;
   }
 
   // Borrowed, read-only UUID check_creation for all four creation operations.
   // Rejects unavailable/inconsistent Catalogs; does not reserve an ID.
-  [[nodiscard]] const CreationCheck& creation_check() const noexcept {
-    return creation_check_;
-  }
+  [[nodiscard]] const CreationCheck& creation_check() const noexcept { return creation_check_; }
 
- private:
+private:
   // Compose metadata updates and failure handling once. Catalog-update failure
   // marks inconsistency here because Repository never recursively calls a failed
   // callback. Failure notifications do not modify metadata or unpersisted state.
   template <class Metadata, class Update>
   MutationResultCallback<Metadata> wrap_catalog_update(Update update) {
-    return [this, update = std::move(update)](
-        const MutationNotification<Metadata>& notification)
-        -> ::folio::core::Result<std::monostate, StorageError> {
-      if (const auto* failure = std::get_if<
-              std::reference_wrapper<const RepositoryMutationError>>(&notification)) {
+    return [this, update = std::move(update)](const MutationNotification<Metadata>& notification)
+               -> ::folio::core::Result<std::monostate, StorageError> {
+      if (const auto* failure =
+              std::get_if<std::reference_wrapper<const RepositoryMutationError>>(&notification)) {
         if (failure->get().stage != MutationFailureStage::BeforeAuthoritativeChange)
           mark_needs_refresh();
         return std::monostate{};
       }
       if (!session_active_)
-        return StorageError{StorageErrorCode::CatalogUnavailable, paths_.normal_root,
-                            "Catalog session is not Ready", {}, false};
+        return StorageError{StorageErrorCode::CatalogUnavailable,
+                            paths_.normal_root,
+                            "Catalog session is not Ready",
+                            {},
+                            false};
       try {
         auto result = update(std::get<std::reference_wrapper<const Metadata>>(notification).get());
         if (std::holds_alternative<StorageError>(result)) mark_needs_refresh();
@@ -161,4 +171,4 @@ class CatalogCoordinator {
   const MutationResultCallback<DirectoryMetadata> directory_update_callback_;
 };
 
-}  // namespace folio::core::storage
+} // namespace folio::core::storage

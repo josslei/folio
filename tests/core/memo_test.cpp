@@ -17,8 +17,8 @@ using folio::core::Timestamp;
 using folio::core::TimestampContext;
 
 TEST(MemoTest, StartsUnfiledWithNormalPrivacyAndCreationContext) {
-  const TimestampContext created{Timestamp{std::chrono::seconds{100}},
-                                 "Asia/Shanghai", std::string("Shanghai")};
+  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "Asia/Shanghai",
+                                 std::string("Shanghai")};
   const Memo memo("Idea", "A note", created);
   const Memo another("Idea", "A note", created);
 
@@ -37,12 +37,11 @@ TEST(MemoTest, StartsUnfiledWithNormalPrivacyAndCreationContext) {
 }
 
 TEST(MemoTest, EditsPreserveIdentityAndCreationContext) {
-  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC",
-                                 std::nullopt};
+  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC", std::nullopt};
   Memo memo("First", "Original", created);
   const Id original_id = memo.id();
-  const TimestampContext modified{Timestamp{std::chrono::seconds{200}},
-                                  "Europe/Paris", std::string("Paris")};
+  const TimestampContext modified{Timestamp{std::chrono::seconds{200}}, "Europe/Paris",
+                                  std::string("Paris")};
 
   memo.edit("Caf\u00e9 idea", "Updated", modified);
   memo.set_tags({Tag{"idea"}, Tag{"work"}}, modified);
@@ -61,18 +60,15 @@ TEST(MemoTest, EditsPreserveIdentityAndCreationContext) {
 }
 
 TEST(MemoTest, AcceptsExplicitPrivacyAtCreation) {
-  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC",
-                                std::nullopt};
+  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC", std::nullopt};
   const Memo memo("Idea", "", created, Privacy::Protected);
 
   EXPECT_EQ(memo.privacy(), Privacy::Protected);
 }
 
 TEST(MemoTest, DirectoryCanBeAssignedReplacedAndCleared) {
-  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC",
-                                 std::nullopt};
-  const TimestampContext modified{Timestamp{std::chrono::seconds{200}}, "UTC",
-                                  std::nullopt};
+  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC", std::nullopt};
+  const TimestampContext modified{Timestamp{std::chrono::seconds{200}}, "UTC", std::nullopt};
   Memo memo("Title", "", created);
   const Id original_id = memo.id();
   const Id first_directory = Id::generate();
@@ -94,10 +90,10 @@ TEST(MemoTest, DirectoryCanBeAssignedReplacedAndCleared) {
 }
 
 TEST(MemoTest, SnapshotRestorePreservesAllFieldsAndExactContexts) {
-  const TimestampContext created{Timestamp{std::chrono::milliseconds{123456789}},
-                                 "Asia/Shanghai", std::string("Shanghai")};
-  const TimestampContext modified{Timestamp{std::chrono::milliseconds{987654321}},
-                                  "Europe/Paris", std::string("Paris")};
+  const TimestampContext created{Timestamp{std::chrono::milliseconds{123456789}}, "Asia/Shanghai",
+                                 std::string("Shanghai")};
+  const TimestampContext modified{Timestamp{std::chrono::milliseconds{987654321}}, "Europe/Paris",
+                                  std::string("Paris")};
   Memo memo("Initial", "Initial body", created, Privacy::Protected);
   memo.edit("Caf\u00e9 idea", "Revised body", modified);
   memo.set_tags({Tag{"idea"}, Tag{"\xE7\xAC\x94\xE8\xAE\xB0"}}, modified);
@@ -125,8 +121,7 @@ TEST(MemoTest, SnapshotRestorePreservesAllFieldsAndExactContexts) {
 }
 
 TEST(MemoTest, RestoreRejectsInvalidPrivacy) {
-  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC",
-                                 std::nullopt};
+  const TimestampContext created{Timestamp{std::chrono::seconds{100}}, "UTC", std::nullopt};
   const Memo memo("Idea", "Body", created);
   auto snapshot = memo.snapshot();
   snapshot.privacy = static_cast<Privacy>(99);
@@ -134,4 +129,4 @@ TEST(MemoTest, RestoreRejectsInvalidPrivacy) {
   EXPECT_THROW((void)Memo::restore(snapshot), std::invalid_argument);
 }
 
-}  // namespace
+} // namespace

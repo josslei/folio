@@ -24,8 +24,8 @@ namespace folio::core::storage {
 using config::ApplicationPaths;
 using config::StoragePaths;
 
-using core::RecordType;
 using core::DirectoryKind;
+using core::RecordType;
 
 enum class StorageErrorCode {
   InvalidTimestamp,
@@ -55,8 +55,7 @@ struct StorageError {
 };
 
 // Repository operations preserve filesystem and Storage diagnostics independently.
-template <class T>
-using StorageResult = std::variant<T, StorageError, io::FileError>;
+template <class T> using StorageResult = std::variant<T, StorageError, io::FileError>;
 using RepositoryError = std::variant<StorageError, io::FileError>;
 
 // Validation does not create directories. Existing symlink prefixes are resolved
@@ -65,4 +64,4 @@ using RepositoryError = std::variant<StorageError, io::FileError>;
 // ancestor of authoritative roots; other support directories must stay disjoint.
 [[nodiscard]] StorageResult<StoragePaths> validate_storage_paths(const StoragePaths& paths);
 
-}  // namespace folio::core::storage
+} // namespace folio::core::storage

@@ -35,11 +35,11 @@ using folio::core::Id;
 using folio::core::Timestamp;
 
 class TemporaryDirectory {
- public:
+public:
   TemporaryDirectory() {
     for (unsigned int index = 0; index < 10000; ++index) {
-      const auto candidate = fs::temp_directory_path() /
-          ("folio-storage-test-" + std::to_string(index));
+      const auto candidate =
+          fs::temp_directory_path() / ("folio-storage-test-" + std::to_string(index));
       if (fs::create_directory(candidate)) {
         path_ = candidate;
         return;
@@ -58,12 +58,12 @@ class TemporaryDirectory {
 
   const fs::path& path() const { return path_; }
 
- private:
+private:
   fs::path path_;
 };
 
 class StorageFilesystemTest : public testing::Test {
- protected:
+protected:
   TemporaryDirectory temporary;
 };
 
@@ -78,8 +78,7 @@ std::set<fs::path> children(const fs::path& directory) {
 std::string read_bytes(const fs::path& path) {
   std::ifstream input(path, std::ios::binary);
   if (!input.is_open()) throw std::runtime_error("Could not open test file");
-  std::string bytes{std::istreambuf_iterator<char>{input},
-                    std::istreambuf_iterator<char>{}};
+  std::string bytes{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
   if (input.bad()) throw std::runtime_error("Could not read test file");
   return bytes;
 }
@@ -100,9 +99,10 @@ void expect_storage_error(const std::variant<T, Errors...>& result) {
 // All paths are injected beneath the fixture; no home/environment lookup occurs.
 TEST_F(StorageFilesystemTest, ValidatesSuppliedPathsWithoutCreatingDirectories) {
   const auto root = temporary.path();
-  const storage::StoragePaths paths{root / "normal", root / "vault",
-      {root / "app/config", root / "app/data", root / "app/state",
-       root / "cache", root / "logs", root / "runtime"}};
+  const storage::StoragePaths paths{root / "normal",
+                                    root / "vault",
+                                    {root / "app/config", root / "app/data", root / "app/state",
+                                     root / "cache", root / "logs", root / "runtime"}};
   const auto validated = storage::validate_storage_paths(paths);
   ASSERT_TRUE(std::holds_alternative<storage::StoragePaths>(validated));
   const auto& value = std::get<storage::StoragePaths>(validated);
@@ -119,17 +119,19 @@ TEST_F(StorageFilesystemTest, ValidatesSuppliedPathsWithoutCreatingDirectories) 
 
 TEST_F(StorageFilesystemTest, RequiresAbsoluteNonemptyNulFreeEffectivePaths) {
   const auto root = temporary.path();
-  const storage::StoragePaths paths{root / "normal", root / "vault",
-      {root / "config", root / "data", root / "state", root / "cache", root / "logs", root / "runtime"}};
+  const storage::StoragePaths paths{root / "normal",
+                                    root / "vault",
+                                    {root / "config", root / "data", root / "state", root / "cache",
+                                     root / "logs", root / "runtime"}};
   expect_storage_error(storage::validate_storage_paths(storage::StoragePaths{}));
   for (int i = 0; i < 8; ++i) {
-    for (const auto& invalid : {fs::path{}, fs::path{"relative"},
-             root / fs::path{std::string{"bad\0suffix", 10}}}) {
+    for (const auto& invalid :
+         {fs::path{}, fs::path{"relative"}, root / fs::path{std::string{"bad\0suffix", 10}}}) {
       auto candidate = paths;
-      const std::array fields{&candidate.normal_root, &candidate.vault_root,
-          &candidate.application.config, &candidate.application.data,
-          &candidate.application.state, &candidate.application.cache, &candidate.application.logs,
-          &*candidate.application.runtime};
+      const std::array fields{&candidate.normal_root,        &candidate.vault_root,
+                              &candidate.application.config, &candidate.application.data,
+                              &candidate.application.state,  &candidate.application.cache,
+                              &candidate.application.logs,   &*candidate.application.runtime};
       *fields[i] = invalid;
       expect_storage_error(storage::validate_storage_paths(candidate));
     }
@@ -139,17 +141,21 @@ TEST_F(StorageFilesystemTest, RequiresAbsoluteNonemptyNulFreeEffectivePaths) {
 
 TEST_F(StorageFilesystemTest, AllowsSharedAndNestedApplicationPathsAndNoRuntime) {
   const auto root = temporary.path();
-  const storage::StoragePaths paths{root / "normal", root / "vault",
-      {root / "app", root / "app", root / "app/state", root / "cache", root / "logs", std::nullopt}};
-  EXPECT_TRUE(std::holds_alternative<storage::StoragePaths>(
-      storage::validate_storage_paths(paths)));
+  const storage::StoragePaths paths{root / "normal",
+                                    root / "vault",
+                                    {root / "app", root / "app", root / "app/state", root / "cache",
+                                     root / "logs", std::nullopt}};
+  EXPECT_TRUE(
+      std::holds_alternative<storage::StoragePaths>(storage::validate_storage_paths(paths)));
   EXPECT_TRUE(children(root).empty());
 }
 
 TEST_F(StorageFilesystemTest, RejectsAuthoritativeOverlapsAndSupportFileConflicts) {
   const auto root = temporary.path();
-  const storage::StoragePaths paths{root / "normal", root / "vault",
-      {root / "config", root / "data", root / "state", root / "cache", root / "logs", root / "runtime"}};
+  const storage::StoragePaths paths{root / "normal",
+                                    root / "vault",
+                                    {root / "config", root / "data", root / "state", root / "cache",
+                                     root / "logs", root / "runtime"}};
   for (const auto& target : {paths.normal_root, paths.normal_root / "child", root}) {
     auto candidate = paths;
     candidate.vault_root = target;
@@ -160,7 +166,8 @@ TEST_F(StorageFilesystemTest, RejectsAuthoritativeOverlapsAndSupportFileConflict
       for (const auto& target : {authoritative, authoritative / "todos/support", root}) {
         auto candidate = paths;
         const std::array fields{&candidate.application.config, &candidate.application.data,
-            &candidate.application.state, &candidate.application.cache, &candidate.application.logs, &*candidate.application.runtime};
+                                &candidate.application.state,  &candidate.application.cache,
+                                &candidate.application.logs,   &*candidate.application.runtime};
         *fields[i] = target;
         if (i == 1 && target == root) {
           // Data may contain authoritative roots, but may not equal or be
@@ -178,8 +185,10 @@ TEST_F(StorageFilesystemTest, RejectsAuthoritativeOverlapsAndSupportFileConflict
 
 TEST_F(StorageFilesystemTest, RejectsExistingFilesAndResolvesSymlinkAliases) {
   const auto root = temporary.path();
-  storage::StoragePaths paths{root / "normal", root / "vault",
-      {root / "config", root / "data", root / "state", root / "cache", root / "logs", std::nullopt}};
+  storage::StoragePaths paths{root / "normal",
+                              root / "vault",
+                              {root / "config", root / "data", root / "state", root / "cache",
+                               root / "logs", std::nullopt}};
   seed_file(paths.application.state, "not a directory");
   expect_storage_error(storage::validate_storage_paths(paths));
   fs::remove(paths.application.state);
@@ -199,22 +208,22 @@ TEST(StorageFilenameTest, UsesUtcCreationTimeAndTypeSpecificExtensions) {
   ASSERT_TRUE(id.has_value());
   using namespace std::chrono;
   const auto midnight = sys_days{year{2000} / 3 / 1};
-  const std::array<std::pair<Timestamp, std::string>, 4> cases{{
-      {Timestamp{milliseconds{-1}}, "1969-12-31_235959_"},
-      {Timestamp{}, "1970-01-01_000000_"},
-      {midnight - milliseconds{1}, "2000-02-29_235959_"},
-      {midnight, "2000-03-01_000000_"}}};
+  const std::array<std::pair<Timestamp, std::string>, 4> cases{
+      {{Timestamp{milliseconds{-1}}, "1969-12-31_235959_"},
+       {Timestamp{}, "1970-01-01_000000_"},
+       {midnight - milliseconds{1}, "2000-02-29_235959_"},
+       {midnight, "2000-03-01_000000_"}}};
   for (const auto& [created, prefix] : cases) {
-    for (const auto type : {storage::RecordType::Log, storage::RecordType::Memo,
-                            storage::RecordType::Todo}) {
+    for (const auto type :
+         {storage::RecordType::Log, storage::RecordType::Memo, storage::RecordType::Todo}) {
       const auto filename = storage::normal_record_filename(type, *id, created);
       ASSERT_TRUE(std::holds_alternative<std::string>(filename));
       const auto extension = type == storage::RecordType::Todo ? ".toml" : ".md";
       EXPECT_EQ(std::get<std::string>(filename), prefix + id->to_string() + extension);
     }
   }
-  expect_storage_error(storage::normal_record_filename(
-      static_cast<storage::RecordType>(999), *id, Timestamp{}));
+  expect_storage_error(
+      storage::normal_record_filename(static_cast<storage::RecordType>(999), *id, Timestamp{}));
 }
 
 TEST(StorageFilenameTest, HasNoDependenceOnUnicodeTitles) {
@@ -223,28 +232,26 @@ TEST(StorageFilenameTest, HasNoDependenceOnUnicodeTitles) {
   // Titles cannot enter the filename API; changing a model title keeps these inputs.
   for (const auto* title : {"研究メモ", "café / 旅行", ""}) {
     SCOPED_TRACE(title);
-    const auto result = storage::normal_record_filename(
-        storage::RecordType::Memo, *id, Timestamp{});
+    const auto result =
+        storage::normal_record_filename(storage::RecordType::Memo, *id, Timestamp{});
     ASSERT_TRUE(std::holds_alternative<std::string>(result));
     EXPECT_EQ(std::get<std::string>(result),
               "1970-01-01_000000_47183823-2574-4bfd-b411-99ed177d3e43.md");
   }
 }
 
-template<class T>
-void expect_file_error(const std::variant<T, folio::io::FileError>& result) {
+template <class T> void expect_file_error(const std::variant<T, folio::io::FileError>& result) {
   EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(result));
 }
 
 TEST_F(StorageFilesystemTest, CreateAndReplaceWriteExactBytes) {
   const auto target = temporary.path() / "entry.md";
-  const std::array<std::string, 4> contents{
-      "Original content", std::string{"a\0b\r\n", 5}, "", "# 你好 — café\n"};
+  const std::array<std::string, 4> contents{"Original content", std::string{"a\0b\r\n", 5}, "",
+                                            "# 你好 — café\n"};
   for (std::size_t index = 0; index < contents.size(); ++index) {
     const auto& bytes = contents[index];
-    const auto result = index == 0
-        ? folio::io::create_file_atomic(target, bytes)
-        : folio::io::replace_file_atomic(target, bytes);
+    const auto result = index == 0 ? folio::io::create_file_atomic(target, bytes)
+                                   : folio::io::replace_file_atomic(target, bytes);
     ASSERT_TRUE(std::holds_alternative<std::monostate>(result));
     EXPECT_EQ(read_bytes(target), bytes);
     EXPECT_EQ(children(temporary.path()), std::set<fs::path>{target.filename()});
@@ -255,19 +262,17 @@ TEST_F(StorageFilesystemTest, CreatesAndReplacesOpaqueVaultBytes) {
   const auto target = temporary.path() / "47183823-2574-4bfd-b411-99ed177d3e43.enc";
   const std::string first{"\0\x80\xff\0", 4};
   const std::string second{"\xff\0\x7f\x80", 4};
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      folio::io::create_file_atomic(target, first)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(folio::io::create_file_atomic(target, first)));
   EXPECT_EQ(read_bytes(target), first);
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      folio::io::replace_file_atomic(target, second)));
+  ASSERT_TRUE(
+      std::holds_alternative<std::monostate>(folio::io::replace_file_atomic(target, second)));
   EXPECT_EQ(read_bytes(target), second);
   EXPECT_EQ(children(temporary.path()), std::set<fs::path>{target.filename()});
 }
 
 TEST_F(StorageFilesystemTest, LeavesUnrelatedStaleTemporaryFilesUntouched) {
   const auto target = temporary.path() / "entry.toml";
-  for (const auto* name : {"entry.toml.tmp", ".other.toml.tmp-stale",
-                           ".folio-tmp-stale"}) {
+  for (const auto* name : {"entry.toml.tmp", ".other.toml.tmp-stale", ".folio-tmp-stale"}) {
     ASSERT_NO_FATAL_FAILURE(seed_file(temporary.path() / name, "stale synthetic data"));
   }
   const auto stale = children(temporary.path());
@@ -338,8 +343,8 @@ TEST_F(StorageFilesystemTest, EmbeddedNulTargetCannotOverwriteExistingFile) {
 
 TEST_F(StorageFilesystemTest, CreateDoesNotOverwriteAndReplaceRequiresExistingFile) {
   const auto target = temporary.path() / "entry.md";
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(
-      folio::io::create_file_atomic(target, "original")));
+  ASSERT_TRUE(
+      std::holds_alternative<std::monostate>(folio::io::create_file_atomic(target, "original")));
   expect_file_error(folio::io::create_file_atomic(target, "must not overwrite"));
   EXPECT_EQ(read_bytes(target), "original");
 
@@ -364,13 +369,14 @@ TEST_F(StorageFilesystemTest, PendingTemporaryFileBlocksNewWritesWithoutChanging
             folio::io::FileErrorCode::RecoveryRequired);
   EXPECT_EQ(read_bytes(target), "original bytes");
   EXPECT_EQ(read_bytes(pending), "pending bytes");
-  EXPECT_EQ(children(temporary.path()), (std::set<fs::path>{target.filename(), pending.filename()}));
+  EXPECT_EQ(children(temporary.path()),
+            (std::set<fs::path>{target.filename(), pending.filename()}));
 }
 
 #ifndef _WIN32
 
 class StorageDurabilityTest : public StorageFilesystemTest {
- protected:
+protected:
   struct Observation {
     bool directory;
     std::set<fs::path> names;
@@ -403,7 +409,9 @@ class StorageDurabilityTest : public StorageFilesystemTest {
   fs::path target() const { return temporary.path() / "entry.md"; }
 
   ::folio::core::Result<std::monostate, folio::io::FileError> write(bool create_only) {
-    return folio::io::internal::write_file_atomic(target(), std::as_bytes(std::span{std::string_view{"new bytes"}}), create_only, observe_sync);
+    return folio::io::internal::write_file_atomic(
+        target(), std::as_bytes(std::span{std::string_view{"new bytes"}}), create_only,
+        observe_sync);
   }
 
   void expect_single_temporary(const std::set<fs::path>& names) {
@@ -554,4 +562,4 @@ TEST_F(StorageDurabilityTest, DirectoryLockPreventsCreationOfAnotherTemporary) {
 
 #endif
 
-}  // namespace
+} // namespace

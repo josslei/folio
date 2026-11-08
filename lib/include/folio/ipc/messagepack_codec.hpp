@@ -17,27 +17,32 @@
 namespace folio::application::internal::codec {
 // Shared positional Application-protocol encoding, independent of persisted schemas.
 // Arrays have exact field counts. Optionals/variants are explicitly tagged.
-#define FIELDS(Type, ...) \
-  inline auto fields(const Type& v) { return std::tie(__VA_ARGS__); }
+#define FIELDS(Type, ...)                                                                          \
+  inline auto fields(const Type& v) {                                                              \
+    return std::tie(__VA_ARGS__);                                                                  \
+  }
 FIELDS(core::LogMetadata, v.id, v.privacy, v.created, v.modified, v.title, v.tags, v.log_date)
 FIELDS(core::MemoMetadata, v.id, v.privacy, v.created, v.modified, v.title, v.tags, v.directory_id)
-FIELDS(core::TodoMetadata, v.id, v.privacy, v.created, v.modified, v.title, v.status, v.priority, v.due_date, v.directory_id)
+FIELDS(core::TodoMetadata, v.id, v.privacy, v.created, v.modified, v.title, v.status, v.priority,
+       v.due_date, v.directory_id)
 FIELDS(core::DirectoryMetadata, v.id, v.kind, v.name)
 FIELDS(BrowseResult, v.records, v.directories)
 FIELDS(core::TimestampContext, v.timestamp, v.timezone, v.location)
 FIELDS(core::DateContext, v.date, v.timezone, v.location)
 FIELDS(core::Tag, v.value)
 FIELDS(core::Subtask, v.content, v.completed)
-FIELDS(core::Log::Snapshot, v.id, v.created, v.modified, v.title, v.content, v.log_date, v.tags, v.privacy)
-FIELDS(core::Memo::Snapshot, v.id, v.created, v.modified, v.title, v.content, v.tags, v.directory_id, v.privacy)
-FIELDS(core::Todo::Snapshot, v.id, v.created, v.modified, v.title, v.notes, v.status, v.priority, v.due_date, v.directory_id, v.privacy, v.subtasks)
+FIELDS(core::Log::Snapshot, v.id, v.created, v.modified, v.title, v.content, v.log_date, v.tags,
+       v.privacy)
+FIELDS(core::Memo::Snapshot, v.id, v.created, v.modified, v.title, v.content, v.tags,
+       v.directory_id, v.privacy)
+FIELDS(core::Todo::Snapshot, v.id, v.created, v.modified, v.title, v.notes, v.status, v.priority,
+       v.due_date, v.directory_id, v.privacy, v.subtasks)
 FIELDS(RootScope)
 FIELDS(AllScope)
 FIELDS(DirectoryScope, v.id)
 FIELDS(RecordOrder, v.sort, v.descending)
-FIELDS(RecordFilters, v.privacy, v.title_contains, v.tag, v.created, v.modified,
-       v.log_date, v.todo_status, v.todo_priority, v.has_due_date, v.due_kind,
-       v.due_from, v.due_through)
+FIELDS(RecordFilters, v.privacy, v.title_contains, v.tag, v.created, v.modified, v.log_date,
+       v.todo_status, v.todo_priority, v.has_due_date, v.due_kind, v.due_from, v.due_through)
 FIELDS(RecordQuery, v.type, v.scope, v.filters, v.order)
 FIELDS(ApplicationError, v.category, v.reason, v.message, v.available_actions)
 FIELDS(ApplicationWarning, v.reason, v.message, v.available_actions)
@@ -72,27 +77,36 @@ FIELDS(MutationEvidence, v.entry_id, v.source, v.destination, v.steps)
 FIELDS(MutationFailure, v.error, v.status, v.evidence)
 #undef FIELDS
 
-template<class T>
-auto fields(const InclusiveRange<T>& v) { return std::tie(v.from, v.through); }
-template<class T>
-auto fields(const ApplicationResponse<T>& v) { return std::tie(v.value, v.warnings); }
+template <class T> auto fields(const InclusiveRange<T>& v) {
+  return std::tie(v.from, v.through);
+}
+template <class T> auto fields(const ApplicationResponse<T>& v) {
+  return std::tie(v.value, v.warnings);
+}
 
-template<class T>
-auto fields(const MutationResponse<T>& v) { return std::tie(v.mutation_id, v.result); }
+template <class T> auto fields(const MutationResponse<T>& v) {
+  return std::tie(v.mutation_id, v.result);
+}
 
-template<class T> struct IsOptional : std::false_type {};
+template <class T> struct IsOptional : std::false_type {};
 
-template<class T> struct IsOptional<std::optional<T>> : std::true_type { using Value = T; };
-template<class T> struct IsVector : std::false_type {};
-template<class T> struct IsVector<std::vector<T>> : std::true_type { using Value = T; };
-template<class T> struct IsVariant : std::false_type {};
-template<class... T> struct IsVariant<std::variant<T...>> : std::true_type {};
+template <class T> struct IsOptional<std::optional<T>> : std::true_type {
+  using Value = T;
+};
+template <class T> struct IsVector : std::false_type {};
+template <class T> struct IsVector<std::vector<T>> : std::true_type {
+  using Value = T;
+};
+template <class T> struct IsVariant : std::false_type {};
+template <class... T> struct IsVariant<std::variant<T...>> : std::true_type {};
 
 struct Failure : std::exception {
   bool limit;
   explicit Failure(bool resource_limit = false) : limit(resource_limit) {}
 };
-inline void require(bool condition) { if (!condition) throw Failure{}; }
+inline void require(bool condition) {
+  if (!condition) throw Failure{};
+}
 
 struct Buffer {
   explicit Buffer(bool count_only = false) : count_only(count_only) {}
@@ -110,30 +124,57 @@ using Object = msgpack::object;
 constexpr std::size_t max_items = 100000;
 
 // Every enum crossing this private protocol has an explicit upper bound.
-constexpr auto last(core::RecordType) { return core::RecordType::Todo; }
-constexpr auto last(core::Privacy) { return core::Privacy::Hidden; }
-constexpr auto last(core::DirectoryKind) { return core::DirectoryKind::Todo; }
-constexpr auto last(core::TodoStatus) { return core::TodoStatus::Completed; }
-constexpr auto last(core::TodoPriority) { return core::TodoPriority::High; }
-constexpr auto last(DueKind) { return DueKind::Datetime; }
-constexpr auto last(MetadataSort) { return MetadataSort::Privacy; }
-constexpr auto last(ErrorCategory) { return ErrorCategory::ApplicationUnavailable; }
-constexpr auto last(ErrorReason) { return ErrorReason::CatalogSynchronizationFailed; }
-constexpr auto last(ErrorAction) { return ErrorAction::Dismiss; }
-constexpr auto last(AuthoritativeChangeStatus) { return AuthoritativeChangeStatus::Unknown; }
-constexpr auto last(MutationStep) { return MutationStep::RemoveSource; }
-constexpr auto last(StepObservation) { return StepObservation::Unknown; }
-constexpr auto last(WarningReason) { return WarningReason::CatalogInconsistent; }
+constexpr auto last(core::RecordType) {
+  return core::RecordType::Todo;
+}
+constexpr auto last(core::Privacy) {
+  return core::Privacy::Hidden;
+}
+constexpr auto last(core::DirectoryKind) {
+  return core::DirectoryKind::Todo;
+}
+constexpr auto last(core::TodoStatus) {
+  return core::TodoStatus::Completed;
+}
+constexpr auto last(core::TodoPriority) {
+  return core::TodoPriority::High;
+}
+constexpr auto last(DueKind) {
+  return DueKind::Datetime;
+}
+constexpr auto last(MetadataSort) {
+  return MetadataSort::Privacy;
+}
+constexpr auto last(ErrorCategory) {
+  return ErrorCategory::ApplicationUnavailable;
+}
+constexpr auto last(ErrorReason) {
+  return ErrorReason::CatalogSynchronizationFailed;
+}
+constexpr auto last(ErrorAction) {
+  return ErrorAction::Dismiss;
+}
+constexpr auto last(AuthoritativeChangeStatus) {
+  return AuthoritativeChangeStatus::Unknown;
+}
+constexpr auto last(MutationStep) {
+  return MutationStep::RemoveSource;
+}
+constexpr auto last(StepObservation) {
+  return StepObservation::Unknown;
+}
+constexpr auto last(WarningReason) {
+  return WarningReason::CatalogInconsistent;
+}
 
 inline void array_size(const Object& o, std::size_t size) {
   require(o.type == msgpack::type::ARRAY && o.via.array.size == size);
 }
 
-template<class T> void pack(Packer& p, const T& value);
-template<class T> T read(const Object& o);
+template <class T> void pack(Packer& p, const T& value);
+template <class T> T read(const Object& o);
 
-template<class T>
-void pack(Packer& p, const T& value) {
+template <class T> void pack(Packer& p, const T& value) {
   if constexpr (std::is_same_v<T, std::string>) {
     if (value.size() > max_application_bytes) throw Failure{true};
     p.pack_str(static_cast<std::uint32_t>(value.size()));
@@ -147,7 +188,8 @@ void pack(Packer& p, const T& value) {
   } else if constexpr (std::is_same_v<T, core::Id> || std::is_same_v<T, MutationId>) {
     pack(p, value.to_string());
   } else if constexpr (std::is_same_v<T, core::Timestamp>) {
-    p.pack_int64(std::chrono::duration_cast<std::chrono::nanoseconds>(value.time_since_epoch()).count());
+    p.pack_int64(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(value.time_since_epoch()).count());
   } else if constexpr (std::is_same_v<T, std::chrono::year_month_day>) {
     p.pack_array(3);
     p.pack_int(int(value.year()));
@@ -159,7 +201,8 @@ void pack(Packer& p, const T& value) {
   } else if constexpr (IsVector<T>::value) {
     if (value.size() > max_items) throw Failure{true};
     p.pack_array(static_cast<std::uint32_t>(value.size()));
-    for (const auto& element : value) pack(p, element);
+    for (const auto& element : value)
+      pack(p, element);
   } else if constexpr (IsVariant<T>::value) {
     p.pack_array(2);
     p.pack_uint64(value.index());
@@ -171,24 +214,23 @@ void pack(Packer& p, const T& value) {
   }
 }
 
-template<class Variant, std::size_t I = 0>
+template <class Variant, std::size_t I = 0>
 Variant read_variant(std::uint64_t index, const Object& o) {
   if constexpr (I == std::variant_size_v<Variant>) {
     throw Failure{};
   } else {
-    if (index == I) return Variant{std::in_place_index<I>, read<std::variant_alternative_t<I, Variant>>(o)};
+    if (index == I)
+      return Variant{std::in_place_index<I>, read<std::variant_alternative_t<I, Variant>>(o)};
     return read_variant<Variant, I + 1>(index, o);
   }
 }
 
-template<class T, std::size_t... I>
-T read_fields(const Object& o, std::index_sequence<I...>) {
+template <class T, std::size_t... I> T read_fields(const Object& o, std::index_sequence<I...>) {
   using Members = decltype(fields(std::declval<const T&>()));
   return T{read<std::remove_cvref_t<std::tuple_element_t<I, Members>>>(o.via.array.ptr[I])...};
 }
 
-template<class T>
-T read(const Object& o) {
+template <class T> T read(const Object& o) {
   if constexpr (std::is_same_v<T, std::string>) {
     require(o.type == msgpack::type::STR);
     return {o.via.str.ptr, o.via.str.size};
@@ -206,8 +248,11 @@ T read(const Object& o) {
   } else if constexpr (std::is_same_v<T, core::Timestamp>) {
     require(o.type == msgpack::type::NEGATIVE_INTEGER || o.type == msgpack::type::POSITIVE_INTEGER);
     require(o.type != msgpack::type::POSITIVE_INTEGER || o.via.u64 <= std::uint64_t(INT64_MAX));
-    const auto ns = o.type == msgpack::type::NEGATIVE_INTEGER ? o.via.i64 : static_cast<std::int64_t>(o.via.u64);
-    return core::Timestamp{std::chrono::duration_cast<core::Timestamp::duration>(std::chrono::nanoseconds{ns})};
+    const auto ns = o.type == msgpack::type::NEGATIVE_INTEGER
+                        ? o.via.i64
+                        : static_cast<std::int64_t>(o.via.u64);
+    return core::Timestamp{
+        std::chrono::duration_cast<core::Timestamp::duration>(std::chrono::nanoseconds{ns})};
   } else if constexpr (std::is_same_v<T, std::chrono::year_month_day>) {
     array_size(o, 3);
     const int year = o.via.array.ptr[0].as<int>();
@@ -242,8 +287,7 @@ T read(const Object& o) {
 // Check the same wire bound without allocating/copying an encoded Record body.
 // Edit acquisition uses this before committing a new lock so an oversized
 // Snapshot cannot produce a failed response with an undisclosed owned lock.
-template<class T>
-bool fits_message(const T& value) {
+template <class T> bool fits_message(const T& value) {
   try {
     Buffer buffer(true);
     Packer packer(buffer);
@@ -254,22 +298,21 @@ bool fits_message(const T& value) {
   }
 }
 
-template<class T>
-core::Result<std::string, IpcError> encode(const T& value) {
+template <class T> core::Result<std::string, IpcError> encode(const T& value) {
   try {
     Buffer buffer;
     Packer packer(buffer);
     pack(packer, value);
     return std::move(buffer.bytes);
   } catch (const Failure& e) {
-    return IpcError{IpcErrorCode::Protocol, e.limit ? "Application message exceeds resource limit" : "Invalid Application message"};
+    return IpcError{IpcErrorCode::Protocol, e.limit ? "Application message exceeds resource limit"
+                                                    : "Invalid Application message"};
   } catch (...) {
     return IpcError{IpcErrorCode::Protocol, "Application message encoding failed"};
   }
 }
 
-template<class T>
-core::Result<T, IpcError> decode(std::string_view bytes) {
+template <class T> core::Result<T, IpcError> decode(std::string_view bytes) {
   try {
     if (bytes.empty() || bytes.size() > max_application_bytes) throw Failure{};
     std::size_t offset = 0;
@@ -283,4 +326,4 @@ core::Result<T, IpcError> decode(std::string_view bytes) {
   }
 }
 
-}  // namespace folio::application::internal::codec
+} // namespace folio::application::internal::codec

@@ -25,8 +25,8 @@ CodecError error(CodecErrorCode code, std::string path, std::string message) {
   return CodecError{code, std::move(path), std::move(message)};
 }
 
-::folio::core::Result<std::string, CodecError> read_string(const toml::table& table, std::string_view key,
-                                std::string path) {
+::folio::core::Result<std::string, CodecError> read_string(const toml::table& table,
+                                                           std::string_view key, std::string path) {
   const auto* node = table.get(key);
   if (!node) {
     return error(CodecErrorCode::MissingField, std::move(path), "Required field is missing");
@@ -38,8 +38,8 @@ CodecError error(CodecErrorCode code, std::string path, std::string message) {
   return *value;
 }
 
-::folio::core::Result<std::int64_t, CodecError> read_integer(const toml::table& table, std::string_view key,
-                                  std::string path) {
+::folio::core::Result<std::int64_t, CodecError>
+read_integer(const toml::table& table, std::string_view key, std::string path) {
   const auto* node = table.get(key);
   if (!node) {
     return error(CodecErrorCode::MissingField, std::move(path), "Required field is missing");
@@ -55,7 +55,7 @@ CodecError error(CodecErrorCode code, std::string path, std::string message) {
 }
 
 ::folio::core::Result<bool, CodecError> read_boolean(const toml::table& table, std::string_view key,
-                          std::string path) {
+                                                     std::string path) {
   const auto* node = table.get(key);
   if (!node) {
     return error(CodecErrorCode::MissingField, std::move(path), "Required field is missing");
@@ -117,9 +117,9 @@ std::string format_date(year_month_day date) {
     throw std::invalid_argument("Calendar year is outside the supported ISO date range");
   }
   std::ostringstream output;
-  output << std::setfill('0') << std::setw(4) << year << '-'
-         << std::setw(2) << static_cast<unsigned>(date.month()) << '-'
-         << std::setw(2) << static_cast<unsigned>(date.day());
+  output << std::setfill('0') << std::setw(4) << year << '-' << std::setw(2)
+         << static_cast<unsigned>(date.month()) << '-' << std::setw(2)
+         << static_cast<unsigned>(date.day());
   return output.str();
 }
 
@@ -135,9 +135,9 @@ std::string format_timestamp(Timestamp timestamp) {
   const hh_mm_ss time{seconds_since_epoch - day_point};
   const auto fraction = duration_cast<nanoseconds>(timestamp - seconds_since_epoch).count();
   std::ostringstream output;
-  output << format_date(date) << 'T' << std::setfill('0') << std::setw(2)
-         << time.hours().count() << ':' << std::setw(2) << time.minutes().count()
-         << ':' << std::setw(2) << time.seconds().count();
+  output << format_date(date) << 'T' << std::setfill('0') << std::setw(2) << time.hours().count()
+         << ':' << std::setw(2) << time.minutes().count() << ':' << std::setw(2)
+         << time.seconds().count();
   if (fraction != 0) {
     std::ostringstream fractional;
     fractional << std::setfill('0') << std::setw(9) << fraction;
@@ -152,16 +152,14 @@ std::string format_timestamp(Timestamp timestamp) {
 }
 
 std::optional<Timestamp> parse_timestamp(std::string_view text) {
-  if (text.size() < 20 || text[10] != 'T' || text[13] != ':' ||
-      text[16] != ':') {
+  if (text.size() < 20 || text[10] != 'T' || text[13] != ':' || text[16] != ':') {
     return std::nullopt;
   }
   const auto date = parse_date(text.substr(0, 10));
   const auto hour = parse_digits(text.substr(11, 2));
   const auto minute = parse_digits(text.substr(14, 2));
   const auto second = parse_digits(text.substr(17, 2));
-  if (!date || !hour || !minute || !second || *hour > 23 || *minute > 59 ||
-      *second > 59) {
+  if (!date || !hour || !minute || !second || *hour > 23 || *minute > 59 || *second > 59) {
     return std::nullopt;
   }
 
@@ -205,10 +203,9 @@ std::optional<Timestamp> parse_timestamp(std::string_view text) {
       (whole_seconds == minimum_floor_seconds && fraction_ns < minimum_fraction)) {
     return std::nullopt;
   }
-  const std::int64_t nanoseconds_since_epoch =
-      whole_seconds == minimum_floor_seconds
-          ? minimum + (fraction_ns - minimum_fraction)
-          : whole_seconds * billion + fraction_ns;
+  const std::int64_t nanoseconds_since_epoch = whole_seconds == minimum_floor_seconds
+                                                   ? minimum + (fraction_ns - minimum_fraction)
+                                                   : whole_seconds * billion + fraction_ns;
   const nanoseconds encoded{nanoseconds_since_epoch};
   const auto native_duration = duration_cast<Timestamp::duration>(encoded);
   if (duration_cast<nanoseconds>(native_duration) != encoded) {
@@ -223,18 +220,18 @@ const CodecError* result_error(const ::folio::core::Result<T, CodecError>& resul
 }
 
 ::folio::core::Result<std::string, CodecError> field_string(const toml::table& table,
-                                 std::string_view key) {
+                                                            std::string_view key) {
   return read_string(table, key, std::string{key});
 }
 
-void insert_location(toml::table& table,
-                     const std::optional<std::string>& location) {
+void insert_location(toml::table& table, const std::optional<std::string>& location) {
   if (location) {
     table.insert_or_assign("location", *location);
   }
 }
 
-::folio::core::Result<std::optional<std::string>, CodecError> read_location(const toml::table& table) {
+::folio::core::Result<std::optional<std::string>, CodecError>
+read_location(const toml::table& table) {
   const auto* node = table.get("location");
   if (!node) {
     return std::optional<std::string>{};
@@ -246,9 +243,9 @@ void insert_location(toml::table& table,
   return std::optional<std::string>{*value};
 }
 
-std::optional<CodecError> check_fields(
-    const toml::table& table, std::initializer_list<std::string_view> allowed,
-    std::string_view prefix = {}) {
+std::optional<CodecError> check_fields(const toml::table& table,
+                                       std::initializer_list<std::string_view> allowed,
+                                       std::string_view prefix = {}) {
   for (const auto& [key, value] : table) {
     bool known = false;
     for (const auto name : allowed) {
@@ -269,21 +266,20 @@ std::optional<CodecError> check_fields(
 
 // These stricter field checks apply only to Markdown metadata, leaving the
 // existing common-value and Todo/Directory decoders unchanged.
-std::optional<CodecError> check_markdown_fields(const toml::table& table,
-                                              bool is_log) {
+std::optional<CodecError> check_markdown_fields(const toml::table& table, bool is_log) {
   if (const auto failure = check_schema_version(table)) return failure;
-  const auto failure = is_log
-      ? check_fields(table, {"schema_version", "id", "created", "modified",
-                             "title", "tags", "privacy", "log_date"})
-      : check_fields(table, {"schema_version", "id", "created", "modified",
-                             "title", "tags", "privacy", "directory_id"});
+  const auto failure = is_log ? check_fields(table, {"schema_version", "id", "created", "modified",
+                                                     "title", "tags", "privacy", "log_date"})
+                              : check_fields(table, {"schema_version", "id", "created", "modified",
+                                                     "title", "tags", "privacy", "directory_id"});
   if (failure) return failure;
   for (const auto key : {"created", "modified", "log_date"}) {
     const auto* node = table.get(key);
     if (node && node->is_table()) {
-      const auto context_failure = std::string_view{key} == "log_date"
-          ? check_fields(*node->as_table(), {"date", "timezone", "location"}, key)
-          : check_fields(*node->as_table(), {"timestamp", "timezone", "location"}, key);
+      const auto context_failure =
+          std::string_view{key} == "log_date"
+              ? check_fields(*node->as_table(), {"date", "timezone", "location"}, key)
+              : check_fields(*node->as_table(), {"timestamp", "timezone", "location"}, key);
       if (context_failure) return context_failure;
     }
   }
@@ -291,16 +287,16 @@ std::optional<CodecError> check_markdown_fields(const toml::table& table,
 }
 
 template <class T>
-::folio::core::Result<T, CodecError> read_field(const toml::table& table, std::string_view key,
-                     ::folio::core::Result<T, CodecError> (*decode)(const toml::node&)) {
+::folio::core::Result<T, CodecError>
+read_field(const toml::table& table, std::string_view key,
+           ::folio::core::Result<T, CodecError> (*decode)(const toml::node&)) {
   const auto* node = table.get(key);
   if (!node) {
     return error(CodecErrorCode::MissingField, std::string{key}, "Required field is missing");
   }
   auto result = decode(*node);
   if (auto* failure = std::get_if<CodecError>(&result)) {
-    failure->path = std::string{key} +
-                    (failure->path.empty() ? "" : "." + failure->path);
+    failure->path = std::string{key} + (failure->path.empty() ? "" : "." + failure->path);
   }
   return result;
 }
@@ -347,8 +343,7 @@ struct MarkdownParts {
     auto line = text.substr(line_begin, line_end - line_begin);
     if (line.ends_with('\r')) line.remove_suffix(1);
     if (line == "+++") {
-      return MarkdownParts{text.substr(begin, line_begin - begin),
-                           text.substr(line_end + 1)};
+      return MarkdownParts{text.substr(begin, line_begin - begin), text.substr(line_end + 1)};
     }
     line_begin = line_end + 1;
   }
@@ -365,7 +360,8 @@ struct MarkdownMetadata {
   Privacy privacy;
 };
 
-::folio::core::Result<MarkdownMetadata, CodecError> read_markdown_metadata(const toml::table& table) {
+::folio::core::Result<MarkdownMetadata, CodecError>
+read_markdown_metadata(const toml::table& table) {
   auto id = read_field(table, "id", id_from_toml);
   if (const auto* failure = result_error(id)) return *failure;
   auto created = read_field(table, "created", timestamp_context_from_toml);
@@ -387,26 +383,25 @@ struct MarkdownMetadata {
 }
 
 toml::table markdown_metadata(const Id& id, const TimestampContext& created,
-                              const TimestampContext& modified,
-                              const std::string& title, const std::vector<Tag>& tags,
-                              Privacy privacy) {
-  toml::table table{{"schema_version", 1}, {"id", to_toml(id)},
-                    {"created", to_toml(created)}, {"modified", to_toml(modified)},
-                    {"title", title}, {"privacy", to_toml(privacy)}};
+                              const TimestampContext& modified, const std::string& title,
+                              const std::vector<Tag>& tags, Privacy privacy) {
+  toml::table table{
+      {"schema_version", 1},           {"id", to_toml(id)}, {"created", to_toml(created)},
+      {"modified", to_toml(modified)}, {"title", title},    {"privacy", to_toml(privacy)}};
   toml::array encoded_tags;
-  for (const auto& tag : tags) encoded_tags.push_back(to_toml(tag));
+  for (const auto& tag : tags)
+    encoded_tags.push_back(to_toml(tag));
   table.insert("tags", std::move(encoded_tags));
   return table;
 }
 
 ::folio::core::Result<std::string, CodecError> frame_markdown(const toml::table& metadata,
-                                  const std::string& body) {
+                                                              const std::string& body) {
   // Escaped single-line strings cannot introduce a delimiter line. Disable
   // literal strings and real tabs too, so CR, LF and tabs are escaped uniformly.
-  constexpr auto flags = toml::toml_formatter::default_flags &
-      ~toml::format_flags::allow_multi_line_strings &
-      ~toml::format_flags::allow_literal_strings &
-      ~toml::format_flags::allow_real_tabs_in_strings;
+  constexpr auto flags =
+      toml::toml_formatter::default_flags & ~toml::format_flags::allow_multi_line_strings &
+      ~toml::format_flags::allow_literal_strings & ~toml::format_flags::allow_real_tabs_in_strings;
   std::ostringstream output;
   output << "+++\n" << toml::toml_formatter{metadata, flags};
   if (!output) {
@@ -419,20 +414,24 @@ toml::table markdown_metadata(const Id& id, const TimestampContext& created,
   return text;
 }
 
-}  // namespace
+} // namespace
 
-toml::value<std::string> to_toml(const Id& id) { return toml::value<std::string>{id.to_string()}; }
+toml::value<std::string> to_toml(const Id& id) {
+  return toml::value<std::string>{id.to_string()};
+}
 
-toml::value<std::string> to_toml(const Tag& tag) { return toml::value<std::string>{tag.value}; }
+toml::value<std::string> to_toml(const Tag& tag) {
+  return toml::value<std::string>{tag.value};
+}
 
 toml::value<std::string> to_toml(Privacy privacy) {
   switch (privacy) {
-    case Privacy::Normal:
-      return toml::value<std::string>{"Normal"};
-    case Privacy::Protected:
-      return toml::value<std::string>{"Protected"};
-    case Privacy::Hidden:
-      return toml::value<std::string>{"Hidden"};
+  case Privacy::Normal:
+    return toml::value<std::string>{"Normal"};
+  case Privacy::Protected:
+    return toml::value<std::string>{"Protected"};
+  case Privacy::Hidden:
+    return toml::value<std::string>{"Hidden"};
   }
   throw std::invalid_argument("Cannot encode an invalid Privacy value");
 }
@@ -451,8 +450,7 @@ toml::table to_toml(const DateContext& context) {
   if (context.timezone.empty()) {
     throw std::invalid_argument("DateContext timezone cannot be empty");
   }
-  toml::table table{{"date", format_date(context.date)},
-                    {"timezone", context.timezone}};
+  toml::table table{{"date", format_date(context.date)}, {"timezone", context.timezone}};
   insert_location(table, context.location);
   return table;
 }
@@ -475,30 +473,30 @@ toml::table to_toml(const Todo::Snapshot& snapshot) {
                     {"title", snapshot.title},
                     {"notes", snapshot.notes}};
   switch (snapshot.status) {
-    case TodoStatus::Pending:
-      table.insert_or_assign("status", "Pending");
-      break;
-    case TodoStatus::Completed:
-      table.insert_or_assign("status", "Completed");
-      break;
-    default:
-      throw std::invalid_argument("Cannot encode an invalid Todo status");
+  case TodoStatus::Pending:
+    table.insert_or_assign("status", "Pending");
+    break;
+  case TodoStatus::Completed:
+    table.insert_or_assign("status", "Completed");
+    break;
+  default:
+    throw std::invalid_argument("Cannot encode an invalid Todo status");
   }
   switch (snapshot.priority) {
-    case TodoPriority::None:
-      table.insert_or_assign("priority", "None");
-      break;
-    case TodoPriority::Low:
-      table.insert_or_assign("priority", "Low");
-      break;
-    case TodoPriority::Medium:
-      table.insert_or_assign("priority", "Medium");
-      break;
-    case TodoPriority::High:
-      table.insert_or_assign("priority", "High");
-      break;
-    default:
-      throw std::invalid_argument("Cannot encode an invalid Todo priority");
+  case TodoPriority::None:
+    table.insert_or_assign("priority", "None");
+    break;
+  case TodoPriority::Low:
+    table.insert_or_assign("priority", "Low");
+    break;
+  case TodoPriority::Medium:
+    table.insert_or_assign("priority", "Medium");
+    break;
+  case TodoPriority::High:
+    table.insert_or_assign("priority", "High");
+    break;
+  default:
+    throw std::invalid_argument("Cannot encode an invalid Todo priority");
   }
   table.insert_or_assign("privacy", std::string{to_toml(snapshot.privacy).get()});
   table.insert_or_assign("created", to_toml(snapshot.created));
@@ -512,8 +510,8 @@ toml::table to_toml(const Todo::Snapshot& snapshot) {
   if (!snapshot.subtasks.empty()) {
     toml::array subtasks;
     for (const auto& subtask : snapshot.subtasks) {
-      subtasks.push_back(toml::table{{"content", subtask.content},
-                                    {"completed", subtask.completed}});
+      subtasks.push_back(
+          toml::table{{"content", subtask.content}, {"completed", subtask.completed}});
     }
     table.insert_or_assign("subtasks", std::move(subtasks));
   }
@@ -523,9 +521,14 @@ toml::table to_toml(const Todo::Snapshot& snapshot) {
 toml::table to_toml(const Directory::Snapshot& snapshot) {
   const char* kind;
   switch (snapshot.kind) {
-    case DirectoryKind::Memo: kind = "Memo"; break;
-    case DirectoryKind::Todo: kind = "Todo"; break;
-    default: throw std::invalid_argument("Cannot encode an invalid Directory kind");
+  case DirectoryKind::Memo:
+    kind = "Memo";
+    break;
+  case DirectoryKind::Todo:
+    kind = "Todo";
+    break;
+  default:
+    throw std::invalid_argument("Cannot encode an invalid Directory kind");
   }
   return toml::table{{"schema_version", 1},
                      {"id", snapshot.id.to_string()},
@@ -564,7 +567,8 @@ toml::table to_toml(const Directory::Snapshot& snapshot) {
   return error(CodecErrorCode::InvalidField, "", "Unknown Privacy value");
 }
 
-::folio::core::Result<TimestampContext, CodecError> timestamp_context_from_toml(const toml::node& node) {
+::folio::core::Result<TimestampContext, CodecError>
+timestamp_context_from_toml(const toml::node& node) {
   const auto* table = node.as_table();
   if (!table) {
     return error(CodecErrorCode::InvalidField, "", "Expected a timestamp context table");
@@ -578,8 +582,7 @@ toml::table to_toml(const Directory::Snapshot& snapshot) {
   auto timezone_result = field_string(*table, "timezone");
   if (const auto* failure = result_error(timezone_result)) return *failure;
   if (std::get<std::string>(timezone_result).empty()) {
-    return error(CodecErrorCode::InvalidField, "timezone",
-                 "Timezone identifier cannot be empty");
+    return error(CodecErrorCode::InvalidField, "timezone", "Timezone identifier cannot be empty");
   }
   auto location_result = read_location(*table);
   if (const auto* failure = result_error(location_result)) return *failure;
@@ -601,8 +604,7 @@ toml::table to_toml(const Directory::Snapshot& snapshot) {
   auto timezone_result = field_string(*table, "timezone");
   if (const auto* failure = result_error(timezone_result)) return *failure;
   if (std::get<std::string>(timezone_result).empty()) {
-    return error(CodecErrorCode::InvalidField, "timezone",
-                 "Timezone identifier cannot be empty");
+    return error(CodecErrorCode::InvalidField, "timezone", "Timezone identifier cannot be empty");
   }
   auto location_result = read_location(*table);
   if (const auto* failure = result_error(location_result)) return *failure;
@@ -631,7 +633,8 @@ toml::table to_toml(const Directory::Snapshot& snapshot) {
   return error(CodecErrorCode::InvalidField, "due.kind", "Expected Date or Datetime");
 }
 
-::folio::core::Result<Todo::Snapshot, CodecError> todo_snapshot_from_toml(const toml::table& table) {
+::folio::core::Result<Todo::Snapshot, CodecError>
+todo_snapshot_from_toml(const toml::table& table) {
   if (const auto failure = check_schema_version(table)) return *failure;
 
   const auto* id_node = table.get("id");
@@ -644,12 +647,14 @@ toml::table to_toml(const Directory::Snapshot& snapshot) {
   }
 
   const auto* created_node = table.get("created");
-  if (!created_node) return error(CodecErrorCode::MissingField, "created", "Required field is missing");
+  if (!created_node)
+    return error(CodecErrorCode::MissingField, "created", "Required field is missing");
   auto created_result = timestamp_context_from_toml(*created_node);
   if (const auto* failure = result_error(created_result)) return *failure;
 
   const auto* modified_node = table.get("modified");
-  if (!modified_node) return error(CodecErrorCode::MissingField, "modified", "Required field is missing");
+  if (!modified_node)
+    return error(CodecErrorCode::MissingField, "modified", "Required field is missing");
   auto modified_result = timestamp_context_from_toml(*modified_node);
   if (const auto* failure = result_error(modified_result)) return *failure;
 
@@ -660,22 +665,31 @@ toml::table to_toml(const Directory::Snapshot& snapshot) {
   auto status_result = read_string(table, "status", "status");
   if (const auto* failure = result_error(status_result)) return *failure;
   TodoStatus status;
-  if (std::get<std::string>(status_result) == "Pending") status = TodoStatus::Pending;
-  else if (std::get<std::string>(status_result) == "Completed") status = TodoStatus::Completed;
-  else return error(CodecErrorCode::InvalidField, "status", "Unknown Todo status");
+  if (std::get<std::string>(status_result) == "Pending")
+    status = TodoStatus::Pending;
+  else if (std::get<std::string>(status_result) == "Completed")
+    status = TodoStatus::Completed;
+  else
+    return error(CodecErrorCode::InvalidField, "status", "Unknown Todo status");
 
   auto priority_result = read_string(table, "priority", "priority");
   if (const auto* failure = result_error(priority_result)) return *failure;
   TodoPriority priority;
   const auto& priority_text = std::get<std::string>(priority_result);
-  if (priority_text == "None") priority = TodoPriority::None;
-  else if (priority_text == "Low") priority = TodoPriority::Low;
-  else if (priority_text == "Medium") priority = TodoPriority::Medium;
-  else if (priority_text == "High") priority = TodoPriority::High;
-  else return error(CodecErrorCode::InvalidField, "priority", "Unknown Todo priority");
+  if (priority_text == "None")
+    priority = TodoPriority::None;
+  else if (priority_text == "Low")
+    priority = TodoPriority::Low;
+  else if (priority_text == "Medium")
+    priority = TodoPriority::Medium;
+  else if (priority_text == "High")
+    priority = TodoPriority::High;
+  else
+    return error(CodecErrorCode::InvalidField, "priority", "Unknown Todo priority");
 
   const auto* privacy_node = table.get("privacy");
-  if (!privacy_node) return error(CodecErrorCode::MissingField, "privacy", "Required field is missing");
+  if (!privacy_node)
+    return error(CodecErrorCode::MissingField, "privacy", "Required field is missing");
   auto privacy_result = privacy_from_toml(*privacy_node);
   if (const auto* failure = result_error(privacy_result)) {
     auto copy = *failure;
@@ -743,8 +757,9 @@ toml::table to_toml(const Directory::Snapshot& snapshot) {
   return snapshot;
 }
 
-::folio::core::Result<Directory::Snapshot, CodecError> directory_snapshot_from_toml(
-    const toml::table& table, std::optional<DirectoryKind> trusted_legacy_kind) {
+::folio::core::Result<Directory::Snapshot, CodecError>
+directory_snapshot_from_toml(const toml::table& table,
+                             std::optional<DirectoryKind> trusted_legacy_kind) {
   if (const auto failure = check_schema_version(table)) return *failure;
   if (trusted_legacy_kind && *trusted_legacy_kind != DirectoryKind::Memo &&
       *trusted_legacy_kind != DirectoryKind::Todo)
@@ -764,18 +779,21 @@ toml::table to_toml(const Directory::Snapshot& snapshot) {
     auto kind_result = read_string(table, "kind", "kind");
     if (const auto* failure = result_error(kind_result)) return *failure;
     const auto& value = std::get<std::string>(kind_result);
-    if (value == "Memo") kind = DirectoryKind::Memo;
-    else if (value == "Todo") kind = DirectoryKind::Todo;
-    else return error(CodecErrorCode::InvalidField, "kind", "Unknown Directory kind");
+    if (value == "Memo")
+      kind = DirectoryKind::Memo;
+    else if (value == "Todo")
+      kind = DirectoryKind::Todo;
+    else
+      return error(CodecErrorCode::InvalidField, "kind", "Unknown Directory kind");
     if (trusted_legacy_kind && kind != *trusted_legacy_kind)
-      return error(CodecErrorCode::InvalidField, "kind", "Directory kind conflicts with trusted context");
+      return error(CodecErrorCode::InvalidField, "kind",
+                   "Directory kind conflicts with trusted context");
   } else if (trusted_legacy_kind) {
     kind = *trusted_legacy_kind;
   } else {
     return error(CodecErrorCode::MissingField, "kind", "Required field is missing");
   }
-  return Directory::Snapshot{std::get<Id>(std::move(id_result)),
-                             kind,
+  return Directory::Snapshot{std::get<Id>(std::move(id_result)), kind,
                              std::get<std::string>(std::move(name_result))};
 }
 
@@ -841,11 +859,11 @@ toml::table to_toml(const Directory::Snapshot& snapshot) {
   auto date_result = read_field(table, "log_date", date_context_from_toml);
   if (const auto* failure = result_error(date_result)) return *failure;
   auto metadata = std::get<MarkdownMetadata>(std::move(metadata_result));
-  Log::Snapshot snapshot{std::move(metadata.id), std::move(metadata.created),
-                          std::move(metadata.modified), std::move(metadata.title),
-                          std::string{parts.body},
-                          std::get<DateContext>(std::move(date_result)),
-                          std::move(metadata.tags), metadata.privacy};
+  Log::Snapshot snapshot{
+      std::move(metadata.id),       std::move(metadata.created),
+      std::move(metadata.modified), std::move(metadata.title),
+      std::string{parts.body},      std::get<DateContext>(std::move(date_result)),
+      std::move(metadata.tags),     metadata.privacy};
   try {
     (void)Log::restore(snapshot);
   } catch (const std::exception& exception) {
@@ -854,7 +872,8 @@ toml::table to_toml(const Directory::Snapshot& snapshot) {
   return snapshot;
 }
 
-::folio::core::Result<Memo::Snapshot, CodecError> memo_snapshot_from_markdown(std::string_view text) {
+::folio::core::Result<Memo::Snapshot, CodecError>
+memo_snapshot_from_markdown(std::string_view text) {
   auto parts_result = split_markdown(text);
   if (const auto* failure = result_error(parts_result)) return *failure;
   const auto parts = std::get<MarkdownParts>(parts_result);
@@ -871,10 +890,10 @@ toml::table to_toml(const Directory::Snapshot& snapshot) {
     directory_id = std::get<Id>(std::move(result));
   }
   auto metadata = std::get<MarkdownMetadata>(std::move(metadata_result));
-  Memo::Snapshot snapshot{std::move(metadata.id), std::move(metadata.created),
-                           std::move(metadata.modified), std::move(metadata.title),
-                           std::string{parts.body}, std::move(metadata.tags),
-                           std::move(directory_id), metadata.privacy};
+  Memo::Snapshot snapshot{std::move(metadata.id),       std::move(metadata.created),
+                          std::move(metadata.modified), std::move(metadata.title),
+                          std::string{parts.body},      std::move(metadata.tags),
+                          std::move(directory_id),      metadata.privacy};
   try {
     (void)Memo::restore(snapshot);
   } catch (const std::exception& exception) {
@@ -883,4 +902,4 @@ toml::table to_toml(const Directory::Snapshot& snapshot) {
   return snapshot;
 }
 
-}  // namespace folio::core::storage::codec
+} // namespace folio::core::storage::codec

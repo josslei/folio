@@ -9,7 +9,7 @@ namespace folio::core {
 enum class DirectoryKind { Memo, Todo };
 
 class Directory {
- public:
+public:
   struct Snapshot {
     Id id;
     DirectoryKind kind;
@@ -27,12 +27,12 @@ class Directory {
 
   void set_name(std::string name);
 
- private:
+private:
   explicit Directory(const Snapshot& snapshot);
 
   const Id id_;
   const DirectoryKind kind_;
-  std::string name_;  // UTF-8.
+  std::string name_; // UTF-8.
 };
 
-}  // namespace folio::core
+} // namespace folio::core

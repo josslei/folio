@@ -39,8 +39,7 @@ BackendActionOutcome Bootstrap(BackendContext& context) {
     return record_backend_failure(context, {Phase::Bootstrap, *error});
   }
   context.ownership.emplace(std::get<RepositoryOwnership>(std::move(acquired)));
-  context.repository =
-      std::make_unique<storage::NormalRepository>(context.paths->normal_root);
+  context.repository = std::make_unique<storage::NormalRepository>(context.paths->normal_root);
   context.coordinator =
       std::make_unique<storage::CatalogCoordinator>(*context.paths, context.catalog);
   auto result = context.coordinator->startup_load();
@@ -65,12 +64,12 @@ BackendActionOutcome Bootstrap(BackendContext& context) {
 }
 
 BackendActionOutcome Serve(BackendContext& context) {
-  context.access = std::make_unique<AccessOrchestrator>(
-      context.catalog, *context.repository, *context.coordinator);
-  context.mutations = std::make_unique<MutationOrchestrator>(
-      context.catalog, *context.repository, *context.coordinator);
-  context.runtime = std::make_unique<IpcServer>(*context.ownership,
-      [&](const OperationRequest& request, const Session& session) {
+  context.access = std::make_unique<AccessOrchestrator>(context.catalog, *context.repository,
+                                                        *context.coordinator);
+  context.mutations = std::make_unique<MutationOrchestrator>(context.catalog, *context.repository,
+                                                             *context.coordinator);
+  context.runtime = std::make_unique<IpcServer>(
+      *context.ownership, [&](const OperationRequest& request, const Session& session) {
         if (std::holds_alternative<MutationRequest>(request) ||
             std::holds_alternative<AcquireEditRequest>(request) ||
             std::holds_alternative<ReleaseEditRequest>(request))
@@ -89,9 +88,11 @@ BackendActionOutcome Stopping(BackendContext& context) {
   if (context.runtime) {
     context.runtime->drain_requests();
     for (auto& error : context.runtime->take_failures()) {
-      std::visit([&](auto& cause) {
-        record_backend_failure(context, {Phase::Stopping, std::move(cause)});
-      }, error);
+      std::visit(
+          [&](auto& cause) {
+            record_backend_failure(context, {Phase::Stopping, std::move(cause)});
+          },
+          error);
       failed = true;
     }
   }
@@ -113,9 +114,9 @@ BackendActionOutcome Report(BackendContext& context) {
       record_backend_failure(context, {Phase::Report, std::current_exception()});
     }
     for (auto& error : context.runtime->take_failures()) {
-      std::visit([&](auto& cause) {
-        record_backend_failure(context, {Phase::Report, std::move(cause)});
-      }, error);
+      std::visit(
+          [&](auto& cause) { record_backend_failure(context, {Phase::Report, std::move(cause)}); },
+          error);
     }
   }
   // TODO: lifecycle notification to connected Frontends remains deferred.
@@ -123,9 +124,9 @@ BackendActionOutcome Report(BackendContext& context) {
   // Preserve startup rejection where IPC exists. Final reporting to active
   // Frontends and pre-IPC bootstrap delivery await the designer's protocol.
   if (!context.initialized && context.ownership) {
-    const auto failure =
-        context.diagnostics.empty() ? "Backend startup failed"
-                                    : diagnostic_message(context.diagnostics.front());
+    const auto failure = context.diagnostics.empty()
+                             ? "Backend startup failed"
+                             : diagnostic_message(context.diagnostics.front());
     IpcServer reporting(*context.ownership, {}, failure);
     auto result = reporting.run();
     if (auto* error = std::get_if<IpcError>(&result)) {
@@ -143,9 +144,9 @@ BackendActionOutcome Finish(BackendContext& context) {
     context.runtime->drain_requests();
     context.runtime->close_connections();
     for (auto& error : context.runtime->take_failures()) {
-      std::visit([&](auto& cause) {
-        record_backend_failure(context, {Phase::Finish, std::move(cause)});
-      }, error);
+      std::visit(
+          [&](auto& cause) { record_backend_failure(context, {Phase::Finish, std::move(cause)}); },
+          error);
       failed = true;
     }
     context.runtime.reset();
@@ -190,51 +191,50 @@ BackendStateMachine::Handlers register_backend_states(BackendContext& context) {
 }
 
 void retain_backend_notification_failures(BackendContext& context,
-                                         const BackendStateMachine& machine) {
+                                          const BackendStateMachine& machine) {
   // A diagnostic callback failure cannot prevent Finish. These exceptional
   // notification failures are retained locally after lifecycle completion.
   for (const auto& failure : machine.failed_notifications()) {
-    record_backend_failure(
-        context, {failure.phase, failure.original, failure.original_time});
-    record_backend_failure(
-        context, {failure.phase, failure.notification_error, failure.notification_time});
+    record_backend_failure(context, {failure.phase, failure.original, failure.original_time});
+    record_backend_failure(context,
+                           {failure.phase, failure.notification_error, failure.notification_time});
   }
   // Notification failures are collected late; restore occurrence order so an
   // earlier service failure remains primary even if cleanup also failed.
-  std::stable_sort(context.diagnostics.begin(), context.diagnostics.end(),
-                   [](const auto& left, const auto& right) {
-                     return left.occurred_at < right.occurred_at;
-                   });
+  std::stable_sort(
+      context.diagnostics.begin(), context.diagnostics.end(),
+      [](const auto& left, const auto& right) { return left.occurred_at < right.occurred_at; });
 }
 
 std::string diagnostic_message(const BackendDiagnostic& diagnostic) {
-  return std::visit([&](const auto& error) -> std::string {
-    using Error = std::decay_t<decltype(error)>;
-    if constexpr (std::is_same_v<Error, std::exception_ptr>) {
-      try {
-        if (error) std::rethrow_exception(error);
-      } catch (const std::exception& exception) {
-        return std::string("Backend lifecycle exception: ") + exception.what();
-      } catch (...) {
-        return "Unknown Backend lifecycle exception";
-      }
-      return "Empty Backend exception diagnostic";
-    } else {
-      std::string message = error.message;
-      if constexpr (std::is_same_v<Error, storage::CoordinatorError>) {
-        if (diagnostic.phase == Phase::Bootstrap) {
-          message = "Backend initialization failed: " + message;
+  return std::visit(
+      [&](const auto& error) -> std::string {
+        using Error = std::decay_t<decltype(error)>;
+        if constexpr (std::is_same_v<Error, std::exception_ptr>) {
+          try {
+            if (error) std::rethrow_exception(error);
+          } catch (const std::exception& exception) {
+            return std::string("Backend lifecycle exception: ") + exception.what();
+          } catch (...) {
+            return "Unknown Backend lifecycle exception";
+          }
+          return "Empty Backend exception diagnostic";
+        } else {
+          std::string message = error.message;
+          if constexpr (std::is_same_v<Error, storage::CoordinatorError>) {
+            if (diagnostic.phase == Phase::Bootstrap) {
+              message = "Backend initialization failed: " + message;
+            }
+          } else if (error.system_error) {
+            message += ": " + error.system_error.message();
+          }
+          return message;
         }
-      } else if (error.system_error) {
-        message += ": " + error.system_error.message();
-      }
-      return message;
-    }
-  }, diagnostic.error);
+      },
+      diagnostic.error);
 }
 
-BackendActionOutcome record_backend_failure(BackendContext& context,
-                                            BackendDiagnostic diagnostic) {
+BackendActionOutcome record_backend_failure(BackendContext& context, BackendDiagnostic diagnostic) {
   // Never log arbitrary error messages, exception text, paths or payloads:
   // parser/codec errors can include sensitive user-controlled Entry content.
   // Retain the full typed diagnostic separately for the existing error protocol.
@@ -242,32 +242,39 @@ BackendActionOutcome record_backend_failure(BackendContext& context,
     static constexpr const char* phases[] = {"Bootstrap", "Serve", "Stopping", "Report", "Finish"};
     const auto* phase = phases[static_cast<std::size_t>(diagnostic.phase)];
     const auto* priority = context.diagnostics.empty() ? "primary" : "secondary";
-    std::visit([&](const auto& error) {
-      using Error = std::decay_t<decltype(error)>;
-      if constexpr (std::is_same_v<Error, std::exception_ptr>) {
-        SPDLOG_CRITICAL("Backend {} exception during {} (details retained internally)", priority, phase);
-      } else if constexpr (std::is_same_v<Error, storage::CoordinatorError>) {
-        SPDLOG_ERROR("Backend {} failure during {}: CoordinatorError code={} storage_code={} file_code={} read_code={} codec_code={} system_error={}",
-                     priority, phase, static_cast<int>(error.code),
-                     error.storage_error ? static_cast<int>(error.storage_error->code) : -1,
-                     error.file_error ? static_cast<int>(error.file_error->code) : -1,
-                     error.binary_error ? static_cast<int>(error.binary_error->code) : -1,
-                     error.codec_error ? static_cast<int>(error.codec_error->code) : -1,
-                     error.file_error ? error.file_error->system_error.value()
-                         : error.binary_error ? error.binary_error->system_error.value() : 0);
-      } else {
-        const auto* type = std::is_same_v<Error, config::ConfigurationError> ? "ConfigurationError"
-                         : std::is_same_v<Error, ProcessError> ? "ProcessError" : "IpcError";
-        if constexpr (std::is_same_v<Error, ProcessError>) {
-          if (error.code == ProcessErrorCode::AlreadyOwned) {
-            SPDLOG_WARN("Backend ownership already held by another process");
-            return;
+    std::visit(
+        [&](const auto& error) {
+          using Error = std::decay_t<decltype(error)>;
+          if constexpr (std::is_same_v<Error, std::exception_ptr>) {
+            SPDLOG_CRITICAL("Backend {} exception during {} (details retained internally)",
+                            priority, phase);
+          } else if constexpr (std::is_same_v<Error, storage::CoordinatorError>) {
+            SPDLOG_ERROR("Backend {} failure during {}: CoordinatorError code={} storage_code={} "
+                         "file_code={} read_code={} codec_code={} system_error={}",
+                         priority, phase, static_cast<int>(error.code),
+                         error.storage_error ? static_cast<int>(error.storage_error->code) : -1,
+                         error.file_error ? static_cast<int>(error.file_error->code) : -1,
+                         error.binary_error ? static_cast<int>(error.binary_error->code) : -1,
+                         error.codec_error ? static_cast<int>(error.codec_error->code) : -1,
+                         error.file_error     ? error.file_error->system_error.value()
+                         : error.binary_error ? error.binary_error->system_error.value()
+                                              : 0);
+          } else {
+            const auto* type = std::is_same_v<Error, config::ConfigurationError>
+                                   ? "ConfigurationError"
+                               : std::is_same_v<Error, ProcessError> ? "ProcessError"
+                                                                     : "IpcError";
+            if constexpr (std::is_same_v<Error, ProcessError>) {
+              if (error.code == ProcessErrorCode::AlreadyOwned) {
+                SPDLOG_WARN("Backend ownership already held by another process");
+                return;
+              }
+            }
+            SPDLOG_ERROR("Backend {} failure during {}: {} code={} system_error={}", priority,
+                         phase, type, static_cast<int>(error.code), error.system_error.value());
           }
-        }
-        SPDLOG_ERROR("Backend {} failure during {}: {} code={} system_error={}",
-                     priority, phase, type, static_cast<int>(error.code), error.system_error.value());
-      }
-    }, diagnostic.error);
+        },
+        diagnostic.error);
   } catch (...) {
     // Logging is independent of diagnostic retention and lifecycle transitions.
   }
@@ -278,4 +285,4 @@ BackendActionOutcome record_backend_failure(BackendContext& context,
   return BackendActionOutcome::Failure;
 }
 
-}  // namespace folio::application::internal
+} // namespace folio::application::internal

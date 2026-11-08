@@ -29,11 +29,11 @@ core::Id id(const char* value) {
 }
 
 class IndexResourceLimitsTest : public testing::Test {
- protected:
+protected:
   IndexResourceLimitsTest() {
     for (unsigned attempt = 0; attempt < 100; ++attempt) {
-      const auto candidate = fs::temp_directory_path() /
-          ("folio-index-resource-limit-test-" + core::Id::generate().to_string());
+      const auto candidate = fs::temp_directory_path() / ("folio-index-resource-limit-test-" +
+                                                          core::Id::generate().to_string());
       if (fs::create_directory(candidate)) {
         root = fs::canonical(candidate);
         return;
@@ -50,14 +50,17 @@ class IndexResourceLimitsTest : public testing::Test {
   fs::path state() const { return root / "state"; }
   fs::path file() const { return root / "cache" / "index" / "normal.msgpack"; }
   storage::StoragePaths paths() const {
-    return {normal(), root / "vault", {root / "config", root / "data", state(), root / "cache", root / "logs", std::nullopt}};
+    return {normal(),
+            root / "vault",
+            {root / "config", root / "data", state(), root / "cache", root / "logs", std::nullopt}};
   }
   void write_oversized_cache() const {
     ASSERT_TRUE(fs::create_directories(file().parent_path()));
     std::ofstream output(file(), std::ios::binary | std::ios::trunc);
     ASSERT_TRUE(output.is_open());
     const std::string chunk(1024u * 1024u, 'x');
-    for (unsigned i = 0; i < 64; ++i) output.write(chunk.data(), chunk.size());
+    for (unsigned i = 0; i < 64; ++i)
+      output.write(chunk.data(), chunk.size());
     output.put('Z');
     output.close();
     ASSERT_FALSE(output.fail());
@@ -80,8 +83,7 @@ class IndexResourceLimitsTest : public testing::Test {
     ASSERT_TRUE(outcome.index_error.has_value());
     EXPECT_EQ(outcome.index_error->code, storage::CoordinatorErrorCode::LimitExceeded);
     ASSERT_TRUE(outcome.index_error->binary_error.has_value());
-    EXPECT_EQ(outcome.index_error->binary_error->code,
-              folio::io::ReadErrorCode::LimitExceeded);
+    EXPECT_EQ(outcome.index_error->binary_error->code, folio::io::ReadErrorCode::LimitExceeded);
     EXPECT_EQ(outcome.index_error->binary_error->path, file());
     EXPECT_TRUE(outcome.diagnostics.empty());
     EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
@@ -108,10 +110,14 @@ TEST_F(IndexResourceLimitsTest, DecoderRejects100001MaterializedRecords) {
   msgpack::sbuffer bytes;
   msgpack::packer<msgpack::sbuffer> packer{bytes};
   packer.pack_map(3);
-  packer.pack(std::string{"directories"}); packer.pack_array(0);
-  packer.pack(std::string{"entries"}); packer.pack_array(100001);
-  for (unsigned i = 0; i < 100001; ++i) packer.pack_nil();
-  packer.pack(std::string{"schema_version"}); packer.pack_uint64(1);
+  packer.pack(std::string{"directories"});
+  packer.pack_array(0);
+  packer.pack(std::string{"entries"});
+  packer.pack_array(100001);
+  for (unsigned i = 0; i < 100001; ++i)
+    packer.pack_nil();
+  packer.pack(std::string{"schema_version"});
+  packer.pack_uint64(1);
   const auto decoded = codec::decode_index({bytes.data(), bytes.size()});
   ASSERT_TRUE(std::holds_alternative<codec::IndexCodecError>(decoded));
   EXPECT_EQ(std::get<codec::IndexCodecError>(decoded).code,
@@ -128,12 +134,16 @@ TEST_F(IndexResourceLimitsTest, OversizedCacheFallsBackToEmptyNormalStorage) {
 
 TEST_F(IndexResourceLimitsTest, OversizedCacheFallsBackToNonemptyNormalStorage) {
   storage::NormalRepository repository{normal()};
-  const core::TimestampContext created{
-      core::Timestamp{std::chrono::seconds{1800000000}}, "UTC", std::nullopt};
-  const core::Log::Snapshot log{
-      id("a7183823-2574-4bfd-b411-99ed177d3e43"), created, created,
-      "Synthetic Log", "body", {{std::chrono::year{2027} / 1 / 15}, "UTC", std::nullopt},
-      {{"resource-limit"}}, core::Privacy::Normal};
+  const core::TimestampContext created{core::Timestamp{std::chrono::seconds{1800000000}}, "UTC",
+                                       std::nullopt};
+  const core::Log::Snapshot log{id("a7183823-2574-4bfd-b411-99ed177d3e43"),
+                                created,
+                                created,
+                                "Synthetic Log",
+                                "body",
+                                {{std::chrono::year{2027} / 1 / 15}, "UTC", std::nullopt},
+                                {{"resource-limit"}},
+                                core::Privacy::Normal};
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(log)));
   ASSERT_NO_FATAL_FAILURE(write_oversized_cache());
   ASSERT_NO_FATAL_FAILURE(expect_oversized_fallback(1));
@@ -141,4 +151,4 @@ TEST_F(IndexResourceLimitsTest, OversizedCacheFallsBackToNonemptyNormalStorage) 
   EXPECT_TRUE(fs::is_regular_file(state() / "session.marker"));
 }
 
-}  // namespace
+} // namespace

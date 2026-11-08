@@ -17,4 +17,4 @@ void ensure_sodium_initialized() {
   (void)initialized;
 }
 
-}  // namespace folio::core
+} // namespace folio::core

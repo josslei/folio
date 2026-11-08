@@ -33,11 +33,11 @@ namespace storage = folio::core::storage;
 namespace codec = folio::core::storage::index_codec;
 
 class TemporaryDirectory {
- public:
+public:
   TemporaryDirectory() {
     for (unsigned attempt = 0; attempt < 100; ++attempt) {
       auto candidate = fs::temp_directory_path() /
-          ("folio-index-store-test-" + core::Id::generate().to_string());
+                       ("folio-index-store-test-" + core::Id::generate().to_string());
       if (fs::create_directory(candidate)) {
         path_ = fs::canonical(candidate);
         return;
@@ -52,7 +52,8 @@ class TemporaryDirectory {
   TemporaryDirectory(const TemporaryDirectory&) = delete;
   TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
   const fs::path& path() const { return path_; }
- private:
+
+private:
   fs::path path_;
 };
 
@@ -89,8 +90,8 @@ storage::MetadataCatalog make_catalog() {
   const auto todo_dir = id("97183823-2574-4bfd-b411-99ed177d3e43");
   if (!std::holds_alternative<std::monostate>(catalog.insert_directory(
           {memo_dir, core::DirectoryKind::Memo, "memos/group", "研究 / Café"})) ||
-      !std::holds_alternative<std::monostate>(catalog.insert_directory(
-          {todo_dir, core::DirectoryKind::Todo, "todos/group", "任务"})))
+      !std::holds_alternative<std::monostate>(
+          catalog.insert_directory({todo_dir, core::DirectoryKind::Todo, "todos/group", "任务"})))
     throw std::runtime_error("Invalid Directory fixture");
   const auto created = core::TimestampContext{
       core::Timestamp{std::chrono::duration_cast<core::Timestamp::duration>(
@@ -100,35 +101,43 @@ storage::MetadataCatalog make_catalog() {
       core::Timestamp{std::chrono::duration_cast<core::Timestamp::duration>(
           std::chrono::seconds{1800000010} + std::chrono::nanoseconds{987654000})},
       "Europe/Paris", std::nullopt};
-  const storage::LogMetadata log{{
-      id("17183823-2574-4bfd-b411-99ed177d3e43"),
-      core::Privacy::Protected, created, modified, "Log 旅行", {{"daily"}, {"旅行"}},
-      {{std::chrono::year{2027} / 1 / 15}, "Asia/Tokyo", "東京"}}, "logs/one.md"};
-  const storage::MemoMetadata memo{{
-      id("27183823-2574-4bfd-b411-99ed177d3e43"),
-      core::Privacy::Normal, created, modified, "Memo Café", {{"research"}}, memo_dir}, "memos/group/one.md"};
-  const storage::TodoMetadata todo{{
-      id("37183823-2574-4bfd-b411-99ed177d3e43"),
-      core::Privacy::Hidden, created, modified, "Todo 日付",
-      core::TodoStatus::Completed, core::TodoPriority::High,
-      core::DueDate{core::DateContext{{std::chrono::year{2028} / 2 / 3},
-                                      "Asia/Tokyo", "東京"}}, todo_dir}, "todos/group/one.toml"};
-  const storage::TodoMetadata root_todo{{
-      id("47183823-2574-4bfd-b411-99ed177d3e43"),
-      core::Privacy::Normal, created, modified, "Root Todo",
-      core::TodoStatus::Pending, core::TodoPriority::None,
-      std::nullopt, std::nullopt}, "todos/root.toml"};
-  const storage::TodoMetadata timed_todo{{
-      id("58183823-2574-4bfd-b411-99ed177d3e43"),
-      core::Privacy::Normal, created, modified, "Timed Todo",
-      core::TodoStatus::Pending, core::TodoPriority::Medium,
-      core::DueDate{core::TimestampContext{
-          core::Timestamp{std::chrono::seconds{1900000000}}, "UTC", std::nullopt}},
-      std::nullopt}, "todos/timed.toml"};
-  for (const storage::RecordMetadata& entry : {
-           storage::RecordMetadata{log}, storage::RecordMetadata{memo},
-           storage::RecordMetadata{todo}, storage::RecordMetadata{root_todo},
-           storage::RecordMetadata{timed_todo}}) {
+  const storage::LogMetadata log{{id("17183823-2574-4bfd-b411-99ed177d3e43"),
+                                  core::Privacy::Protected,
+                                  created,
+                                  modified,
+                                  "Log 旅行",
+                                  {{"daily"}, {"旅行"}},
+                                  {{std::chrono::year{2027} / 1 / 15}, "Asia/Tokyo", "東京"}},
+                                 "logs/one.md"};
+  const storage::MemoMetadata memo{{id("27183823-2574-4bfd-b411-99ed177d3e43"),
+                                    core::Privacy::Normal,
+                                    created,
+                                    modified,
+                                    "Memo Café",
+                                    {{"research"}},
+                                    memo_dir},
+                                   "memos/group/one.md"};
+  const storage::TodoMetadata todo{
+      {id("37183823-2574-4bfd-b411-99ed177d3e43"), core::Privacy::Hidden, created, modified,
+       "Todo 日付", core::TodoStatus::Completed, core::TodoPriority::High,
+       core::DueDate{core::DateContext{{std::chrono::year{2028} / 2 / 3}, "Asia/Tokyo", "東京"}},
+       todo_dir},
+      "todos/group/one.toml"};
+  const storage::TodoMetadata root_todo{{id("47183823-2574-4bfd-b411-99ed177d3e43"),
+                                         core::Privacy::Normal, created, modified, "Root Todo",
+                                         core::TodoStatus::Pending, core::TodoPriority::None,
+                                         std::nullopt, std::nullopt},
+                                        "todos/root.toml"};
+  const storage::TodoMetadata timed_todo{
+      {id("58183823-2574-4bfd-b411-99ed177d3e43"), core::Privacy::Normal, created, modified,
+       "Timed Todo", core::TodoStatus::Pending, core::TodoPriority::Medium,
+       core::DueDate{core::TimestampContext{core::Timestamp{std::chrono::seconds{1900000000}},
+                                            "UTC", std::nullopt}},
+       std::nullopt},
+      "todos/timed.toml"};
+  for (const storage::RecordMetadata& entry :
+       {storage::RecordMetadata{log}, storage::RecordMetadata{memo}, storage::RecordMetadata{todo},
+        storage::RecordMetadata{root_todo}, storage::RecordMetadata{timed_todo}}) {
     if (!std::holds_alternative<std::monostate>(catalog.insert_record(entry)))
       throw std::runtime_error("Invalid Entry fixture");
   }
@@ -136,12 +145,16 @@ storage::MetadataCatalog make_catalog() {
 }
 
 core::Log::Snapshot authoritative_log() {
-  const auto created = core::TimestampContext{
-      core::Timestamp{std::chrono::seconds{1800000000}}, "UTC", std::nullopt};
-  return {id("a7183823-2574-4bfd-b411-99ed177d3e43"), created, created,
-          "Authoritative Log", "synthetic body",
+  const auto created = core::TimestampContext{core::Timestamp{std::chrono::seconds{1800000000}},
+                                              "UTC", std::nullopt};
+  return {id("a7183823-2574-4bfd-b411-99ed177d3e43"),
+          created,
+          created,
+          "Authoritative Log",
+          "synthetic body",
           {{std::chrono::year{2027} / 1 / 15}, "UTC", std::nullopt},
-          {{"rebuild"}}, core::Privacy::Normal};
+          {{"rebuild"}},
+          core::Privacy::Normal};
 }
 
 core::Memo::Snapshot authoritative_memo(const core::Id& directory_id) {
@@ -149,35 +162,43 @@ core::Memo::Snapshot authoritative_memo(const core::Id& directory_id) {
       core::Timestamp{std::chrono::duration_cast<core::Timestamp::duration>(
           std::chrono::seconds{1800000000} + std::chrono::nanoseconds{123456000})},
       "Asia/Shanghai", "上海"};
-  return {id("b7183823-2574-4bfd-b411-99ed177d3e43"), created, created,
-          "研究 Memo", "synthetic content", {{"research"}}, directory_id,
+  return {id("b7183823-2574-4bfd-b411-99ed177d3e43"),
+          created,
+          created,
+          "研究 Memo",
+          "synthetic content",
+          {{"research"}},
+          directory_id,
           core::Privacy::Normal};
 }
 
 core::Todo::Snapshot authoritative_todo(const core::Id& directory_id) {
-  const auto created = core::TimestampContext{
-      core::Timestamp{std::chrono::seconds{1800000000}}, "UTC", std::nullopt};
-  return {id("c7183823-2574-4bfd-b411-99ed177d3e43"), created, created,
-          "旅行 Todo", "synthetic notes", core::TodoStatus::Pending,
+  const auto created = core::TimestampContext{core::Timestamp{std::chrono::seconds{1800000000}},
+                                              "UTC", std::nullopt};
+  return {id("c7183823-2574-4bfd-b411-99ed177d3e43"),
+          created,
+          created,
+          "旅行 Todo",
+          "synthetic notes",
+          core::TodoStatus::Pending,
           core::TodoPriority::High,
-          core::DueDate{core::DateContext{{std::chrono::year{2028} / 3 / 4},
-                                          "Asia/Tokyo", "東京"}},
-          directory_id, core::Privacy::Normal, {{"Book train", false}}};
+          core::DueDate{core::DateContext{{std::chrono::year{2028} / 3 / 4}, "Asia/Tokyo", "東京"}},
+          directory_id,
+          core::Privacy::Normal,
+          {{"Book train", false}}};
 }
 
 void change_log_title(storage::MetadataCatalog& catalog) {
-  const auto found = catalog.find_record(
-      id("17183823-2574-4bfd-b411-99ed177d3e43"));
+  const auto found = catalog.find_record(id("17183823-2574-4bfd-b411-99ed177d3e43"));
   if (!found) throw std::runtime_error("Missing test Log");
   auto log = std::get<storage::LogMetadata>(*found);
   log.metadata.title = "Changed after first save";
-  if (!std::holds_alternative<std::monostate>(catalog.update_record(
-          storage::RecordMetadata{log})))
+  if (!std::holds_alternative<std::monostate>(catalog.update_record(storage::RecordMetadata{log})))
     throw std::runtime_error("Could not update test Log");
 }
 
 class CatalogCoordinatorTest : public testing::Test {
- protected:
+protected:
   TemporaryDirectory temporary;
   fs::path normal = temporary.path() / "normal";
   fs::path vault = temporary.path() / "vault";
@@ -188,14 +209,15 @@ class CatalogCoordinatorTest : public testing::Test {
   storage::MetadataCatalog owned_catalog;
 
   storage::StoragePaths paths() const {
-    return {normal, vault, {temporary.path() / "config", temporary.path() / "data",
-                           state, cache, state.parent_path() / "logs", std::nullopt}};
+    return {normal,
+            vault,
+            {temporary.path() / "config", temporary.path() / "data", state, cache,
+             state.parent_path() / "logs", std::nullopt}};
   }
   void seed(const storage::MetadataCatalog& catalog) const {
     const auto encoded = codec::encode_index(catalog);
     ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
-    ASSERT_TRUE(fs::create_directories(file.parent_path()) ||
-                fs::is_directory(file.parent_path()));
+    ASSERT_TRUE(fs::create_directories(file.parent_path()) || fs::is_directory(file.parent_path()));
     ASSERT_NO_FATAL_FAILURE(write_bytes(file, std::get<std::string>(encoded)));
   }
   void expect_no_data_roots() const {
@@ -405,11 +427,15 @@ TEST_F(CatalogCoordinatorTest, PersistedLoadedCatalogSkipsShutdownIoAndQueriesMe
   EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Memo).directories.size(), 1U);
   EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Todo).directories.size(), 1U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-      owned_catalog.list_directory(core::DirectoryKind::Memo,
-          id("87183823-2574-4bfd-b411-99ed177d3e43"))).size(), 1U);
+                owned_catalog.list_directory(core::DirectoryKind::Memo,
+                                             id("87183823-2574-4bfd-b411-99ed177d3e43")))
+                .size(),
+            1U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-      owned_catalog.list_directory(core::DirectoryKind::Todo,
-          id("97183823-2574-4bfd-b411-99ed177d3e43"))).size(), 1U);
+                owned_catalog.list_directory(core::DirectoryKind::Todo,
+                                             id("97183823-2574-4bfd-b411-99ed177d3e43")))
+                .size(),
+            1U);
   const auto encoded = codec::encode_index(owned_catalog);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
   EXPECT_EQ(std::get<std::string>(encoded), read_bytes(file));
@@ -512,9 +538,12 @@ TEST_F(CatalogCoordinatorTest, StartupCacheErrorsReportFallbackReasonsAndCannotR
   msgpack::sbuffer packed;
   msgpack::packer<msgpack::sbuffer> packer{packed};
   packer.pack_map(3);
-  packer.pack(std::string{"directories"}); packer.pack_array(0);
-  packer.pack(std::string{"entries"}); packer.pack_array(0);
-  packer.pack(std::string{"schema_version"}); packer.pack_uint64(2);
+  packer.pack(std::string{"directories"});
+  packer.pack_array(0);
+  packer.pack(std::string{"entries"});
+  packer.pack_array(0);
+  packer.pack(std::string{"schema_version"});
+  packer.pack_uint64(2);
   ASSERT_NO_FATAL_FAILURE(write_bytes(file, {packed.data(), packed.size()}));
   check(storage::CoordinatorErrorCode::UnsupportedVersion);
   expect_no_data_roots();
@@ -544,11 +573,11 @@ TEST_F(CatalogCoordinatorTest, EncodingFailurePreservesExistingCacheAndUnpersist
   const auto original = read_bytes(file);
   storage::CatalogCoordinator coordinator{paths(), owned_catalog};
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
-  auto log = std::get<storage::LogMetadata>(*owned_catalog.find_record(
-      id("17183823-2574-4bfd-b411-99ed177d3e43")));
+  auto log = std::get<storage::LogMetadata>(
+      *owned_catalog.find_record(id("17183823-2574-4bfd-b411-99ed177d3e43")));
   log.metadata.log_date.date = std::chrono::year{-1} / 1 / 1;
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.update_record(
-      storage::RecordMetadata{log})));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      owned_catalog.update_record(storage::RecordMetadata{log})));
   const auto failed = coordinator.shutdown_save();
   expect_error(failed, storage::CoordinatorErrorCode::CodecError);
   ASSERT_TRUE(std::get<storage::CoordinatorError>(failed).codec_error.has_value());
@@ -556,8 +585,8 @@ TEST_F(CatalogCoordinatorTest, EncodingFailurePreservesExistingCacheAndUnpersist
   EXPECT_TRUE(owned_catalog.unpersisted());
   log.metadata.log_date.date = std::chrono::year{2027} / 1 / 15;
   log.metadata.title = "Recovered after failed encoding";
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.update_record(
-      storage::RecordMetadata{log})));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      owned_catalog.update_record(storage::RecordMetadata{log})));
   const auto retried = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(retried));
   EXPECT_EQ(std::get<storage::SaveOutcome>(retried), storage::SaveOutcome::Saved);
@@ -572,8 +601,8 @@ TEST_F(CatalogCoordinatorTest, PendingTemporaryBlocksReplacementWithoutNewTemp) 
   storage::CatalogCoordinator coordinator{paths(), owned_catalog};
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
   change_log_title(owned_catalog);
-  const auto pending = file.parent_path() /
-      ("." + file.filename().string() + ".tmp-" + core::Id::generate().to_string());
+  const auto pending = file.parent_path() / ("." + file.filename().string() + ".tmp-" +
+                                             core::Id::generate().to_string());
   ASSERT_NO_FATAL_FAILURE(write_bytes(pending, "unfinished cache"));
   const auto failed = coordinator.shutdown_save();
   expect_error(failed, storage::CoordinatorErrorCode::StorageFailure);
@@ -584,8 +613,7 @@ TEST_F(CatalogCoordinatorTest, PendingTemporaryBlocksReplacementWithoutNewTemp) 
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_EQ(read_bytes(file), original);
   EXPECT_EQ(read_bytes(pending), "unfinished cache");
-  EXPECT_EQ(std::distance(fs::directory_iterator(file.parent_path()),
-                          fs::directory_iterator{}), 2);
+  EXPECT_EQ(std::distance(fs::directory_iterator(file.parent_path()), fs::directory_iterator{}), 2);
   ASSERT_TRUE(fs::remove(pending));
   const auto retried = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(retried));
@@ -751,8 +779,7 @@ TEST_F(CatalogCoordinatorTest, RebuildReportsDiagnosticsWithoutIndexIo) {
   storage::CatalogCoordinator coordinator{paths(), owned_catalog};
   const auto rebuilt = coordinator.refresh_all();
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(rebuilt));
-  const auto& diagnostics =
-      std::get<std::vector<storage::ExcludedObject>>(rebuilt);
+  const auto& diagnostics = std::get<std::vector<storage::ExcludedObject>>(rebuilt);
   ASSERT_EQ(diagnostics.size(), 1U);
   EXPECT_FALSE(diagnostics.front().path.empty());
   EXPECT_EQ(owned_catalog.query().size(), 1U);
@@ -767,11 +794,10 @@ TEST_F(CatalogCoordinatorTest, RebuildBeforeStartupPreventsCacheOverwriteByStart
   const auto snapshot = authoritative_log();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(snapshot)));
   storage::CatalogCoordinator coordinator{paths(), owned_catalog};
-  ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(
-      coordinator.refresh_all()));
+  ASSERT_TRUE(
+      std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
   EXPECT_TRUE(owned_catalog.find_record(snapshot.id).has_value());
-  EXPECT_FALSE(owned_catalog.find_record(
-      id("17183823-2574-4bfd-b411-99ed177d3e43")).has_value());
+  EXPECT_FALSE(owned_catalog.find_record(id("17183823-2574-4bfd-b411-99ed177d3e43")).has_value());
   expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_TRUE(owned_catalog.unpersisted());
@@ -825,28 +851,29 @@ TEST_F(CatalogCoordinatorTest, StartupFallsBackForMissingCorruptAndUnsupportedIn
   msgpack::sbuffer packed;
   msgpack::packer<msgpack::sbuffer> packer{packed};
   packer.pack_map(3);
-  packer.pack(std::string{"directories"}); packer.pack_array(0);
-  packer.pack(std::string{"entries"}); packer.pack_array(0);
-  packer.pack(std::string{"schema_version"}); packer.pack_uint64(2);
+  packer.pack(std::string{"directories"});
+  packer.pack_array(0);
+  packer.pack(std::string{"entries"});
+  packer.pack_array(0);
+  packer.pack(std::string{"schema_version"});
+  packer.pack_uint64(2);
   ASSERT_NO_FATAL_FAILURE(write_bytes(file, {packed.data(), packed.size()}));
   verify_fallback(storage::CoordinatorErrorCode::UnsupportedVersion);
 }
 
 TEST_F(CatalogCoordinatorTest, StartupFallbackRestoresMixedMetadataAndDirectoryMembership) {
   storage::NormalRepository repository{normal};
-  const core::Directory::Snapshot memo_directory{
-      id("d7183823-2574-4bfd-b411-99ed177d3e43"), core::DirectoryKind::Memo,
-      "研究 / Café"};
-  const core::Directory::Snapshot todo_directory{
-      id("e7183823-2574-4bfd-b411-99ed177d3e43"), core::DirectoryKind::Todo,
-      "旅行"};
+  const core::Directory::Snapshot memo_directory{id("d7183823-2574-4bfd-b411-99ed177d3e43"),
+                                                 core::DirectoryKind::Memo, "研究 / Café"};
+  const core::Directory::Snapshot todo_directory{id("e7183823-2574-4bfd-b411-99ed177d3e43"),
+                                                 core::DirectoryKind::Todo, "旅行"};
   const auto log = authoritative_log();
   const auto memo = authoritative_memo(memo_directory.id);
   const auto todo = authoritative_todo(todo_directory.id);
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_directory(
-      core::DirectoryKind::Memo, memo_directory)));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_directory(
-      core::DirectoryKind::Todo, todo_directory)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      repository.create_directory(core::DirectoryKind::Memo, memo_directory)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      repository.create_directory(core::DirectoryKind::Todo, todo_directory)));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(log)));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(memo)));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_todo(todo)));
@@ -860,17 +887,15 @@ TEST_F(CatalogCoordinatorTest, StartupFallbackRestoresMixedMetadataAndDirectoryM
   ASSERT_TRUE(std::holds_alternative<fs::path>(todo_path));
   storage::MetadataCatalog expected;
   ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_directory(
-      storage::metadata_from(memo_directory,
-                             fs::path{"memos"} / memo_directory.id.to_string()))));
+      storage::metadata_from(memo_directory, fs::path{"memos"} / memo_directory.id.to_string()))));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_directory(
-      storage::metadata_from(todo_directory,
-                             fs::path{"todos"} / todo_directory.id.to_string()))));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
-      storage::metadata_from(log, std::get<fs::path>(log_path)))));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
-      storage::metadata_from(memo, renamed))));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
-      storage::metadata_from(todo, std::get<fs::path>(todo_path)))));
+      storage::metadata_from(todo_directory, fs::path{"todos"} / todo_directory.id.to_string()))));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      expected.insert_record(storage::metadata_from(log, std::get<fs::path>(log_path)))));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      expected.insert_record(storage::metadata_from(memo, renamed))));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      expected.insert_record(storage::metadata_from(todo, std::get<fs::path>(todo_path)))));
   const auto expected_bytes = codec::encode_index(expected);
   ASSERT_TRUE(std::holds_alternative<std::string>(expected_bytes));
 
@@ -889,11 +914,13 @@ TEST_F(CatalogCoordinatorTest, StartupFallbackRestoresMixedMetadataAndDirectoryM
   EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Memo).records.size(), 0U);
   EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Todo).records.size(), 0U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-      owned_catalog.list_directory(core::DirectoryKind::Memo,
-                                           memo_directory.id)).size(), 1U);
+                owned_catalog.list_directory(core::DirectoryKind::Memo, memo_directory.id))
+                .size(),
+            1U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-      owned_catalog.list_directory(core::DirectoryKind::Todo,
-                                           todo_directory.id)).size(), 1U);
+                owned_catalog.list_directory(core::DirectoryKind::Todo, todo_directory.id))
+                .size(),
+            1U);
   EXPECT_FALSE(fs::exists(state / "index"));
 }
 
@@ -1001,8 +1028,7 @@ TEST_F(CatalogCoordinatorTest, ExplicitRefreshReplacesCatalogWithoutIndexIo) {
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_TRUE(owned_catalog.find_record(snapshot.id).has_value());
-  EXPECT_FALSE(owned_catalog.find_record(
-      id("17183823-2574-4bfd-b411-99ed177d3e43")).has_value());
+  EXPECT_FALSE(owned_catalog.find_record(id("17183823-2574-4bfd-b411-99ed177d3e43")).has_value());
   EXPECT_EQ(read_bytes(file), cached_bytes);
   const auto saved = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(saved));
@@ -1021,7 +1047,10 @@ TEST_F(CatalogCoordinatorTest, DirectoryLockFailurePreservesExistingCacheAndUnpe
   if (descriptor < 0) GTEST_SKIP() << "Cannot open cache directory for locking";
   struct LockGuard {
     int fd;
-    ~LockGuard() { (void)flock(fd, LOCK_UN); (void)close(fd); }
+    ~LockGuard() {
+      (void)flock(fd, LOCK_UN);
+      (void)close(fd);
+    }
   } guard{descriptor};
   if (flock(descriptor, LOCK_EX | LOCK_NB) != 0)
     GTEST_SKIP() << "Cannot acquire cache directory lock";
@@ -1037,7 +1066,6 @@ TEST_F(CatalogCoordinatorTest, DirectoryLockFailurePreservesExistingCacheAndUnpe
 }
 #endif
 
-
 // Session tests simulate abandoned owners rather than delivering real power
 // loss. They verify persisted ordering and failures, not disk-controller behavior.
 TEST_F(CatalogCoordinatorTest, CleanStartupEstablishesMarkerAndReadOnlyFinishDoesNotRewriteIndex) {
@@ -1045,7 +1073,7 @@ TEST_F(CatalogCoordinatorTest, CleanStartupEstablishesMarkerAndReadOnlyFinishDoe
   const auto original = read_bytes(file);
   const auto modified = fs::last_write_time(file);
   storage::CatalogCoordinator coordinator{paths(), owned_catalog};
-  EXPECT_FALSE(fs::exists(state));  // Construction is side-effect free.
+  EXPECT_FALSE(fs::exists(state)); // Construction is side-effect free.
   const auto loaded = coordinator.startup_load();
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(loaded));
   EXPECT_FALSE(std::get<storage::InitializationOutcome>(loaded).previous_session_incomplete);
@@ -1076,7 +1104,7 @@ TEST_F(CatalogCoordinatorTest, PreviousMarkerOverridesValidStaleIndexAndIsNotRep
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(loaded));
   const auto& outcome = std::get<storage::InitializationOutcome>(loaded);
   EXPECT_TRUE(outcome.previous_session_incomplete);
-  EXPECT_FALSE(outcome.index_error);  // Cache was bypassed, not read and rejected.
+  EXPECT_FALSE(outcome.index_error); // Cache was bypassed, not read and rejected.
   EXPECT_EQ(owned_catalog.query().size(), 1U);
   EXPECT_TRUE(owned_catalog.find_record(log.id));
   EXPECT_TRUE(owned_catalog.unpersisted());
@@ -1087,7 +1115,8 @@ TEST_F(CatalogCoordinatorTest, PreviousMarkerOverridesValidStaleIndexAndIsNotRep
   EXPECT_FALSE(fs::exists(state / "session.marker"));
 }
 
-TEST_F(CatalogCoordinatorTest, PreviousMarkerWithoutCacheRebuildsEmptyStorageWithoutSavingImmediately) {
+TEST_F(CatalogCoordinatorTest,
+       PreviousMarkerWithoutCacheRebuildsEmptyStorageWithoutSavingImmediately) {
   fs::create_directories(state);
   write_bytes(state / "session.marker", "");
   storage::CatalogCoordinator coordinator{paths(), owned_catalog};
@@ -1129,7 +1158,8 @@ TEST_F(CatalogCoordinatorTest, UnsafeMarkerAndStateObjectsNeverBecomeReadyEvenTh
   EXPECT_NE(coordinator.status(), storage::CatalogStatus::Ready);
   expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);
   fs::remove(state / "session.marker");
-  ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
+  ASSERT_TRUE(
+      std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_TRUE(fs::is_regular_file(state / "session.marker"));
   EXPECT_TRUE(owned_catalog.unpersisted());
@@ -1138,8 +1168,10 @@ TEST_F(CatalogCoordinatorTest, UnsafeMarkerAndStateObjectsNeverBecomeReadyEvenTh
 TEST_F(CatalogCoordinatorTest, MarkerCannotLiveInsideIndependentlyClearableCacheOrRuntime) {
   for (bool runtime : {false, true}) {
     auto invalid = paths();
-    if (runtime) invalid.application.runtime = state.parent_path();
-    else invalid.application.state = cache / "state";
+    if (runtime)
+      invalid.application.runtime = state.parent_path();
+    else
+      invalid.application.state = cache / "state";
     storage::MetadataCatalog catalog;
     storage::CatalogCoordinator coordinator{invalid, catalog};
     expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::InvalidPath);
@@ -1155,10 +1187,10 @@ TEST_F(CatalogCoordinatorTest, AbandonedSessionForcesRebuildAfterAuthoritativeMu
     storage::CatalogCoordinator abandoned{paths(), owned_catalog};
     ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(abandoned.startup_load()));
     storage::NormalRepository repository{normal};
-    ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(
-        log, abandoned.log_creation_callback(), abandoned.creation_check())));
+    ASSERT_TRUE(std::holds_alternative<std::monostate>(
+        repository.create_log(log, abandoned.log_creation_callback(), abandoned.creation_check())));
     EXPECT_TRUE(owned_catalog.unpersisted());
-  }  // No destructor persistence or Marker cleanup.
+  } // No destructor persistence or Marker cleanup.
   EXPECT_TRUE(fs::exists(state / "session.marker"));
   EXPECT_EQ(read_bytes(file), stale);
   storage::MetadataCatalog restored;
@@ -1222,13 +1254,15 @@ TEST_F(CatalogCoordinatorTest, SaveFailureAndInconsistencyCannotClearMarker) {
   EXPECT_TRUE(fs::exists(state / "session.marker"));
   const storage::RepositoryMutationError failure{
       storage::MutationFailureStage::AuthoritativeStateMayHaveChanged,
-      folio::io::FileError{folio::io::FileErrorCode::IoError, normal, "original failure", {}, true}};
+      folio::io::FileError{
+          folio::io::FileErrorCode::IoError, normal, "original failure", {}, true}};
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       coordinator.log_update_callback()(std::cref(failure))));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
   expect_error(coordinator.finish_session(), storage::CoordinatorErrorCode::Unavailable);
   EXPECT_TRUE(fs::exists(state / "session.marker"));
-  ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
+  ASSERT_TRUE(
+      std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
 }
 
@@ -1248,7 +1282,10 @@ struct LifecycleSyncGuard {
       : prior(storage::internal::set_lifecycle_sync_for_testing(hook)) {}
   ~LifecycleSyncGuard() { storage::internal::set_lifecycle_sync_for_testing(prior); }
 };
-bool fail_lifecycle_sync(int) { errno = EIO; return false; }
+bool fail_lifecycle_sync(int) {
+  errno = EIO;
+  return false;
+}
 
 TEST_F(CatalogCoordinatorTest, FailedMarkerDurabilityCannotPublishDecodedOrRebuiltCatalog) {
   seed(make_catalog());
@@ -1265,7 +1302,8 @@ TEST_F(CatalogCoordinatorTest, FailedMarkerDurabilityCannotPublishDecodedOrRebui
     expect_error(coordinator.refresh_all(), storage::CoordinatorErrorCode::StorageFailure);
     EXPECT_TRUE(owned_catalog.query().empty());
   }
-  ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
+  ASSERT_TRUE(
+      std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
   EXPECT_TRUE(fs::is_regular_file(state / "session.marker"));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
 }
@@ -1300,12 +1338,12 @@ TEST_F(CatalogCoordinatorTest, RuntimeCrudAndRefreshDoNotRewriteMarkerOrIndex) {
         authoritative_log(), coordinator.log_creation_callback(), coordinator.creation_check())));
     EXPECT_TRUE(owned_catalog.find_record(authoritative_log().id));
     EXPECT_EQ(owned_catalog.query().size(), 6U);
-    ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
+    ASSERT_TRUE(
+        std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
   }
   EXPECT_EQ(fs::last_write_time(state / "session.marker"), marker_time);
   EXPECT_EQ(read_bytes(file), cached);
 }
-
 
 TEST_F(CatalogCoordinatorTest, FailureBeforeMarkerPublicationLeavesValidCacheUsableNextSession) {
   seed(make_catalog());
@@ -1388,23 +1426,32 @@ TEST_F(CatalogCoordinatorTest, DurableFilesystemHelpersRejectUnsafeTargetsAndAll
       folio::io::create_directories_durable(state / "nested")));
   const auto target = state / "nested/file";
   ASSERT_TRUE(std::holds_alternative<std::monostate>(folio::io::create_empty_file_durable(target)));
-  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::create_empty_file_durable(target)));
+  EXPECT_TRUE(
+      std::holds_alternative<folio::io::FileError>(folio::io::create_empty_file_durable(target)));
   EXPECT_TRUE(read_bytes(target).empty());
   ASSERT_TRUE(std::holds_alternative<std::monostate>(folio::io::sync_regular_file(target)));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(folio::io::remove_file_durable(target)));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(folio::io::remove_file_durable(target)));
-  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::sync_regular_file(state / "nested")));
-  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::remove_file_durable(state / "nested")));
+  EXPECT_TRUE(
+      std::holds_alternative<folio::io::FileError>(folio::io::sync_regular_file(state / "nested")));
+  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(
+      folio::io::remove_file_durable(state / "nested")));
   fs::create_directory_symlink(state / "nested", state / "alias");
-  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::create_directories_durable(state / "alias/child")));
+  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(
+      folio::io::create_directories_durable(state / "alias/child")));
   EXPECT_FALSE(fs::exists(state / "nested/child"));
   write_bytes(target, "keep");
   fs::create_symlink(target, state / "link");
-  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::sync_regular_file(state / "link")));
-  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::remove_file_durable(state / "link")));
-  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::remove_file_durable(state / "alias/file")));
-  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::create_directories_durable("relative")));
-  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(folio::io::remove_file_durable("relative")));
+  EXPECT_TRUE(
+      std::holds_alternative<folio::io::FileError>(folio::io::sync_regular_file(state / "link")));
+  EXPECT_TRUE(
+      std::holds_alternative<folio::io::FileError>(folio::io::remove_file_durable(state / "link")));
+  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(
+      folio::io::remove_file_durable(state / "alias/file")));
+  EXPECT_TRUE(std::holds_alternative<folio::io::FileError>(
+      folio::io::create_directories_durable("relative")));
+  EXPECT_TRUE(
+      std::holds_alternative<folio::io::FileError>(folio::io::remove_file_durable("relative")));
   EXPECT_EQ(read_bytes(target), "keep");
 }
 
@@ -1414,9 +1461,11 @@ TEST_F(CatalogCoordinatorTest, ExistingDirectoryLinksAreSyncedOnRetry) {
     LifecycleSyncGuard fail{fail_lifecycle_sync};
     const auto failed = folio::io::create_directories_durable(state / "nested");
     ASSERT_TRUE(std::holds_alternative<folio::io::FileError>(failed));
-    EXPECT_EQ(std::get<folio::io::FileError>(failed).code, folio::io::FileErrorCode::DurabilityFailure);
+    EXPECT_EQ(std::get<folio::io::FileError>(failed).code,
+              folio::io::FileErrorCode::DurabilityFailure);
   }
-  EXPECT_TRUE(std::holds_alternative<std::monostate>(folio::io::create_directories_durable(state / "nested")));
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(
+      folio::io::create_directories_durable(state / "nested")));
 }
 
 fs::path cleanup_marker;
@@ -1455,4 +1504,4 @@ TEST_F(CatalogCoordinatorTest, MarkerRemovalSyncFailurePreservesOriginalErrorAnd
 }
 #endif
 
-}  // namespace
+} // namespace

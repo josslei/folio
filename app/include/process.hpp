@@ -19,14 +19,13 @@
 
 namespace folio::application::internal {
 
-[[nodiscard]] core::Result<std::filesystem::path, ProcessError>
-current_executable();
+[[nodiscard]] core::Result<std::filesystem::path, ProcessError> current_executable();
 
 // Absolute executable, native Unicode arguments, no shell. Detached from terminal
 // input and unrelated descriptors/handles. May outlive the caller; POSIX children
 // are reparented for reaping, Windows process handles are closed after creation.
-[[nodiscard]] core::Result<LaunchedProcess, ProcessError> launch_process(
-    const std::filesystem::path& executable,
-    const std::vector<std::filesystem::path>& arguments);
+[[nodiscard]] core::Result<LaunchedProcess, ProcessError>
+launch_process(const std::filesystem::path& executable,
+               const std::vector<std::filesystem::path>& arguments);
 
-}  // namespace folio::application::internal
+} // namespace folio::application::internal

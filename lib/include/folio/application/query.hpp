@@ -21,18 +21,28 @@ struct BrowseResult {
 
 struct RootScope {};
 struct AllScope {};
-struct DirectoryScope { core::Id id; };
+struct DirectoryScope {
+  core::Id id;
+};
 using RecordScope = std::variant<RootScope, DirectoryScope, AllScope>;
 
-template<class T>
-struct InclusiveRange {
+template <class T> struct InclusiveRange {
   std::optional<T> from;
   std::optional<T> through;
 };
 
 enum class DueKind { Date, Datetime };
 enum class MetadataSort {
-  Id, Type, Created, Modified, Title, LogDate, DueDate, Status, Priority, Privacy
+  Id,
+  Type,
+  Created,
+  Modified,
+  Title,
+  LogDate,
+  DueDate,
+  Status,
+  Priority,
+  Privacy
 };
 
 struct RecordOrder {
@@ -63,4 +73,4 @@ struct RecordQuery {
   RecordOrder order;
 };
 
-}  // namespace folio::application
+} // namespace folio::application

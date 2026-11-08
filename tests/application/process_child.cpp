@@ -7,9 +7,9 @@
 #include <chrono>
 #include <fstream>
 #include <thread>
-#ifndef _WIN32  // POSIX (Linux and macOS)
+#ifndef _WIN32 // POSIX (Linux and macOS)
 #include <unistd.h>
-#else  // Windows
+#else // Windows
 #define NOMINMAX
 #include <windows.h>
 #endif
@@ -21,32 +21,39 @@ namespace storage = folio::core::storage;
 void report(const fs::path& target, const std::string& value) {
   auto temporary = target;
   temporary += ".writing";
-  { std::ofstream output(temporary); output << value; }
+  {
+    std::ofstream output(temporary);
+    output << value;
+  }
   fs::rename(temporary, target);
 }
 
-#ifndef _WIN32  // POSIX (Linux and macOS)
+#ifndef _WIN32 // POSIX (Linux and macOS)
 int main(int argc, char** argv) {
-#else  // Windows
+#else // Windows
 int wmain(int argc, wchar_t** argv) {
 #endif
   std::vector<fs::path> arguments;
-  for (int i = 1; i < argc; ++i) arguments.emplace_back(argv[i]);
+  for (int i = 1; i < argc; ++i)
+    arguments.emplace_back(argv[i]);
   if (arguments.size() == 4 && arguments[0] == "--test-launch-child") {
     auto executable = app::current_executable();
     if (std::holds_alternative<folio::application::ProcessError>(executable)) return 1;
     auto result = app::launch_process(std::get<fs::path>(executable),
-                                    {arguments[1], arguments[2], arguments[3]});
+                                      {arguments[1], arguments[2], arguments[3]});
     if (std::holds_alternative<folio::application::ProcessError>(result)) return 1;
-    report(arguments[2] / "launcher-result", std::to_string(std::get<folio::application::LaunchedProcess>(result).id));
+    report(arguments[2] / "launcher-result",
+           std::to_string(std::get<folio::application::LaunchedProcess>(result).id));
     return 0;
   }
   if (arguments.size() != 3) return 2;
   const auto& base = arguments[0];
   const auto& control = arguments[1];
   const auto& normal = arguments[2];
-  storage::StoragePaths paths{normal, base / "vault",
-      {base / "config", base / "data", base / "state", base / "cache", base / "logs", std::nullopt}};
+  storage::StoragePaths paths{normal,
+                              base / "vault",
+                              {base / "config", base / "data", base / "state", base / "cache",
+                               base / "logs", std::nullopt}};
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{15};
   report(control / "started", "started");
   while (!fs::exists(control / "go")) {
@@ -56,7 +63,9 @@ int wmain(int argc, wchar_t** argv) {
   {
     auto owner = app::RepositoryOwnership::acquire(paths);
     if (auto* error = std::get_if<folio::application::ProcessError>(&owner)) {
-      report(control / "result", error->code == folio::application::ProcessErrorCode::AlreadyOwned ? "busy" : "error:" + error->message);
+      report(control / "result", error->code == folio::application::ProcessErrorCode::AlreadyOwned
+                                     ? "busy"
+                                     : "error:" + error->message);
       return error->code == folio::application::ProcessErrorCode::AlreadyOwned ? 4 : 1;
     }
     report(control / "result", "owned");

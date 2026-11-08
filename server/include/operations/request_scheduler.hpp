@@ -14,7 +14,7 @@ namespace folio::application::internal {
 // Session-only scheduling, not Recovery or a persistent receipt. The executor
 // owns all operation execution; connection workers only admit and deliver.
 class RequestScheduler {
- public:
+public:
   using Result = core::Result<Message, IpcError>;
   using Action = std::function<Result()>;
   enum class ExecutionStage { Queued, Executing, Finished };
@@ -42,8 +42,11 @@ class RequestScheduler {
   // from action failures and must not silently certify completed draining.
   void drain();
 
- private:
-  struct Work { Action action; std::shared_ptr<Ticket> ticket; };
+private:
+  struct Work {
+    Action action;
+    std::shared_ptr<Ticket> ticket;
+  };
   void execute();
   const std::size_t capacity_;
   std::mutex mutex_;
@@ -54,4 +57,4 @@ class RequestScheduler {
   std::thread executor_;
 };
 
-}  // namespace folio::application::internal
+} // namespace folio::application::internal

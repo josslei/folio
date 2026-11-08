@@ -10,9 +10,9 @@
 
 namespace {
 
-using folio::core::Id;
 using folio::core::Directory;
 using folio::core::DirectoryKind;
+using folio::core::Id;
 
 TEST(DirectoryTest, GeneratesDistinctIdsForNewDirectories) {
   const Directory first(DirectoryKind::Memo, "Notes");
@@ -90,10 +90,9 @@ TEST(CoreIdTest, RejectsMalformedAndNonV4Identifiers) {
 
 TEST(CoreTypesTest, PreservesTimestampAndDateContextAndUtf8Tag) {
   const auto instant = folio::core::Timestamp{std::chrono::seconds{123456789}};
-  const folio::core::TimestampContext context{instant, "Asia/Shanghai",
-                                               std::string("Shanghai")};
-  const folio::core::DateContext date_context{std::chrono::year{2026} / 10 / 24,
-                                               "Asia/Shanghai", std::string("Shanghai")};
+  const folio::core::TimestampContext context{instant, "Asia/Shanghai", std::string("Shanghai")};
+  const folio::core::DateContext date_context{std::chrono::year{2026} / 10 / 24, "Asia/Shanghai",
+                                              std::string("Shanghai")};
   const folio::core::Tag tag{std::string("\xE7\xAC\x94\xE8\xAE\xB0")};
 
   EXPECT_EQ(context.timestamp, instant);
@@ -111,4 +110,4 @@ TEST(CoreTypesTest, PreservesTimestampAndDateContextAndUtf8Tag) {
   EXPECT_NE(folio::core::Privacy::Protected, folio::core::Privacy::Hidden);
 }
 
-}  // namespace
+} // namespace

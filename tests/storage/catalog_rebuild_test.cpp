@@ -22,19 +22,18 @@ namespace core = folio::core;
 namespace storage = folio::core::storage;
 
 class CatalogRebuildTest : public testing::Test {
- protected:
+protected:
   CatalogRebuildTest() {
     bool reserved = false;
     for (unsigned attempt = 0; attempt < 100; ++attempt) {
       sandbox = fs::temp_directory_path() /
-          ("folio-catalog-rebuild-test-" + core::Id::generate().to_string());
+                ("folio-catalog-rebuild-test-" + core::Id::generate().to_string());
       if (fs::create_directory(sandbox)) {
         reserved = true;
         break;
       }
     }
-    if (!reserved)
-      throw std::runtime_error("Could not reserve test directory");
+    if (!reserved) throw std::runtime_error("Could not reserve test directory");
     sandbox = fs::canonical(sandbox);
     root = sandbox / "normal";
   }
@@ -56,29 +55,44 @@ class CatalogRebuildTest : public testing::Test {
             "Asia/Shanghai", "上海"};
   }
   static core::Log::Snapshot log() {
-    return {id("17183823-2574-4bfd-b411-99ed177d3e43"), when(), when(),
-            "旅程 Log", "private body", {{std::chrono::year{2027} / 2 / 3}, "UTC", "東京"},
-            {{"daily"}, {"旅行"}}, core::Privacy::Normal};
+    return {id("17183823-2574-4bfd-b411-99ed177d3e43"),
+            when(),
+            when(),
+            "旅程 Log",
+            "private body",
+            {{std::chrono::year{2027} / 2 / 3}, "UTC", "東京"},
+            {{"daily"}, {"旅行"}},
+            core::Privacy::Normal};
   }
   static core::Memo::Snapshot memo(std::optional<core::Id> directory = std::nullopt) {
-    return {id("27183823-2574-4bfd-b411-99ed177d3e43"), when(), when(),
-            "Café Memo", "private body", {{"research"}}, directory, core::Privacy::Normal};
+    return {id("27183823-2574-4bfd-b411-99ed177d3e43"),
+            when(),
+            when(),
+            "Café Memo",
+            "private body",
+            {{"research"}},
+            directory,
+            core::Privacy::Normal};
   }
   static core::Todo::Snapshot todo(std::optional<core::Id> directory = std::nullopt) {
-    return {id("37183823-2574-4bfd-b411-99ed177d3e43"), when(), when(),
-            "計画 Todo", "private notes", core::TodoStatus::Pending,
+    return {id("37183823-2574-4bfd-b411-99ed177d3e43"),
+            when(),
+            when(),
+            "計画 Todo",
+            "private notes",
+            core::TodoStatus::Pending,
             core::TodoPriority::High,
             core::DueDate{core::TimestampContext{core::Timestamp{std::chrono::seconds{1900000000}},
                                                  "UTC", std::nullopt}},
-            directory, core::Privacy::Normal, {{"Book train", false}}};
+            directory,
+            core::Privacy::Normal,
+            {{"Book train", false}}};
   }
   static core::Directory::Snapshot memo_directory() {
-    return {id("47183823-2574-4bfd-b411-99ed177d3e43"), core::DirectoryKind::Memo,
-            "研究 / Café"};
+    return {id("47183823-2574-4bfd-b411-99ed177d3e43"), core::DirectoryKind::Memo, "研究 / Café"};
   }
   static core::Directory::Snapshot todo_directory() {
-    return {id("57183823-2574-4bfd-b411-99ed177d3e43"), core::DirectoryKind::Todo,
-            "任务"};
+    return {id("57183823-2574-4bfd-b411-99ed177d3e43"), core::DirectoryKind::Todo, "任务"};
   }
   static std::string bytes(const fs::path& file) {
     std::ifstream stream(file, std::ios::binary);
@@ -103,11 +117,13 @@ class CatalogRebuildTest : public testing::Test {
   static void error_code(const storage::StorageResult<storage::NormalRepositoryScanResult>& result,
                          auto code) {
     ASSERT_FALSE(std::holds_alternative<storage::NormalRepositoryScanResult>(result));
-    std::visit([&](const auto& value) {
-      using Value = std::decay_t<decltype(value)>;
-      if constexpr (!std::is_same_v<Value, storage::NormalRepositoryScanResult>)
-        EXPECT_EQ(folio::testing::diagnostic(value).code, code);
-    }, result);
+    std::visit(
+        [&](const auto& value) {
+          using Value = std::decay_t<decltype(value)>;
+          if constexpr (!std::is_same_v<Value, storage::NormalRepositoryScanResult>)
+            EXPECT_EQ(folio::testing::diagnostic(value).code, code);
+        },
+        result);
   }
 };
 
@@ -171,10 +187,8 @@ TEST_F(CatalogRebuildTest, EnumeratesCompleteMetadataAndActualRenamedLocators) {
   const auto before_log = bytes(root / renamed_log);
   const auto before_memo = bytes(root / renamed_memo);
   const auto before_todo = bytes(root / renamed_todo);
-  const auto before_memo_directory = bytes(root / "memos" / md.id.to_string() /
-                                           ".folio-dir.toml");
-  const auto before_todo_directory = bytes(root / "todos" / td.id.to_string() /
-                                           ".folio-dir.toml");
+  const auto before_memo_directory = bytes(root / "memos" / md.id.to_string() / ".folio-dir.toml");
+  const auto before_todo_directory = bytes(root / "todos" / td.id.to_string() / ".folio-dir.toml");
 
   const auto result = repository.scan();
   ASSERT_TRUE(std::holds_alternative<storage::NormalRepositoryScanResult>(result));
@@ -185,23 +199,23 @@ TEST_F(CatalogRebuildTest, EnumeratesCompleteMetadataAndActualRenamedLocators) {
   ASSERT_EQ(inventory.directories.size(), 2U);
   EXPECT_TRUE(inventory.diagnostics.empty());
   storage::MetadataCatalog catalog;
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.rebuild(
-      {inventory.logs.begin(), inventory.logs.end()},
-      {inventory.memos.begin(), inventory.memos.end()},
-      {inventory.todos.begin(), inventory.todos.end()},
-      {inventory.directories.begin(), inventory.directories.end()})));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      catalog.rebuild({inventory.logs.begin(), inventory.logs.end()},
+                      {inventory.memos.begin(), inventory.memos.end()},
+                      {inventory.todos.begin(), inventory.todos.end()},
+                      {inventory.directories.begin(), inventory.directories.end()})));
   EXPECT_TRUE(catalog.unpersisted());
   storage::MetadataCatalog expected;
   ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_directory(
       storage::metadata_from(md, fs::path{"memos"} / md.id.to_string()))));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_directory(
       storage::metadata_from(td, fs::path{"todos"} / td.id.to_string()))));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
-      storage::metadata_from(l, renamed_log))));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
-      storage::metadata_from(m, renamed_memo))));
-  ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
-      storage::metadata_from(t, renamed_todo))));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      expected.insert_record(storage::metadata_from(l, renamed_log))));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      expected.insert_record(storage::metadata_from(m, renamed_memo))));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      expected.insert_record(storage::metadata_from(t, renamed_todo))));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
       storage::metadata_from(root_memo, std::get<fs::path>(root_memo_path)))));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(expected.insert_record(
@@ -210,8 +224,7 @@ TEST_F(CatalogRebuildTest, EnumeratesCompleteMetadataAndActualRenamedLocators) {
   const auto encoded_expected = storage::index_codec::encode_index(expected);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded_actual));
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded_expected));
-  EXPECT_EQ(std::get<std::string>(encoded_actual),
-            std::get<std::string>(encoded_expected));
+  EXPECT_EQ(std::get<std::string>(encoded_actual), std::get<std::string>(encoded_expected));
   const auto loaded_log = catalog.find_record(l.id);
   ASSERT_TRUE(loaded_log.has_value());
   const auto& log_metadata = std::get<storage::LogMetadata>(*loaded_log);
@@ -243,16 +256,18 @@ TEST_F(CatalogRebuildTest, EnumeratesCompleteMetadataAndActualRenamedLocators) {
   EXPECT_EQ(catalog.list_root(storage::RecordType::Memo).records.size(), 1U);
   EXPECT_EQ(catalog.list_root(storage::RecordType::Todo).records.size(), 1U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-      catalog.list_directory(core::DirectoryKind::Memo, md.id)).size(), 1U);
+                catalog.list_directory(core::DirectoryKind::Memo, md.id))
+                .size(),
+            1U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-      catalog.list_directory(core::DirectoryKind::Todo, td.id)).size(), 1U);
+                catalog.list_directory(core::DirectoryKind::Todo, td.id))
+                .size(),
+            1U);
   EXPECT_EQ(bytes(root / renamed_log), before_log);
   EXPECT_EQ(bytes(root / renamed_memo), before_memo);
   EXPECT_EQ(bytes(root / renamed_todo), before_todo);
-  EXPECT_EQ(bytes(root / "memos" / md.id.to_string() / ".folio-dir.toml"),
-            before_memo_directory);
-  EXPECT_EQ(bytes(root / "todos" / td.id.to_string() / ".folio-dir.toml"),
-            before_todo_directory);
+  EXPECT_EQ(bytes(root / "memos" / md.id.to_string() / ".folio-dir.toml"), before_memo_directory);
+  EXPECT_EQ(bytes(root / "todos" / td.id.to_string() / ".folio-dir.toml"), before_todo_directory);
   EXPECT_FALSE(fs::exists(sandbox / "state"));
 }
 
@@ -263,8 +278,8 @@ TEST_F(CatalogRebuildTest, AtomicTemporariesAreIgnoredAndUnrelatedObjectsDiagnos
   const auto locator = repository.locate_record(storage::RecordType::Log, l.id);
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto formal = root / std::get<fs::path>(locator);
-  const auto pending = formal.parent_path() /
-      ("." + formal.filename().string() + ".tmp-" + core::Id::generate().to_string());
+  const auto pending = formal.parent_path() / ("." + formal.filename().string() + ".tmp-" +
+                                               core::Id::generate().to_string());
   ASSERT_NO_FATAL_FAILURE(write(pending, bytes(formal)));
   ASSERT_NO_FATAL_FAILURE(write(root / "logs" / "unrelated.txt", "not an Entry"));
   ASSERT_TRUE(fs::create_directory(root / "logs" / "unrelated-folder"));
@@ -310,7 +325,8 @@ TEST_F(CatalogRebuildTest, MalformedFormalAndMissingDirectoryMetadataAreFatal) {
   ASSERT_TRUE(fs::remove(metadata));
   const auto failure = repository.scan();
   ASSERT_TRUE(std::holds_alternative<folio::io::FileError>(failure));
-  EXPECT_EQ(std::get<folio::io::FileError>(failure).system_error, std::errc::no_such_file_or_directory);
+  EXPECT_EQ(std::get<folio::io::FileError>(failure).system_error,
+            std::errc::no_such_file_or_directory);
   EXPECT_FALSE(fs::exists(metadata));
 }
 
@@ -339,8 +355,8 @@ TEST_F(CatalogRebuildTest, DirectorySchemaKindAndIdentityErrorsAreFatal) {
   const auto old_todo_folder = root / "todos" / td.id.to_string();
   const auto duplicate_folder = root / "todos" / md.id.to_string();
   fs::rename(old_todo_folder, duplicate_folder);
-  ASSERT_NO_FATAL_FAILURE(replace_in_file(duplicate_folder / ".folio-dir.toml",
-                                          td.id.to_string(), md.id.to_string()));
+  ASSERT_NO_FATAL_FAILURE(
+      replace_in_file(duplicate_folder / ".folio-dir.toml", td.id.to_string(), md.id.to_string()));
   error_code(repository.scan(), storage::StorageErrorCode::DuplicateId);
 }
 
@@ -428,10 +444,10 @@ TEST_F(CatalogRebuildTest, RebuildFailurePreservesOldCatalogAndUnpersistedState)
   ASSERT_FALSE(catalog.unpersisted());
   auto duplicate_memo = memo();
   duplicate_memo.id = log().id;
-  const auto duplicate = catalog.rebuild(
-      {std::get<storage::LogMetadata>(old)},
-      {std::get<storage::MemoMetadata>(storage::metadata_from(
-          duplicate_memo, fs::path{"memos/duplicate.md"}))}, {}, {});
+  const auto duplicate = catalog.rebuild({std::get<storage::LogMetadata>(old)},
+                                         {std::get<storage::MemoMetadata>(storage::metadata_from(
+                                             duplicate_memo, fs::path{"memos/duplicate.md"}))},
+                                         {}, {});
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(duplicate));
   EXPECT_EQ(std::get<storage::StorageError>(duplicate).code,
             storage::StorageErrorCode::DuplicateId);
@@ -444,9 +460,10 @@ TEST_F(CatalogRebuildTest, RebuildFailurePreservesOldCatalogAndUnpersistedState)
   EXPECT_TRUE(catalog.find_record(log().id).has_value());
   EXPECT_FALSE(catalog.find_record(memo().id).has_value());
   EXPECT_FALSE(catalog.unpersisted());
-  const auto cross_kind = catalog.rebuild(
-      {}, {}, {std::get<storage::TodoMetadata>(storage::metadata_from(todo(md.id), fs::path{"todos/incorrect.toml"}))},
-      {storage::metadata_from(md, fs::path{"memos/group"})});
+  const auto cross_kind = catalog.rebuild({}, {},
+                                          {std::get<storage::TodoMetadata>(storage::metadata_from(
+                                              todo(md.id), fs::path{"todos/incorrect.toml"}))},
+                                          {storage::metadata_from(md, fs::path{"memos/group"})});
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(cross_kind));
   EXPECT_TRUE(catalog.find_record(log().id).has_value());
   EXPECT_FALSE(catalog.find_record(todo().id).has_value());
@@ -455,7 +472,8 @@ TEST_F(CatalogRebuildTest, RebuildFailurePreservesOldCatalogAndUnpersistedState)
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       catalog.insert_directory(storage::metadata_from(md, fs::path{"memos/group"}))));
   ASSERT_TRUE(catalog.unpersisted());
-  const auto conflict = catalog.rebuild({std::get<storage::LogMetadata>(old), std::get<storage::LogMetadata>(old)}, {}, {}, {});
+  const auto conflict = catalog.rebuild(
+      {std::get<storage::LogMetadata>(old), std::get<storage::LogMetadata>(old)}, {}, {}, {});
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(conflict));
   EXPECT_TRUE(catalog.find_directory(md.id).has_value());
   EXPECT_TRUE(catalog.unpersisted());
@@ -477,7 +495,6 @@ TEST_F(CatalogRebuildTest, SuccessfulEmptyReplacementClearsMembershipAndMarksUnp
   EXPECT_FALSE(catalog.find_record(memo().id).has_value());
   EXPECT_FALSE(catalog.find_directory(md.id).has_value());
 }
-
 
 TEST_F(CatalogRebuildTest, CrossCategoryRebuildFailurePreservesActiveCatalog) {
   storage::MetadataCatalog catalog;
@@ -508,8 +525,7 @@ TEST_F(CatalogRebuildTest, ScanRejectsCrossCategoryIdentityInEitherDiscoveryOrde
     const auto directory = memo_directory();
     ASSERT_TRUE(std::holds_alternative<std::monostate>(
         repository.create_directory(core::DirectoryKind::Memo, directory)));
-    const auto path = record_first ? root / "logs" / "renamed.md"
-                                   : root / "todos" / "renamed.toml";
+    const auto path = record_first ? root / "logs" / "renamed.md" : root / "todos" / "renamed.toml";
     fs::create_directories(path.parent_path());
     std::string content;
     if (record_first) {
@@ -519,7 +535,8 @@ TEST_F(CatalogRebuildTest, ScanRejectsCrossCategoryIdentityInEitherDiscoveryOrde
     } else {
       auto snapshot = todo();
       snapshot.id = directory.id;
-      content = std::get<std::string>(storage::codec::serialize_toml(storage::codec::to_toml(snapshot)));
+      content =
+          std::get<std::string>(storage::codec::serialize_toml(storage::codec::to_toml(snapshot)));
     }
     ASSERT_NO_FATAL_FAILURE(write(path, content));
     error_code(repository.scan(), storage::StorageErrorCode::DuplicateId);
@@ -528,4 +545,4 @@ TEST_F(CatalogRebuildTest, ScanRejectsCrossCategoryIdentityInEitherDiscoveryOrde
   }
 }
 
-}  // namespace
+} // namespace

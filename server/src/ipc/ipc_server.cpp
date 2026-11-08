@@ -12,20 +12,26 @@ using namespace std::chrono_literals;
 constexpr auto forever = Clock::time_point::max();
 
 ApplicationError capacity_error() {
-  return {ErrorCategory::ApplicationUnavailable, ErrorReason::ResourceLimit,
-          "The Backend cannot admit another request right now.", {ErrorAction::Retry, ErrorAction::Dismiss}};
+  return {ErrorCategory::ApplicationUnavailable,
+          ErrorReason::ResourceLimit,
+          "The Backend cannot admit another request right now.",
+          {ErrorAction::Retry, ErrorAction::Dismiss}};
 }
-}  // namespace
+} // namespace
 
-IpcServer::IpcServer(RepositoryOwnership& ownership, Handler handler,
-                               std::string startup_failure, RuntimeLimits limits)
+IpcServer::IpcServer(RepositoryOwnership& ownership, Handler handler, std::string startup_failure,
+                     RuntimeLimits limits)
     : ownership_(ownership), handler_(std::move(handler)),
-      startup_failure_(std::move(startup_failure)), limits_(limits),
-      scheduler_(limits.requests) {}
+      startup_failure_(std::move(startup_failure)), limits_(limits), scheduler_(limits.requests) {}
 
-IpcServer::~IpcServer() { drain_requests(); close_connections(); }
+IpcServer::~IpcServer() {
+  drain_requests();
+  close_connections();
+}
 
-void IpcServer::notify() { changed_.request_stop(); }
+void IpcServer::notify() {
+  changed_.request_stop();
+}
 
 void IpcServer::failure(Failure error) {
   std::lock_guard lock(mutex_);
@@ -48,8 +54,7 @@ std::shared_ptr<IpcServer::BufferReservation> IpcServer::reserve_request() {
   return {};
 }
 
-bool IpcServer::send_rejection(IpcStream& stream, ApplicationError error,
-                                    std::stop_token stop) {
+bool IpcServer::send_rejection(IpcStream& stream, ApplicationError error, std::stop_token stop) {
   auto encoded = codec::encode(error);
   if (auto* bytes = std::get_if<std::string>(&encoded)) {
     return std::holds_alternative<std::monostate>(send_message(
@@ -77,8 +82,8 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
   } registration{*this, registered};
 
   auto send = [&](MessageKind kind, std::vector<std::byte> payload = {}) {
-    return std::holds_alternative<std::monostate>(send_message(
-        stream, {kind, std::move(payload)}, Clock::now() + 3s, stop));
+    return std::holds_alternative<std::monostate>(
+        send_message(stream, {kind, std::move(payload)}, Clock::now() + 3s, stop));
   };
   auto reject_protocol = [&](const std::string& text) {
     send(MessageKind::Reject, payload_bytes(text));
@@ -94,7 +99,10 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
       reject_protocol(error->message);
     return;
   }
-  if (!startup_failure_.empty()) { reject_protocol(startup_failure_); return; }
+  if (!startup_failure_.empty()) {
+    reject_protocol(startup_failure_);
+    return;
+  }
   const auto& message = std::get<Message>(hello);
   if (message.kind != MessageKind::Hello || !message.payload.empty()) {
     reject_protocol("Invalid readiness handshake");
@@ -121,8 +129,7 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     std::shared_ptr<BufferReservation> reservation;
     bool limited = false;
     MessageTransport input([&](MessageKind kind, std::size_t size) {
-      if (kind != MessageKind::Request)
-        return kind == MessageKind::Ping && size == 4;
+      if (kind != MessageKind::Request) return kind == MessageKind::Ping && size == 4;
       reservation = reserve_request();
       limited = !reservation;
       return !limited;
@@ -133,7 +140,8 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     if (!std::holds_alternative<bool>(ready) || !std::get<bool>(ready)) return;
     auto received = receive_message(stream, input, Clock::now() + 30s, receive_stop);
     if (auto* error = std::get_if<IpcError>(&received)) {
-      if (limited) send_rejection(stream, capacity_error(), stop);
+      if (limited)
+        send_rejection(stream, capacity_error(), stop);
       else if (error->code == IpcErrorCode::Protocol || error->code == IpcErrorCode::Incompatible)
         reject_protocol(error->message);
       return; // An early capacity rejection leaves an unread body: close it.
@@ -151,8 +159,13 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     // Malformed complete Application requests are rejected before acceptance;
     // their connection is still usable, as with prior Application errors.
     if (std::holds_alternative<IpcError>(request)) {
-      if (!send_rejection(stream, {ErrorCategory::InvalidRequest, ErrorReason::InvalidQuery,
-          "The Application request is malformed or contains invalid values.", {ErrorAction::Dismiss}}, stop)) return;
+      if (!send_rejection(stream,
+                          {ErrorCategory::InvalidRequest,
+                           ErrorReason::InvalidQuery,
+                           "The Application request is malformed or contains invalid values.",
+                           {ErrorAction::Dismiss}},
+                          stop))
+        return;
       continue;
     }
     // Free the wire buffer before keeping the decoded request in the queue.
@@ -171,12 +184,18 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
               // Never replace an executed mutation with an uncorrelated error
               // or claim NotApplied. Delivery is unconfirmed; service continues.
               if (std::holds_alternative<MutationRequest>(request)) {
-                try { SPDLOG_ERROR("Mutation final response exceeded protocol limits; confirmation lost"); } catch (...) {}
+                try {
+                  SPDLOG_ERROR(
+                      "Mutation final response exceeded protocol limits; confirmation lost");
+                } catch (...) {
+                }
                 return std::get<IpcError>(encoded);
               }
-              encoded = codec::encode<OperationResponse>(ApplicationError{
-                  ErrorCategory::ApplicationUnavailable, ErrorReason::ResourceLimit,
-                  "The Application response exceeds the resource limit.", {ErrorAction::Dismiss}});
+              encoded = codec::encode<OperationResponse>(
+                  ApplicationError{ErrorCategory::ApplicationUnavailable,
+                                   ErrorReason::ResourceLimit,
+                                   "The Application response exceeds the resource limit.",
+                                   {ErrorAction::Dismiss}});
             }
             if (auto* error = std::get_if<IpcError>(&encoded)) {
               failure(*error);
@@ -198,8 +217,9 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     auto delivery_failure = [&](const char* point) {
       try {
         std::lock_guard lock(ticket->mutex);
-        SPDLOG_WARN("Accepted Application request lost {} (execution_stage={}); no cancellation or replay",
-                    point, static_cast<int>(ticket->stage));
+        SPDLOG_WARN(
+            "Accepted Application request lost {} (execution_stage={}); no cancellation or replay",
+            point, static_cast<int>(ticket->stage));
       } catch (...) {
         // Logging must not change scheduling or the retained operation result.
       }
@@ -237,8 +257,8 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     if (std::holds_alternative<IpcError>(*result))
       return; // Execution failures were retained at their execution boundary.
     auto final = std::get<Message>(std::move(*result));
-    if (!std::holds_alternative<std::monostate>(send_message(
-        stream, final, Clock::now() + 30s, stop))) {
+    if (!std::holds_alternative<std::monostate>(
+            send_message(stream, final, Clock::now() + 30s, stop))) {
       delivery_failure("final response");
       return;
     }
@@ -271,8 +291,11 @@ core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) 
       changed_ = std::stop_source{};
       changed = changed_.get_token();
       for (auto it = connections_.begin(); it != connections_.end();) {
-        if ((*it)->done) { finished.push_back(std::move(*it)); it = connections_.erase(it); }
-        else ++it;
+        if ((*it)->done) {
+          finished.push_back(std::move(*it));
+          it = connections_.erase(it);
+        } else
+          ++it;
       }
       if (shutdown.stop_requested() || !failures_.empty() || (served_ && active_ == 0) ||
           (!served_ && active_ == 0 && Clock::now() >= initial_deadline)) {
@@ -295,24 +318,28 @@ core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) 
       if (auto& stream = std::get<std::optional<IpcStream>>(accepted); stream) {
         auto entry = std::make_unique<Connection>();
         auto* pointer = entry.get();
-        entry->worker = std::jthread([this, pointer, stream = std::move(*stream)](std::stop_token stop) mutable {
-          try { connection(*pointer, stream, stop); }
-          catch (...) { failure(std::current_exception()); }
-          // Preserve a usable stream through Report. Finish wakes this wait;
-          // no new requests are received after admission closes.
-          {
-            std::unique_lock lock(mutex_);
-            pointer->busy = false;
-            workers_changed_.notify_all();
-            if (stopping_ && stream.connected()) {
-              std::condition_variable_any closed;
-              closed.wait(lock, stop, [] { return false; });
-            }
-          }
-          std::lock_guard lock(mutex_);
-          pointer->done = true;
-          notify();
-        });
+        entry->worker = std::jthread(
+            [this, pointer, stream = std::move(*stream)](std::stop_token stop) mutable {
+              try {
+                connection(*pointer, stream, stop);
+              } catch (...) {
+                failure(std::current_exception());
+              }
+              // Preserve a usable stream through Report. Finish wakes this wait;
+              // no new requests are received after admission closes.
+              {
+                std::unique_lock lock(mutex_);
+                pointer->busy = false;
+                workers_changed_.notify_all();
+                if (stopping_ && stream.connected()) {
+                  std::condition_variable_any closed;
+                  closed.wait(lock, stop, [] { return false; });
+                }
+              }
+              std::lock_guard lock(mutex_);
+              pointer->done = true;
+              notify();
+            });
         connections_.push_back(std::move(entry));
         continue;
       }
@@ -322,8 +349,10 @@ core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) 
       std::mutex wait_mutex;
       std::condition_variable_any condition;
       std::unique_lock lock(wait_mutex);
-      if (deadline == forever) condition.wait(lock, changed, [] { return false; });
-      else condition.wait_until(lock, changed, deadline, [] { return false; });
+      if (deadline == forever)
+        condition.wait(lock, changed, [] { return false; });
+      else
+        condition.wait_until(lock, changed, deadline, [] { return false; });
       continue;
     }
     auto ready = ownership_.wait(deadline, changed);
@@ -373,15 +402,17 @@ void IpcServer::drain_requests() {
     if (done) {
       if ((*it)->worker.joinable()) (*it)->worker.join();
       it = connections_.erase(it);
-    } else ++it;
+    } else
+      ++it;
   }
 }
 
 void IpcServer::close_connections() {
-  for (auto& connection : connections_) connection->worker.request_stop();
+  for (auto& connection : connections_)
+    connection->worker.request_stop();
   for (auto& connection : connections_)
     if (connection->worker.joinable()) connection->worker.join();
   connections_.clear();
 }
 
-}  // namespace folio::application::internal
+} // namespace folio::application::internal

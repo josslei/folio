@@ -53,4 +53,4 @@ struct DirectoryMetadata {
 // and Directory visibility; never represent inaccessible fields with defaults.
 using RecordMetadata = std::variant<LogMetadata, MemoMetadata, TodoMetadata>;
 
-}  // namespace folio::core
+} // namespace folio::core

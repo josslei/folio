@@ -23,12 +23,12 @@ std::string read(const fs::path& file) {
 }
 
 class Logging : public testing::Test {
- protected:
+protected:
   fs::path base;
   void SetUp() override {
     logging::shutdown();
 #if defined(__APPLE__)
-    const fs::path temporary = "/private/tmp";  // Keep Unix socket fixtures below sun_path limits.
+    const fs::path temporary = "/private/tmp"; // Keep Unix socket fixtures below sun_path limits.
 #else
     const auto temporary = fs::temp_directory_path();
 #endif
@@ -53,7 +53,7 @@ TEST_F(Logging, BackendDefaultsToWarnAndErrorFlushesWithSourceLocation) {
   EXPECT_EQ(spdlog::default_logger()->level(), spdlog::level::warn);
   EXPECT_EQ(spdlog::default_logger()->flush_level(), spdlog::level::err);
   EXPECT_TRUE(std::regex_match(file->filename().string(),
-      std::regex(R"(\d{8}T\d{6}\.\d{3}Z-pid\d+\.log)")));
+                               std::regex(R"(\d{8}T\d{6}\.\d{3}Z-pid\d+\.log)")));
   SPDLOG_DEBUG("filtered-debug");
   SPDLOG_INFO("filtered-info");
   SPDLOG_WARN("retained-warning");
@@ -64,7 +64,8 @@ TEST_F(Logging, BackendDefaultsToWarnAndErrorFlushesWithSourceLocation) {
   EXPECT_NE(text.find("retained-warning"), std::string::npos);
   EXPECT_NE(text.find("retained-error"), std::string::npos);
   EXPECT_NE(text.find("[backend]"), std::string::npos);
-  EXPECT_TRUE(std::regex_search(text, std::regex(R"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \[error\])")));
+  EXPECT_TRUE(std::regex_search(
+      text, std::regex(R"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \[error\])")));
   EXPECT_TRUE(std::regex_search(text, std::regex(R"(logging_test.cpp:\d+)")));
 }
 
@@ -75,8 +76,8 @@ TEST_F(Logging, FrontendSessionAndLevelChangesKeepTheSameFile) {
   EXPECT_EQ(file->parent_path(), base / "frontend");
   const std::pair<Level, spdlog::level::level_enum> levels[] = {
       {Level::Trace, spdlog::level::trace}, {Level::Debug, spdlog::level::debug},
-      {Level::Info, spdlog::level::info}, {Level::Warn, spdlog::level::warn},
-      {Level::Error, spdlog::level::err}, {Level::Critical, spdlog::level::critical}};
+      {Level::Info, spdlog::level::info},   {Level::Warn, spdlog::level::warn},
+      {Level::Error, spdlog::level::err},   {Level::Critical, spdlog::level::critical}};
   for (const auto& [setting, expected] : levels) {
     logging::set_level(setting);
     EXPECT_EQ(spdlog::default_logger()->level(), expected);
@@ -98,7 +99,7 @@ TEST_F(Logging, FrontendSessionAndLevelChangesKeepTheSameFile) {
 
 TEST_F(Logging, SessionReservationHasExactUtcNameAndNeverOverwrites) {
   using namespace std::chrono;
-  const auto when = sys_days{year{2026}/October/31} + 9h + 15min + 123ms;
+  const auto when = sys_days{year{2026} / October / 31} + 9h + 15min + 123ms;
   auto first = logging::internal::reserve_session_file(base, when, 1234);
   ASSERT_TRUE(first);
   EXPECT_EQ(first->filename(), "20261031T091500.123Z-pid1234.log");
@@ -130,8 +131,9 @@ TEST_F(Logging, MultilineDetailsKeepACompleteFirstLine) {
   ASSERT_TRUE(file);
   SPDLOG_ERROR("Synthetic diagnostic title\n    Code: SyntheticFailure\n    Reason: test only");
   const auto text = read(*file);
-  EXPECT_NE(text.find("Synthetic diagnostic title\n    Code: SyntheticFailure\n    Reason: test only"),
-            std::string::npos);
+  EXPECT_NE(
+      text.find("Synthetic diagnostic title\n    Code: SyntheticFailure\n    Reason: test only"),
+      std::string::npos);
 }
 
 TEST_F(Logging, FrontendLaunchFailureIsLoggedWithoutPayloadOrExceptionText) {
@@ -144,9 +146,11 @@ TEST_F(Logging, FrontendLaunchFailureIsLoggedWithoutPayloadOrExceptionText) {
 #endif
   const auto failed = folio::application::connect_or_start_backend(
       folio::application::internal::ConnectionSettings{endpoint}, [] {
-        return folio::core::Result<folio::application::LaunchedProcess, folio::application::ProcessError>{
+        return folio::core::Result<folio::application::LaunchedProcess,
+                                   folio::application::ProcessError>{
             folio::application::ProcessError{folio::application::ProcessErrorCode::LaunchFailed,
-                                            "synthetic-secret-launch-details", {}}};
+                                             "synthetic-secret-launch-details",
+                                             {}}};
       });
   EXPECT_TRUE(std::holds_alternative<folio::application::internal::IpcError>(failed));
   const auto text = read(*file);
@@ -160,9 +164,7 @@ TEST_F(Logging, RuntimeSinkFailureIsSilentAndDoesNotEscape) {
     void sink_it_(const spdlog::details::log_msg&) override {
       throw spdlog::spdlog_ex("synthetic write failure");
     }
-    void flush_() override {
-      throw spdlog::spdlog_ex("synthetic flush failure");
-    }
+    void flush_() override { throw spdlog::spdlog_ex("synthetic flush failure"); }
   };
   // Retain the production logger/error handler; replace only its failing device.
   spdlog::default_logger()->sinks() = {std::make_shared<FailingSink>()};
@@ -177,9 +179,8 @@ TEST_F(Logging, ConfigurationFailureLeavesInitialWarnLoggerAvailable) {
   auto file = logging::initialize(logging::ProcessRole::Frontend, base / "logs");
   ASSERT_TRUE(file);
   auto* original = spdlog::default_logger().get();
-  const folio::config::ApplicationPaths paths{
-      base / "config", base / "data", base / "state", base / "cache",
-      base / "logs", std::nullopt};
+  const folio::config::ApplicationPaths paths{base / "config", base / "data", base / "state",
+                                              base / "cache",  base / "logs", std::nullopt};
   fs::create_directory(paths.config);
   const auto config_file = paths.config / "folio_config.toml";
   std::ofstream(config_file) << "[diagnostics]\nlog_level = 'invalid'\n";
@@ -188,7 +189,8 @@ TEST_F(Logging, ConfigurationFailureLeavesInitialWarnLoggerAvailable) {
   EXPECT_EQ(spdlog::default_logger().get(), original);
   EXPECT_EQ(spdlog::default_logger()->level(), spdlog::level::warn);
   SPDLOG_ERROR("Synthetic configuration failure remains loggable");
-  EXPECT_NE(read(*file).find("Synthetic configuration failure remains loggable"), std::string::npos);
+  EXPECT_NE(read(*file).find("Synthetic configuration failure remains loggable"),
+            std::string::npos);
 }
 
 TEST_F(Logging, InitializationFailureDoesNotChangeBackendFailureOrCreateStorage) {
@@ -219,4 +221,4 @@ TEST_F(Logging, SymlinkLogRootIsRejected) {
   EXPECT_TRUE(fs::is_empty(base / "target"));
 }
 #endif
-}  // namespace
+} // namespace

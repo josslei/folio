@@ -25,13 +25,15 @@ int folio::tui::run() {
   auto screen = ScreenInteractive::Fullscreen();
   auto renderer = Renderer([&] {
     return vbox({text(std::string(folio::core::application_name())) | bold | center,
-                 text("Welcome to Folio") | center,
-                 text("Press q to quit") | dim | center}) |
+                 text("Welcome to Folio") | center, text("Press q to quit") | dim | center}) |
            center;
   });
   std::atomic<bool> connection_lost{false};
   auto component = CatchEvent(renderer, [&](const Event& event) {
-    if (connection_lost.load()) { screen.Exit(); return true; }
+    if (connection_lost.load()) {
+      screen.Exit();
+      return true;
+    }
     if (event == Event::Character('q') || event == Event::Character('Q')) {
       screen.Exit();
       return true;

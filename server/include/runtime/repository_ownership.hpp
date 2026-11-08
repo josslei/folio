@@ -15,7 +15,7 @@ namespace folio::application::internal {
 // a session or deletes lock targets.
 // Callers must not unlink/replace lock files or roots during ownership.
 class RepositoryOwnership {
- public:
+public:
   ~RepositoryOwnership();
   RepositoryOwnership(RepositoryOwnership&&) noexcept;
   RepositoryOwnership& operator=(RepositoryOwnership&&) noexcept;
@@ -33,16 +33,16 @@ class RepositoryOwnership {
 
   // Nonblocking connection acceptance while the ownership resource is active.
   core::Result<std::optional<IpcStream>, IpcError> accept();
-  core::Result<bool, IpcError> wait(
-      std::chrono::steady_clock::time_point deadline, std::stop_token wake = {});
+  core::Result<bool, IpcError> wait(std::chrono::steady_clock::time_point deadline,
+                                    std::stop_token wake = {});
   // Stop admission and remove the owned endpoint, retaining all Repo locks
   // through explicit Catalog finalization. Safe to call more than once.
   void stop_listening() noexcept;
 
- private:
+private:
   struct Handles;
   explicit RepositoryOwnership(std::unique_ptr<Handles> handles);
   std::unique_ptr<Handles> handles_;
 };
 
-}  // namespace folio::application::internal
+} // namespace folio::application::internal
