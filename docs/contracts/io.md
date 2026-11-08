@@ -50,7 +50,9 @@ Config owns TOML/default interpretation and effective-root constraints. Storage
 continues to own Entry filenames, locators, discovery, layout and mutation safety.
 Generic filesystem operations are called directly through I/O; Storage provides
 neither duplicate operation wrappers nor FileError-to-StorageError conversion.
-`storage/common.hpp` owns shared Storage types and effective-path validation.
+`storage/common.hpp` owns shared Storage types and declares the path-validation
+adapter. Config owns effective-path policy; Storage delegates to
+`config::validate_effective_paths()` before enforcing Repository layout rules.
 Normal Entry filename generation lives with NormalRepository.
 
 Repository loads, discovery and scans use `StorageResult<T>` with distinct success,

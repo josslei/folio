@@ -1,7 +1,8 @@
 # Documentation and harness cleanup plan
 
 **Status: Documentation migration and harness tooling implemented; interface-comment
-review completed; final consistency/discovery verification remains.**
+review and documentation consistency review completed; automatic instruction
+discovery remains unverified.**
 The compact baseline, indexes, role instructions and engineering guides are in use.
 Formatter/static-analysis configuration and explicit validation/fix commands are
 established; remaining toolchain/static-analysis issues are not resolved by comments.
@@ -84,3 +85,22 @@ No empty reference tree or extra nested indexes were introduced. Continue keepin
 source, build configuration, Git staging and unrelated working-tree changes intact
 during documentation-only work. Remaining tooling and code documentation follow
 the agreed sequence above.
+
+## Consistency review — 2026-11-08
+
+Reviewed root/role instructions, documentation indexes, architecture summaries,
+current status/roadmap, engineering guidance, validation skills/script and the
+Access/Mutation, lifecycle, Configuration, Storage and I/O boundaries against
+representative current interfaces and implementations. Corrected stale pending
+harness/comment-audit wording, obsolete future Application ownership wording,
+atomic-I/O error attribution, and ambiguous default-root/lifecycle terminology.
+No runtime behavior, API or future-phase scope changed.
+
+Navigation was checked manually from the root baseline/task index to all three
+role instructions and the relevant contract owners. Local Markdown links and
+heading fragments were checked by `scripts/check_docs.py`; whitespace by Git diff
+checks. This establishes explicit navigation, not automatic instruction loading by
+Codex. Root-launched/cross-directory automatic discovery still needs an independent
+session-level check. Static-analysis findings/toolchain compatibility and native
+platform verification remain separate obligations; this review does not rerun or
+certify runtime tests or exhaustively prove all code matches every contract.

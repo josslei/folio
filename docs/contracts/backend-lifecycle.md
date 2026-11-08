@@ -179,7 +179,7 @@ verification of existing modules against this principle.
 Report, and Finish. Bootstrap performs configuration, ownership acquisition,
 and Storage initialization. Serve serves connections. Stopping closes admission.
 Unrecoverable failures in Bootstrap, Serve, or Stopping go to the same Report state;
-Report always proceeds to Finish, including when reporting fails. The executor
+Report always proceeds to Finish, including when reporting fails. BackendStateMachine
 executes Finish's final cleanup action before finishing, rather than merely
 using it as a loop termination condition.
 
@@ -189,7 +189,7 @@ configuration dependencies. `backend_states.cpp` implements five standalone
 handlers and registers them once against a shared data-only `BackendContext`.
 `run_backend()` shows the transition table and assembles the machine with those
 handlers. Handler implementation changes do not alter the lifecycle table.
-Executor tests register synthetic handlers directly; no production test hook is
+State-machine tests register synthetic handlers directly; no production test hook is
 needed.
 
 Finish closes admission even when Stopping was bypassed, attempts session finalization only

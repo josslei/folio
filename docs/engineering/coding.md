@@ -79,8 +79,9 @@ or screenshots where useful for TUI changes. Root authorization restrictions app
 
 ## Enforcement
 
-Formatting configuration and selected static-analysis checks remain pending
-[harness work](harness.md). CMake already expresses role/visibility boundaries;
+Formatting and selected static-analysis checks are configured in the
+[harness](harness.md); analyzer findings and toolchain compatibility still require
+verification. CMake already expresses role/visibility boundaries;
 compilation and tests supply partial enforcement. Ownership, failure semantics and
 design intent still require review. Do not infer that every existing code pattern
 is an approved convention, or mix broad formatting changes into semantic cleanup.

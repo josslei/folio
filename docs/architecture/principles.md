@@ -55,8 +55,9 @@ or a proof against every failure.
 
 The [documentation/harness plan](../development/documentation-harness-plan.md)
 records the approved organization, audiences, instruction discovery requirements
-and implementation sequence. These are decisions awaiting harness implementation,
-not claims that formatting or additional automated checks already exist.
+and implementation sequence. Formatting, selected static analysis and explicit
+validation/fix commands are implemented; see the [harness inventory](../engineering/harness.md)
+for their coverage and remaining verification obligations.
 
 Existing MUT, IPC and BACKEND identifiers remain the follow-up references; this
 index introduces no parallel TODO register. Design conflicts must be reviewed,

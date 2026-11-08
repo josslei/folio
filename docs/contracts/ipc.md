@@ -98,7 +98,9 @@ those retries are separate from established connection progress.
 MessagePack collections are limited to 100,000 items, nesting to 32, and exact
 field counts, types, enum values, UUIDs and variant tags are checked. Truncation
 and trailing MessagePack content are rejected. Evidence validation is structural;
-per-operation semantic combinations await execution design. Publication is never
+current Normal handlers construct operation-specific evidence as specified in the
+[Mutation contract](mutations.md#failure-mappings-and-evidence--implemented). New
+operations require their own approved combinations. Publication is never
 interpreted as durability.
 
 The former chunk producer/assembler and all chunk/end message kinds remain

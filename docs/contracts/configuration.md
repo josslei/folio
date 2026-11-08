@@ -34,7 +34,8 @@ use_default_location = true
 log_level = "warn"
 ```
 
-Default locations resolve to `<application.data>/normal` and `/vault`.
+Default locations resolve to `<application.data>/normal` and
+`<application.data>/vault`.
 A custom location requires `use_default_location = false` and an absolute string
 `path`. Providing `path` with the flag true is rejected. `diagnostics.log_level` accepts lowercase `trace`, `debug`, `info`, `warn`,
 `error`, or `critical`. Its typed effective value is applied after loading,
@@ -92,7 +93,8 @@ platform-derived rather than persistent user options.
 Changes require stopping the Backend and starting it again. In particular, keep
 authoritative roots and bootstrap path/environment inputs stable while a Backend
 is active. Concurrent Frontends must use the same per-user bootstrap environment.
-No hot reload, configuration revision protocol, or configuration writer exists.
+No hot reload, configuration revision protocol, or Preferences editing/writer API
+exists; initial missing-file creation is the only automatic write.
 
 Existing files specifying both roots remain valid, with no automatic relocation.
 Removing a setting selects template defaults; removing the file recreates the template; it does

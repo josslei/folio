@@ -1,7 +1,8 @@
 # Harness inventory and next work
 
-**Status:** documentation structure established; harness completion remains pending.
-This page distinguishes existing facilities from future tool choices. Validation
+**Status:** documentation structure, validation tooling and interface-comment
+review implemented; toolchain and automatic instruction-discovery verification
+remain limited. This page distinguishes implemented checks from review obligations. Validation
 is explicitly invoked; there are no completion hooks or Git hooks.
 
 ## Available today
@@ -83,9 +84,10 @@ listed; discovery in the active app still needs verification.
   loaded merely because it applies to the edited directory.
 - **Review obligation:** documentation status and semantic consistency are not
   established by link checking.
-- **Deferred Implementation — code-documentation cleanup:** review interface and
-  implementation comments after harness conventions are established. This document
-  migration does not complete that source-level audit.
+- **Completed review baseline — code documentation:** the interface-comment audit
+  covered the boundaries listed in the [cleanup plan](../development/documentation-harness-plan.md).
+  New or changed contracts still require comment review; this is not exhaustive
+  verification of every implementation path.
 
 For each adopted rule identify its authoritative source, practical automated
 check and remaining human/agent review obligation. Keep mechanical changes separate

@@ -189,7 +189,7 @@ tests explicitly receive the private paths they exercise. CMake visibility is a
 build boundary, not language-level access control.
 
 The earlier Phase 4.1a.5 physical layout is superseded. This role-based refactor
-preserves the pending runtime implementation without expanding its behavior.
+preserves the runtime responsibilities described in the [IPC contract](../contracts/ipc.md).
 
 ## Catalog-centric flow
 
