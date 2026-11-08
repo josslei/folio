@@ -1,11 +1,16 @@
 # Documentation and harness cleanup plan
 
-**Status: Documentation structure and migration implemented; harness work pending.**
-The compact baseline, indexes, role instructions, engineering guides and knowledge
-boundaries are established. Tool selection, source-comment cleanup and actual
-instruction-discovery verification remain pending. This documentation-only migration
-was explicitly authorized ahead of tooling; it does not authorize source formatting
-or complete the later code-documentation audit.
+**Status: Documentation migration and harness tooling implemented; interface-comment
+review completed; final consistency/discovery verification remains.**
+The compact baseline, indexes, role instructions and engineering guides are in use.
+Formatter/static-analysis configuration and explicit validation/fix commands are
+established; remaining toolchain/static-analysis issues are not resolved by comments.
+The comment review covered public Application/Core/Config contracts, Frontend
+connection usage, Backend orchestration/scheduling/lifecycle, and Storage/I/O/IPC
+boundaries. It clarified ownership, accepted-work lifetime, publication versus
+durability and confirmed versus missing results without changing implementation.
+This is a review baseline, not a guarantee that every code path needs no further
+explanation. Continue documenting contracts as interfaces evolve.
 This plan authorizes no new application feature or additional runtime guarantee.
 
 ## Agreed sequence
@@ -60,8 +65,9 @@ Separate mechanical formatting, semantic C++ conventions and architectural rules
 Select formatter and static-analysis checks deliberately; existing patterns are
 evidence rather than automatically approved rules. Record each rule's owner,
 automated check where practical and remaining review obligations. Do not mix a
-repository-wide formatting diff into substantive cleanup. No formatter or new
-lint configuration is selected by this plan.
+repository-wide formatting diff into substantive cleanup. The formatter and selected static-analysis checks are now defined in the
+[harness guide](../engineering/harness.md); this plan does not authorize additional
+tooling or repository-wide formatting passes.
 
 ## Status and preservation
 

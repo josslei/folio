@@ -20,6 +20,9 @@ public:
   MutationOrchestrator(core::storage::MetadataCatalog& catalog,
                        core::storage::NormalRepository& repository,
                        core::storage::CatalogCoordinator& coordinator);
+  /// Executor-only dispatch. The retained session identifies lock ownership;
+  /// workers must neither call this directly nor mutate the lock registry.
+  /// Checks current Catalog state and prerequisites before Repository persistence.
   OperationResponse handle(const OperationRequest& request, const Session& session);
 
 private:
@@ -31,6 +34,8 @@ private:
   core::storage::MetadataCatalog& catalog_;
   core::storage::NormalRepository& repository_;
   core::storage::CatalogCoordinator& coordinator_;
+  // Weak ownership avoids keeping disconnected sessions alive. Accepted actions
+  // hold strong session references; expired owners are pruned on later requests.
   std::map<std::string, std::weak_ptr<ConnectionSession>> locks_;
 };
 } // namespace folio::application::internal

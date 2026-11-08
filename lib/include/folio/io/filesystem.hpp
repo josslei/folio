@@ -14,6 +14,8 @@ struct FileError {
   std::filesystem::path path;
   std::string message;
   std::error_code system_error;
+  // Publication occurred; the name covers creation/replacement/removal alike.
+  // This flag alone does not confirm the operation's required durability.
   bool replacement_completed = false;
   // Required destination publication sync succeeded; later artifact cleanup may fail.
   bool durability_confirmed = false;

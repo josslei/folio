@@ -29,6 +29,10 @@ public:
             RuntimeLimits limits = {});
   ~IpcServer();
   IpcServer(const IpcServer&) = delete;
+  /// Blocks the lifecycle thread while accepting connections; workers handle IPC
+  /// and the constructor-started scheduler executes handlers independently.
+  /// Returning stops admission, but does not certify draining or join all workers.
+  /// Stopping/Report drain; Finish closes connections before Storage finalization.
   core::Result<std::monostate, IpcError> run(std::stop_token shutdown = {});
   // Stop new connections/requests without closing established connections.
   void stop_admission();

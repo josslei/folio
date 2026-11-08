@@ -64,6 +64,8 @@ void RequestScheduler::execute() {
       work.ticket->result.emplace(std::move(result));
       work.ticket->stage = ExecutionStage::Finished;
     }
+    // Publish all ticket fields before waking the connection. Disconnecting
+    // affects delivery only: the accepted action has already run to completion.
     work.ticket->completed.request_stop();
     {
       std::lock_guard lock(mutex_);

@@ -13,8 +13,8 @@ struct LaunchedProcess {
   std::uint64_t id;
 };
 
-// Starts a separate folio process in Backend mode. Readiness is established by
-// a subsequent connection handshake, not by successful process creation.
+/// Starts a separate folio process in Backend mode. Readiness is established by
+/// a subsequent connection handshake, not by successful process creation.
 [[nodiscard]] core::Result<LaunchedProcess, ProcessError> launch_backend();
 
 } // namespace folio::application

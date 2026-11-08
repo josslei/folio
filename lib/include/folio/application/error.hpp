@@ -44,9 +44,12 @@ enum class ErrorReason {
 };
 
 // Presentation choices, not automatic retries or guarantees of success.
-// TODO(4.2b/Recovery): operation outcomes and safe mutation reconciliation.
+// Safe reconciliation remains deferred; see docs/contracts/mutations.md.
 enum class ErrorAction { Retry, ReloadView, Reconnect, ResolveExternally, Dismiss };
 
+/// Safe presentation data: why the operation failed and possible user actions.
+/// Actions are suggestions, not commands. For mutations, consult status/evidence
+/// separately; this error alone does not establish whether data was persisted.
 struct ApplicationError {
   ErrorCategory category;
   ErrorReason reason;

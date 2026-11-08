@@ -14,6 +14,8 @@ namespace folio::application {
 // Roots need no fabricated identity and do not become persisted Entries.
 using DirectoryRef = std::variant<core::RecordType, core::Id>;
 
+/// Immediate logical contents, not recursive search results. Persisted Directories
+/// cannot contain nested Directories, so their directories collection is empty.
 struct BrowseResult {
   std::vector<core::RecordMetadata> records;
   std::vector<core::DirectoryMetadata> directories;
@@ -66,6 +68,8 @@ struct RecordFilters {
   std::optional<core::DueDate> due_through;
 };
 
+/// Metadata-only filtering; the default scope includes Root and Directory members.
+/// This does not search Record bodies or trigger authoritative repository scans.
 struct RecordQuery {
   std::optional<core::RecordType> type;
   RecordScope scope = AllScope{};

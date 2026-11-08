@@ -46,6 +46,13 @@ failure semantics. Explain non-obvious implementation choices near the code.
 Cross-module rationale and detailed contracts belong in linked documentation;
 do not duplicate full designs in headers or comment obvious statements.
 
+Use `///` immediately above declarations for API documentation, including private
+interfaces. Use ordinary `//` comments for implementation rationale and consecutive
+`//` lines for longer explanations; avoid decorative banners. Add Doxygen tags
+such as `@param`, `@return`, `@pre` and `@throws` only when they clarify a contract,
+not as mandatory boilerplate. Inline field comments may remain `//`. Existing
+useful comments need not be rewritten solely to change their delimiter.
+
 Describe current guarantees accurately. Deferred capabilities need traceable TODOs,
 not comments implying they exist. Tests provide evidence rather than replace a
 written contract. For priorities and the human/agent distinction, see the

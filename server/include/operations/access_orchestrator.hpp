@@ -17,6 +17,8 @@ public:
   AccessOrchestrator(core::storage::MetadataCatalog& catalog,
                      core::storage::NormalRepository& repository,
                      core::storage::CatalogCoordinator& coordinator);
+  /// Execute only on the shared executor; dependencies must outlive this object.
+  /// Returns metadata or a targeted authoritative read, never implicit repair.
   OperationResponse handle(const OperationRequest& request) const;
 
 private:

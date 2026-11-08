@@ -54,10 +54,17 @@ struct BackendContext {
 
 void retain_backend_notification_failures(BackendContext& context,
                                           const BackendStateMachine& machine);
+/// Initializes configuration, ownership and Storage before admitting operations.
 BackendActionOutcome Bootstrap(BackendContext& context);
+/// Runs IPC acceptance on the lifecycle thread; handlers execute on the scheduler.
 BackendActionOutcome Serve(BackendContext& context);
+/// Normal-stop path: closes admission and drains accepted work, retaining streams.
 BackendActionOutcome Stopping(BackendContext& context);
+/// Also drains when failures bypass Stopping; retains diagnostics and usable streams.
+/// Lifecycle notification over IPC is deferred, not implied by this state name.
 BackendActionOutcome Report(BackendContext& context);
+/// Settles workers before eligible Catalog finalization, then releases ownership.
+/// Unsafe Catalog state retains the Session Marker rather than certifying success.
 BackendActionOutcome Finish(BackendContext& context);
 BackendActionOutcome record_backend_failure(BackendContext& context, BackendDiagnostic diagnostic);
 

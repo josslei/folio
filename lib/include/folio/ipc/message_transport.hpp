@@ -16,6 +16,8 @@ public:
       : reserve_(std::move(reserve)) {}
   core::Result<std::monostate, IpcError> queue(const Message& message);
   core::Result<std::size_t, IpcError> flush(IpcStream& stream);
+  /// nullopt means incomplete nonblocking progress, not end-of-stream success.
+  /// Retain this transport across calls; wait for readiness before retrying.
   core::Result<std::optional<Message>, IpcError> receive(IpcStream& stream);
   bool sending() const { return !output_.empty(); }
   bool receiving() const { return !input_.empty(); }

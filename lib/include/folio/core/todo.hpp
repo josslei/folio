@@ -22,6 +22,8 @@ struct Subtask {
 
 class Todo {
 public:
+  /// Complete owning domain value for persistence and transfer, not an editing
+  /// permission or concurrency token. Restoring does not generate a new identity.
   struct Snapshot {
     Id id;
     TimestampContext created;

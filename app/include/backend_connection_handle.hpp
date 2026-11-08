@@ -18,11 +18,11 @@ ApplicationError operation_connection_error(const IpcError& error);
 } // namespace folio::application::internal
 
 namespace folio::application {
-// Owns an established Backend connection for TUI, CLI, and other Frontends.
-// Destruction closes the connection; moving transfers ownership.
-// All operations are synchronous; one caller owns request/response access.
-// No automatic reconnect/replay after handshake. Run blocking calls off the UI
-// thread. Moving the handle retains its connection-scoped editing permissions.
+/// Owns an established Backend connection for TUI, CLI, and other Frontends.
+/// Destruction closes it; moving transfers connection-scoped editing permissions.
+/// Calls block and must not overlap on one handle; run them off the UI thread.
+/// There is no automatic reconnect/replay. Closing does not cancel accepted work.
+/// See docs/contracts/ipc.md for admission and final-confirmation semantics.
 class BackendConnectionHandle {
 public:
   BackendConnectionHandle(BackendConnectionHandle&&) noexcept = default;
@@ -33,19 +33,29 @@ public:
 
   core::Result<std::monostate, internal::IpcError> ping();
 
+  /// Browses a logical Root (RecordType) or Directory UUID using Catalog metadata.
+  /// Roots return immediate Records and Directories; Logs have no Directories.
   ApplicationResult<ApplicationResponse<BrowseResult>> browse(DirectoryRef dir,
                                                               RecordOrder order = {});
   ApplicationResult<ApplicationResponse<std::vector<core::RecordMetadata>>>
   query_records(const RecordQuery& query = {});
   ApplicationResult<ApplicationResponse<std::vector<core::DirectoryMetadata>>>
   list_directories(core::DirectoryKind kind);
+  /// Loads complete authoritative content through the current Catalog locator.
+  /// Typed loads reject mismatched types and stale locations without a full scan.
+  /// Read-only loading does not acquire editing rights.
   ApplicationResult<core::Log::Snapshot> load_log(const core::Id& id);
   ApplicationResult<core::Memo::Snapshot> load_memo(const core::Id& id);
   ApplicationResult<core::Todo::Snapshot> load_todo(const core::Id& id);
-  // Acquire ownership and load the authoritative state in one executor action.
-  // Ownership lasts until release or connection/accepted-work lifetime ends.
+  /// Acquires ownership and loads authoritative state in one executor action.
+  /// Another connection's ownership returns LockConflict. Accepted work retains
+  /// the session token, so disconnection cannot revoke its permissions early.
   ApplicationResult<EditSnapshot> acquire_edit(const core::Id& id);
+  /// Releases this connection's editing ownership; cannot release another owner's.
   ApplicationResult<std::monostate> release_edit(const core::Id& id);
+  /// Create overloads generate Entry UUIDs in the Backend. The Frontend supplies
+  /// MutationId and timestamp contexts; success returns synchronized metadata.
+  /// MutationResult distinguishes confirmed failure from missing confirmation.
   MutationResult<core::LogMetadata> create(const MutationId& mutation_id,
                                            const LogEditableFields& fields,
                                            const core::TimestampContext& created,
@@ -60,6 +70,9 @@ public:
                                             const core::TimestampContext& created,
                                             const core::TimestampContext& modified,
                                             std::optional<core::Id> directory_id);
+  /// Update overloads require this connection's Edit Lock and replace all editable
+  /// fields, preserving current identity, creation, privacy and membership.
+  /// The supplied modified context is used unchanged, not as a version token.
   MutationResult<core::LogMetadata> update(const MutationId& mutation_id, const core::Id& entry_id,
                                            const LogEditableFields& fields,
                                            const core::TimestampContext& modified);
@@ -69,14 +82,20 @@ public:
   MutationResult<core::TodoMetadata> update(const MutationId& mutation_id, const core::Id& entry_id,
                                             const TodoEditableFields& fields,
                                             const core::TimestampContext& modified);
+  /// Moves a Memo/Todo to its kind's Directory, or Root when destination is empty.
+  /// Preserves current content; rejects another owner's lock. An unlocked Record
+  /// may move without acquiring a long-lived lock. Compound failures retain evidence.
   MutationResult<core::RecordMetadata> move(const MutationId& mutation_id, const core::Id& entry_id,
                                             std::optional<core::Id> destination,
                                             const core::TimestampContext& modified);
   MutationResult<core::DirectoryMetadata> create(const MutationId& mutation_id,
                                                  core::DirectoryKind kind, const std::string& name);
+  /// Immediate mutation: respects existing ownership without retaining a new lock.
+  /// Renaming preserves UUID-based folder identity and member Record contents.
   MutationResult<core::DirectoryMetadata> rename_directory(const MutationId& mutation_id,
                                                            const core::Id& entry_id,
                                                            const std::string& new_name);
+  /// Immediate status change; respects existing ownership and preserves other fields.
   MutationResult<core::TodoMetadata> set_todo_status(const MutationId& mutation_id,
                                                      const core::Id& entry_id,
                                                      core::TodoStatus status,

@@ -51,10 +51,12 @@ struct InitializationOutcome {
 enum class CatalogStatus { Unloaded, Ready, Unavailable, Inconsistent, Stopped };
 enum class SaveOutcome { Saved, SkippedPersisted };
 
-// Coordinates an owner-supplied Catalog without owning it. The Catalog must
-// outlive this coordinator and its callbacks. Startup load is a single attempt;
-// saving once at shutdown is caller policy and failed saves may be retried.
-// Failed startup cannot be turned into save permission by editing the Catalog.
+/// Coordinates an owner-supplied Catalog without owning it. The Catalog must
+/// outlive this coordinator and its callbacks. Startup load is a single attempt;
+/// saving once at shutdown is caller policy and failed saves may be retried.
+/// Failed startup cannot be turned into save permission by editing the Catalog.
+/// Calls and callbacks are serialized by the Backend executor; lifecycle I/O must
+/// wait for accepted work to drain. Index persistence is not Record persistence.
 class CatalogCoordinator {
 public:
   CatalogCoordinator(StoragePaths paths, MetadataCatalog& catalog);

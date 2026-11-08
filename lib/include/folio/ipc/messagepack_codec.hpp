@@ -17,6 +17,9 @@
 namespace folio::application::internal::codec {
 // Shared positional Application-protocol encoding, independent of persisted schemas.
 // Arrays have exact field counts. Optionals/variants are explicitly tagged.
+// fields() returns borrowed references for the shared encoder/decoder; their order
+// defines the wire layout. Keep the source value alive while traversing the tuple.
+// This macro removes repetitive overload boilerplate, not validation or dispatch.
 #define FIELDS(Type, ...)                                                                          \
   inline auto fields(const Type& v) {                                                              \
     return std::tie(__VA_ARGS__);                                                                  \

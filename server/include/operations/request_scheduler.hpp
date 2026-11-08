@@ -18,6 +18,8 @@ public:
   using Result = core::Result<Message, IpcError>;
   using Action = std::function<Result()>;
   enum class ExecutionStage { Queued, Executing, Finished };
+  /// Shared completion state. Read stage/result/exception under mutex; the stop
+  /// token is only a wakeup signal and does not itself grant access to the fields.
   struct Ticket {
     // A signal, not cancellation: publishing a final result wakes its connection.
     std::stop_source completed;
@@ -27,11 +29,14 @@ public:
     std::exception_ptr exception;
   };
 
+  /// Starts the single executor immediately. Capacity counts queued and active work.
+  /// Captures in accepted actions must stay valid until draining completes.
   explicit RequestScheduler(std::size_t capacity);
   ~RequestScheduler();
   RequestScheduler(const RequestScheduler&) = delete;
   // nullptr means rejected before acceptance. Capacity includes the active job.
   std::shared_ptr<Ticket> admit(Action action);
+  /// Thread-safe admission closure; wakes the executor without cancelling work.
   void stop_admission();
   // Drains every accepted action, including actions whose connection is gone.
   // Action exceptions are retained on their tickets, never rethrown by drain;

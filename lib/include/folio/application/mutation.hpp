@@ -21,6 +21,9 @@ namespace folio::application {
 // provides no deduplication, receipt, or cross-restart execution guarantee.
 class MutationId {
 public:
+  /// Generates a secure UUID for one Frontend mutation intention before submission.
+  /// Retain it across investigation of an unconfirmed result; never assume replay
+  /// is safe merely because the same ID can be submitted again.
   [[nodiscard]] static MutationId generate();
   [[nodiscard]] static std::optional<MutationId> parse(std::string_view text);
   [[nodiscard]] std::string to_string() const;
@@ -122,6 +125,9 @@ struct NoMutationResponse {
   SubmissionState submission;
 };
 
+/// Outer error means no confirmed final outcome; inner response.result may still
+/// be a confirmed MutationFailure, including Applied or Unknown. Acceptance alone
+/// is not final confirmation. See docs/contracts/mutations.md for recovery limits.
 template <class T> using MutationResult = core::Result<MutationResponse<T>, NoMutationResponse>;
 
 } // namespace folio::application

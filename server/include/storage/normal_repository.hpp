@@ -117,6 +117,10 @@ public:
   load_todo(const core::Id& id,
             std::optional<std::filesystem::path> relative_path = std::nullopt) const;
 
+  /// Replaces the complete serialized Snapshot at the current authoritative path.
+  /// Reads and validates existing identity/membership first; changing membership
+  /// requires Move. A supplied stale locator never triggers fallback discovery.
+  /// Use the matching Coordinator callback in managed Backend execution.
   [[nodiscard]] ::folio::core::Result<std::monostate, RepositoryMutationError>
   update_log(const core::Log::Snapshot& snapshot,
              std::optional<std::filesystem::path> relative_path = std::nullopt,
@@ -142,8 +146,12 @@ public:
   rename_directory(DirectoryKind kind, const core::Id& id, std::string name,
                    const MutationResultCallback<DirectoryMetadata>& on_result = {});
 
-  // Supplied source locators use the same direct UUID validation as load/update.
-  // Omission requests discovery; stale supplied locators never fall back.
+  /// Moves using destination creation followed by source removal, not a single
+  /// atomic rename. Preserves editable fields and applies supplied membership and
+  /// modified context; failure may leave durable partial effects or uncertainty.
+  /// Supplied source locators use direct UUID validation; omission requests
+  /// discovery. Managed callers supply the current Catalog locator and callback.
+  /// Stale supplied locators never fall back. See docs/contracts/mutations.md.
   [[nodiscard]] ::folio::core::Result<std::monostate, RepositoryMutationError>
   move_memo(const core::Id& id, std::optional<core::Id> directory_id,
             core::TimestampContext modified,
