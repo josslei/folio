@@ -1,7 +1,8 @@
 # Catalog views and concurrent Access execution
 
-**Status:** agreed architectural design and implementation/review sequence, not
-implemented. Concrete implementation choices
+**Status:** partially implemented: Immer-backed immutable Catalog states and retained
+read views are implemented with sequential execution. Concurrent scheduling, split
+Edit Lock APIs and Push integration remain future increments. Concrete implementation choices
 remain subject to inspection, measurement and review; they are not a reason to
 reopen settled responsibilities without an actual conflict. This plan owns the agreed future
 design; existing [Access](../../contracts/access.md),
@@ -186,12 +187,12 @@ and values while sharing unchanged branches. Wrapping the existing mutable maps
 in `shared_ptr` alone does not provide this behavior. Do not deep-copy the whole
 Catalog for every Mutation or implement a custom MVCC/search engine.
 
-Evaluate a container library such as C++ immer for maps/sets and their lifetime
-management. Its persistent containers preserve in-memory versions, not durable
-files. Library/version, license, platform/build fit and memory policies remain
-subject to evaluation. Consider immutable boxed metadata if affected container
-nodes would otherwise deep-copy unrelated strings/tags/paths. No dependency has
-been selected or added yet.
+The implemented baseline uses Immer v0.9.1 maps/sets with boxed metadata values.
+Its persistent containers preserve in-memory versions, not durable files. See the
+[implemented publication walkthrough](../../contracts/storage.md#how-a-metadata-change-is-published)
+for candidate construction, structural sharing, publication and failure diagrams.
+Platform coverage and memory/performance evaluation remain scoped to actual
+verification; choosing the dependency does not establish those results.
 
 Preserve existing observable UUID ordering and query tie-breaking explicitly if
 the chosen persistent containers are unordered. Existing listing and deterministic

@@ -21,4 +21,4 @@ target_include_directories(folio_backend
 target_compile_features(folio_backend PUBLIC cxx_std_20)
 set_target_properties(folio_backend PROPERTIES CXX_EXTENSIONS OFF)
 target_link_libraries(folio_backend PUBLIC folio_shared
-  PRIVATE tomlplusplus::tomlplusplus msgpack-cxx Threads::Threads)
+  PRIVATE immer tomlplusplus::tomlplusplus msgpack-cxx Threads::Threads)

@@ -6,6 +6,19 @@ include(CTest)
 
 add_subdirectory(thirdparty/libsodium-cmake)
 
+# Immer v0.9.1: persistent Catalog containers (Backend only).
+set(immer_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(immer_BUILD_PERSIST_TESTS OFF CACHE BOOL "" FORCE)
+set(immer_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(immer_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(immer_BUILD_EXTRAS OFF CACHE BOOL "" FORCE)
+add_subdirectory(thirdparty/immer EXCLUDE_FROM_ALL)
+# Treat upstream headers as system headers: Immer contains GCC-only diagnostic
+# pragmas that Clang does not recognize. Keep Folio's own warnings enabled.
+get_target_property(folio_immer_includes immer INTERFACE_INCLUDE_DIRECTORIES)
+set_property(TARGET immer APPEND PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
+  "${folio_immer_includes}")
+
 add_subdirectory(thirdparty/tomlplusplus EXCLUDE_FROM_ALL)
 
 set(MSGPACK_USE_BOOST OFF CACHE BOOL "" FORCE)

@@ -33,7 +33,7 @@ core::RecordMetadata project(const storage::RecordMetadata& value) {
                     value);
 }
 
-std::vector<core::DirectoryMetadata> list_directories(storage::MetadataCatalog& catalog,
+std::vector<core::DirectoryMetadata> list_directories(const storage::MetadataCatalogView& catalog,
                                                       core::DirectoryKind kind) {
   std::vector<core::DirectoryMetadata> result;
   for (const auto& directory : catalog.list_directories(kind)) {
@@ -138,7 +138,7 @@ storage::RecordQuery storage_query(const RecordQuery& query) {
   return result;
 }
 
-OperationResponse query_records(RecordQuery query, storage::MetadataCatalog& catalog,
+OperationResponse query_records(RecordQuery query, const storage::MetadataCatalogView& catalog,
                                 const std::vector<ApplicationWarning>& warnings) {
   if (auto invalid = validate_query(query)) return *invalid;
   auto native = storage_query(query);
@@ -210,7 +210,7 @@ ApplicationError map_load_error(const io::FileError& failure) {
 }
 
 template <class Request>
-OperationResponse load_record(const Request& request, storage::MetadataCatalog& catalog,
+OperationResponse load_record(const Request& request, const storage::MetadataCatalogView& catalog,
                               storage::NormalRepository& repository) {
   constexpr auto type = std::is_same_v<Request, LoadLogRequest>    ? core::RecordType::Log
                         : std::is_same_v<Request, LoadMemoRequest> ? core::RecordType::Memo
@@ -243,7 +243,7 @@ OperationResponse load_record(const Request& request, storage::MetadataCatalog& 
       std::move(loaded));
 }
 
-OperationResponse browse(RecordQuery query, storage::MetadataCatalog& catalog,
+OperationResponse browse(RecordQuery query, const storage::MetadataCatalogView& catalog,
                          const std::vector<ApplicationWarning>& warnings,
                          std::optional<core::RecordType> root_type) {
   auto response = query_records(std::move(query), catalog, warnings);
@@ -259,9 +259,10 @@ OperationResponse browse(RecordQuery query, storage::MetadataCatalog& catalog,
   return ApplicationResponse<BrowseResult>{std::move(result), warnings};
 }
 
-OperationResponse dispatch(const OperationRequest& request, storage::MetadataCatalog& catalog,
+OperationResponse dispatch(const OperationRequest& request, storage::MetadataCatalog& source,
                            storage::NormalRepository& repository,
                            const std::vector<ApplicationWarning>& warnings) {
+  const auto catalog = source.read_view();
   return std::visit(
       [&](const auto& value) -> OperationResponse {
         using R = std::decay_t<decltype(value)>;

@@ -189,7 +189,7 @@ core::Todo::Snapshot authoritative_todo(const core::Id& directory_id) {
 }
 
 void change_log_title(storage::MetadataCatalog& catalog) {
-  const auto found = catalog.find_record(id("17183823-2574-4bfd-b411-99ed177d3e43"));
+  const auto found = catalog.read_view().find_record(id("17183823-2574-4bfd-b411-99ed177d3e43"));
   if (!found) throw std::runtime_error("Missing test Log");
   auto log = std::get<storage::LogMetadata>(*found);
   log.metadata.title = "Changed after first save";
@@ -279,8 +279,8 @@ TEST_F(CatalogCoordinatorTest, FormerStateIndexIsIgnoredAndLeftUntouched) {
     ASSERT_TRUE(outcome.index_error);
     EXPECT_EQ(outcome.index_error->code, storage::CoordinatorErrorCode::Missing);
     EXPECT_EQ(outcome.index_error->path, file);
-    EXPECT_EQ(catalog.query().size(), 1U);
-    EXPECT_TRUE(catalog.find_record(snapshot.id));
+    EXPECT_EQ(catalog.read_view().query().size(), 1U);
+    EXPECT_TRUE(catalog.read_view().find_record(snapshot.id));
     EXPECT_TRUE(catalog.unpersisted());
     EXPECT_FALSE(fs::exists(cache));
     EXPECT_EQ(read_bytes(legacy), bytes);
@@ -304,7 +304,7 @@ TEST_F(CatalogCoordinatorTest, ValidCacheIgnoresFormerStateIndexWithoutScanning)
   const auto loaded = coordinator.startup_load();
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(loaded));
   EXPECT_FALSE(std::get<storage::InitializationOutcome>(loaded).index_error);
-  EXPECT_EQ(owned_catalog.query().size(), 5U);
+  EXPECT_EQ(owned_catalog.read_view().query().size(), 5U);
   EXPECT_FALSE(owned_catalog.unpersisted());
   EXPECT_EQ(read_bytes(legacy), "invalid old Index");
 }
@@ -330,7 +330,7 @@ TEST_F(CatalogCoordinatorTest, CacheRemovalBetweenSessionsRebuildsWithoutEntryLo
     ASSERT_TRUE(std::get<storage::InitializationOutcome>(loaded).index_error);
     EXPECT_EQ(std::get<storage::InitializationOutcome>(loaded).index_error->code,
               storage::CoordinatorErrorCode::Missing);
-    EXPECT_TRUE(catalog.find_record(snapshot.id));
+    EXPECT_TRUE(catalog.read_view().find_record(snapshot.id));
     EXPECT_TRUE(catalog.unpersisted());
     EXPECT_FALSE(fs::exists(file));
     ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.finish_session()));
@@ -356,7 +356,7 @@ TEST_F(CatalogCoordinatorTest, InvalidCacheObjectsAreFatalWithoutReconstruction)
     storage::CatalogCoordinator coordinator{paths(), catalog};
     expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::InvalidPath);
     EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Unavailable);
-    EXPECT_TRUE(catalog.query().empty());
+    EXPECT_TRUE(catalog.read_view().query().empty());
     expect_error(coordinator.shutdown_save(), storage::CoordinatorErrorCode::Unavailable);
     EXPECT_FALSE(fs::exists(state / "index"));
   }
@@ -373,7 +373,7 @@ TEST_F(CatalogCoordinatorTest, BorrowedCatalogSurvivesCoordinatorWithoutConstruc
     EXPECT_FALSE(fs::exists(vault));
     EXPECT_FALSE(fs::exists(state / "index"));
     EXPECT_FALSE(fs::exists(cache));
-    EXPECT_EQ(owned_catalog.query().size(), 5U);
+    EXPECT_EQ(owned_catalog.read_view().query().size(), 5U);
   }
   const auto after = codec::encode_index(owned_catalog);
   ASSERT_TRUE(std::holds_alternative<std::string>(after));
@@ -422,25 +422,25 @@ TEST_F(CatalogCoordinatorTest, PersistedLoadedCatalogSkipsShutdownIoAndQueriesMe
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_FALSE(owned_catalog.unpersisted());
-  EXPECT_EQ(owned_catalog.query().size(), 5U);
-  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Log).records.size(), 1U);
-  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Memo).directories.size(), 1U);
-  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Todo).directories.size(), 1U);
+  EXPECT_EQ(owned_catalog.read_view().query().size(), 5U);
+  EXPECT_EQ(owned_catalog.read_view().list_root(storage::RecordType::Log).records.size(), 1U);
+  EXPECT_EQ(owned_catalog.read_view().list_root(storage::RecordType::Memo).directories.size(), 1U);
+  EXPECT_EQ(owned_catalog.read_view().list_root(storage::RecordType::Todo).directories.size(), 1U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-                owned_catalog.list_directory(core::DirectoryKind::Memo,
-                                             id("87183823-2574-4bfd-b411-99ed177d3e43")))
+                owned_catalog.read_view().list_directory(
+                    core::DirectoryKind::Memo, id("87183823-2574-4bfd-b411-99ed177d3e43")))
                 .size(),
             1U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-                owned_catalog.list_directory(core::DirectoryKind::Todo,
-                                             id("97183823-2574-4bfd-b411-99ed177d3e43")))
+                owned_catalog.read_view().list_directory(
+                    core::DirectoryKind::Todo, id("97183823-2574-4bfd-b411-99ed177d3e43")))
                 .size(),
             1U);
   const auto encoded = codec::encode_index(owned_catalog);
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
   EXPECT_EQ(std::get<std::string>(encoded), read_bytes(file));
   ASSERT_TRUE(fs::remove(file));
-  EXPECT_EQ(owned_catalog.query().size(), 5U);
+  EXPECT_EQ(owned_catalog.read_view().query().size(), 5U);
   const auto result = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(result));
   EXPECT_EQ(std::get<storage::SaveOutcome>(result), storage::SaveOutcome::SkippedPersisted);
@@ -479,18 +479,18 @@ TEST_F(CatalogCoordinatorTest, UnpersistedEmptyCatalogCanReplaceAndMissingTarget
   seed(make_catalog());
   storage::CatalogCoordinator coordinator{paths(), owned_catalog};
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
-  for (const auto& entry : owned_catalog.query()) {
+  for (const auto& entry : owned_catalog.read_view().query()) {
     EXPECT_TRUE(std::holds_alternative<std::monostate>(owned_catalog.remove_record(
         std::visit([](const auto& value) { return value.metadata.id; }, entry))));
   }
   // Directory records must be removed after their members.
   for (const auto kind : {core::DirectoryKind::Memo, core::DirectoryKind::Todo}) {
-    for (const auto& directory : owned_catalog.list_directories(kind))
+    for (const auto& directory : owned_catalog.read_view().list_directories(kind))
       EXPECT_TRUE(std::holds_alternative<std::monostate>(
           owned_catalog.remove_directory(directory.metadata.id)));
   }
   EXPECT_TRUE(owned_catalog.unpersisted());
-  EXPECT_TRUE(owned_catalog.query().empty());
+  EXPECT_TRUE(owned_catalog.read_view().query().empty());
   ASSERT_TRUE(fs::remove(file));
   const auto result = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(result));
@@ -499,7 +499,7 @@ TEST_F(CatalogCoordinatorTest, UnpersistedEmptyCatalogCanReplaceAndMissingTarget
   EXPECT_FALSE(owned_catalog.unpersisted());
   const auto decoded = codec::decode_index(read_bytes(file));
   ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
-  EXPECT_TRUE(std::get<storage::MetadataCatalog>(decoded).query().empty());
+  EXPECT_TRUE(std::get<storage::MetadataCatalog>(decoded).read_view().query().empty());
   expect_no_data_roots();
 }
 
@@ -574,7 +574,7 @@ TEST_F(CatalogCoordinatorTest, EncodingFailurePreservesExistingCacheAndUnpersist
   storage::CatalogCoordinator coordinator{paths(), owned_catalog};
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
   auto log = std::get<storage::LogMetadata>(
-      *owned_catalog.find_record(id("17183823-2574-4bfd-b411-99ed177d3e43")));
+      *owned_catalog.read_view().find_record(id("17183823-2574-4bfd-b411-99ed177d3e43")));
   log.metadata.log_date.date = std::chrono::year{-1} / 1 / 1;
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       owned_catalog.update_record(storage::RecordMetadata{log})));
@@ -692,7 +692,7 @@ TEST_F(CatalogCoordinatorTest, MissingIndexRebuildsAuthoritativeFilesWithoutInde
   EXPECT_TRUE(std::get<std::vector<storage::ExcludedObject>>(rebuilt).empty());
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_TRUE(owned_catalog.unpersisted());
-  const auto found = owned_catalog.find_record(snapshot.id);
+  const auto found = owned_catalog.read_view().find_record(snapshot.id);
   ASSERT_TRUE(found.has_value());
   EXPECT_EQ(std::get<storage::LogMetadata>(*found).metadata.title, snapshot.title);
   EXPECT_EQ(std::get<storage::LogMetadata>(*found).metadata.created.timestamp,
@@ -760,7 +760,7 @@ TEST_F(CatalogCoordinatorTest, EmptyRebuildEstablishesReadyUnpersistedCatalog) {
   const auto rebuilt = coordinator.refresh_all();
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(rebuilt));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
-  EXPECT_TRUE(owned_catalog.query().empty());
+  EXPECT_TRUE(owned_catalog.read_view().query().empty());
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_FALSE(fs::exists(normal));
   EXPECT_FALSE(fs::exists(state / "index"));
@@ -782,7 +782,7 @@ TEST_F(CatalogCoordinatorTest, RebuildReportsDiagnosticsWithoutIndexIo) {
   const auto& diagnostics = std::get<std::vector<storage::ExcludedObject>>(rebuilt);
   ASSERT_EQ(diagnostics.size(), 1U);
   EXPECT_FALSE(diagnostics.front().path.empty());
-  EXPECT_EQ(owned_catalog.query().size(), 1U);
+  EXPECT_EQ(owned_catalog.read_view().query().size(), 1U);
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_FALSE(fs::exists(state / "index"));
 }
@@ -796,8 +796,10 @@ TEST_F(CatalogCoordinatorTest, RebuildBeforeStartupPreventsCacheOverwriteByStart
   storage::CatalogCoordinator coordinator{paths(), owned_catalog};
   ASSERT_TRUE(
       std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
-  EXPECT_TRUE(owned_catalog.find_record(snapshot.id).has_value());
-  EXPECT_FALSE(owned_catalog.find_record(id("17183823-2574-4bfd-b411-99ed177d3e43")).has_value());
+  EXPECT_TRUE(owned_catalog.read_view().find_record(snapshot.id).has_value());
+  EXPECT_FALSE(owned_catalog.read_view()
+                   .find_record(id("17183823-2574-4bfd-b411-99ed177d3e43"))
+                   .has_value());
   expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_TRUE(owned_catalog.unpersisted());
@@ -817,7 +819,7 @@ TEST_F(CatalogCoordinatorTest, StartupLoadsValidIndexWithoutScanningNormalFiles)
   EXPECT_TRUE(outcome.diagnostics.empty());
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_FALSE(owned_catalog.unpersisted());
-  EXPECT_EQ(owned_catalog.query().size(), 5U);
+  EXPECT_EQ(owned_catalog.read_view().query().size(), 5U);
   EXPECT_EQ(read_bytes(file), old_bytes);
   expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);
 }
@@ -839,7 +841,7 @@ TEST_F(CatalogCoordinatorTest, StartupFallsBackForMissingCorruptAndUnsupportedIn
     EXPECT_TRUE(outcome.diagnostics.empty());
     EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
     EXPECT_TRUE(owned_catalog.unpersisted());
-    EXPECT_TRUE(owned_catalog.find_record(snapshot.id).has_value());
+    EXPECT_TRUE(owned_catalog.read_view().find_record(snapshot.id).has_value());
     EXPECT_EQ(fs::exists(file) ? read_bytes(file) : std::string{}, previous);
     expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);
   };
@@ -910,17 +912,19 @@ TEST_F(CatalogCoordinatorTest, StartupFallbackRestoresMixedMetadataAndDirectoryM
   const auto actual_bytes = codec::encode_index(owned_catalog);
   ASSERT_TRUE(std::holds_alternative<std::string>(actual_bytes));
   EXPECT_EQ(std::get<std::string>(actual_bytes), std::get<std::string>(expected_bytes));
-  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Log).records.size(), 1U);
-  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Memo).records.size(), 0U);
-  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Todo).records.size(), 0U);
-  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-                owned_catalog.list_directory(core::DirectoryKind::Memo, memo_directory.id))
-                .size(),
-            1U);
-  EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-                owned_catalog.list_directory(core::DirectoryKind::Todo, todo_directory.id))
-                .size(),
-            1U);
+  EXPECT_EQ(owned_catalog.read_view().list_root(storage::RecordType::Log).records.size(), 1U);
+  EXPECT_EQ(owned_catalog.read_view().list_root(storage::RecordType::Memo).records.size(), 0U);
+  EXPECT_EQ(owned_catalog.read_view().list_root(storage::RecordType::Todo).records.size(), 0U);
+  EXPECT_EQ(
+      std::get<std::vector<storage::RecordMetadata>>(
+          owned_catalog.read_view().list_directory(core::DirectoryKind::Memo, memo_directory.id))
+          .size(),
+      1U);
+  EXPECT_EQ(
+      std::get<std::vector<storage::RecordMetadata>>(
+          owned_catalog.read_view().list_directory(core::DirectoryKind::Todo, todo_directory.id))
+          .size(),
+      1U);
   EXPECT_FALSE(fs::exists(state / "index"));
 }
 
@@ -953,7 +957,7 @@ TEST_F(CatalogCoordinatorTest, StartupMissingIndexAndEmptyNormalRootBuildsEmptyR
   EXPECT_EQ(outcome.index_error->code, storage::CoordinatorErrorCode::Missing);
   EXPECT_TRUE(outcome.diagnostics.empty());
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
-  EXPECT_TRUE(owned_catalog.query().empty());
+  EXPECT_TRUE(owned_catalog.read_view().query().empty());
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_FALSE(fs::exists(normal));
   EXPECT_FALSE(fs::exists(state / "index"));
@@ -1008,7 +1012,7 @@ TEST_F(CatalogCoordinatorTest, FailedRefreshPreservesPersistedCatalogAndReadySta
   expect_error(failed, storage::CoordinatorErrorCode::StorageFailure);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_FALSE(owned_catalog.unpersisted());
-  EXPECT_EQ(owned_catalog.query().size(), 5U);
+  EXPECT_EQ(owned_catalog.read_view().query().size(), 5U);
   EXPECT_EQ(read_bytes(file), original);
 }
 
@@ -1027,8 +1031,10 @@ TEST_F(CatalogCoordinatorTest, ExplicitRefreshReplacesCatalogWithoutIndexIo) {
   EXPECT_EQ(std::get<std::vector<storage::ExcludedObject>>(refreshed).size(), 1U);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_TRUE(owned_catalog.unpersisted());
-  EXPECT_TRUE(owned_catalog.find_record(snapshot.id).has_value());
-  EXPECT_FALSE(owned_catalog.find_record(id("17183823-2574-4bfd-b411-99ed177d3e43")).has_value());
+  EXPECT_TRUE(owned_catalog.read_view().find_record(snapshot.id).has_value());
+  EXPECT_FALSE(owned_catalog.read_view()
+                   .find_record(id("17183823-2574-4bfd-b411-99ed177d3e43"))
+                   .has_value());
   EXPECT_EQ(read_bytes(file), cached_bytes);
   const auto saved = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(saved));
@@ -1105,8 +1111,8 @@ TEST_F(CatalogCoordinatorTest, PreviousMarkerOverridesValidStaleIndexAndIsNotRep
   const auto& outcome = std::get<storage::InitializationOutcome>(loaded);
   EXPECT_TRUE(outcome.previous_session_incomplete);
   EXPECT_FALSE(outcome.index_error); // Cache was bypassed, not read and rejected.
-  EXPECT_EQ(owned_catalog.query().size(), 1U);
-  EXPECT_TRUE(owned_catalog.find_record(log.id));
+  EXPECT_EQ(owned_catalog.read_view().query().size(), 1U);
+  EXPECT_TRUE(owned_catalog.read_view().find_record(log.id));
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_EQ(read_bytes(file), cached);
   EXPECT_EQ(fs::last_write_time(state / "session.marker"), time);
@@ -1153,7 +1159,7 @@ TEST_F(CatalogCoordinatorTest, UnsafeMarkerAndStateObjectsNeverBecomeReadyEvenTh
   storage::CatalogCoordinator coordinator{paths(), owned_catalog};
   expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::InvalidPath);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Unavailable);
-  EXPECT_TRUE(owned_catalog.query().empty());
+  EXPECT_TRUE(owned_catalog.read_view().query().empty());
   expect_error(coordinator.refresh_all(), storage::CoordinatorErrorCode::InvalidPath);
   EXPECT_NE(coordinator.status(), storage::CatalogStatus::Ready);
   expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);
@@ -1198,8 +1204,8 @@ TEST_F(CatalogCoordinatorTest, AbandonedSessionForcesRebuildAfterAuthoritativeMu
   const auto loaded = next.startup_load();
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(loaded));
   EXPECT_TRUE(std::get<storage::InitializationOutcome>(loaded).previous_session_incomplete);
-  EXPECT_TRUE(restored.find_record(log.id));
-  EXPECT_EQ(restored.query().size(), 1U);
+  EXPECT_TRUE(restored.read_view().find_record(log.id));
+  EXPECT_EQ(restored.read_view().query().size(), 1U);
 }
 
 TEST_F(CatalogCoordinatorTest, InterruptedIndexWriteWithMarkerNeverPublishesPartialCatalog) {
@@ -1214,7 +1220,7 @@ TEST_F(CatalogCoordinatorTest, InterruptedIndexWriteWithMarkerNeverPublishesPart
   const auto loaded = next.startup_load();
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(loaded));
   EXPECT_TRUE(std::get<storage::InitializationOutcome>(loaded).previous_session_incomplete);
-  EXPECT_TRUE(restored.query().empty());
+  EXPECT_TRUE(restored.read_view().query().empty());
   EXPECT_TRUE(restored.unpersisted());
   EXPECT_EQ(read_bytes(file), "incomplete index publication");
 }
@@ -1297,10 +1303,10 @@ TEST_F(CatalogCoordinatorTest, FailedMarkerDurabilityCannotPublishDecodedOrRebui
     ASSERT_TRUE(std::get<storage::CoordinatorError>(loaded).file_error);
     EXPECT_EQ(std::get<storage::CoordinatorError>(loaded).file_error->code,
               folio::io::FileErrorCode::DurabilityFailure);
-    EXPECT_TRUE(owned_catalog.query().empty());
+    EXPECT_TRUE(owned_catalog.read_view().query().empty());
     EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Unavailable);
     expect_error(coordinator.refresh_all(), storage::CoordinatorErrorCode::StorageFailure);
-    EXPECT_TRUE(owned_catalog.query().empty());
+    EXPECT_TRUE(owned_catalog.read_view().query().empty());
   }
   ASSERT_TRUE(
       std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
@@ -1336,8 +1342,8 @@ TEST_F(CatalogCoordinatorTest, RuntimeCrudAndRefreshDoNotRewriteMarkerOrIndex) {
     storage::NormalRepository repository{normal};
     ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(
         authoritative_log(), coordinator.log_creation_callback(), coordinator.creation_check())));
-    EXPECT_TRUE(owned_catalog.find_record(authoritative_log().id));
-    EXPECT_EQ(owned_catalog.query().size(), 6U);
+    EXPECT_TRUE(owned_catalog.read_view().find_record(authoritative_log().id));
+    EXPECT_EQ(owned_catalog.read_view().query().size(), 6U);
     ASSERT_TRUE(
         std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
   }
@@ -1355,14 +1361,14 @@ TEST_F(CatalogCoordinatorTest, FailureBeforeMarkerPublicationLeavesValidCacheUsa
     storage::CatalogCoordinator blocked{paths(), owned_catalog};
     expect_error(blocked.startup_load(), storage::CoordinatorErrorCode::StorageFailure);
     EXPECT_EQ(blocked.status(), storage::CatalogStatus::Unavailable);
-    EXPECT_TRUE(owned_catalog.query().empty());
+    EXPECT_TRUE(owned_catalog.read_view().query().empty());
     EXPECT_FALSE(fs::exists(state / "session.marker"));
   }
   storage::CatalogCoordinator next{paths(), owned_catalog};
   const auto loaded = next.startup_load();
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(loaded));
   EXPECT_FALSE(std::get<storage::InitializationOutcome>(loaded).previous_session_incomplete);
-  EXPECT_EQ(owned_catalog.query().size(), 5U);
+  EXPECT_EQ(owned_catalog.read_view().query().size(), 5U);
 }
 
 bool fail_regular_file_sync(int fd) {
@@ -1397,7 +1403,7 @@ TEST_F(CatalogCoordinatorTest, MarkerCreationSyncFailureRetainsPublishedMarkerAn
     ASSERT_TRUE(std::get<storage::CoordinatorError>(loaded).file_error);
     EXPECT_TRUE(std::get<storage::CoordinatorError>(loaded).file_error->replacement_completed);
     EXPECT_TRUE(fs::is_regular_file(state / "session.marker"));
-    EXPECT_TRUE(owned_catalog.query().empty());
+    EXPECT_TRUE(owned_catalog.read_view().query().empty());
     EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Unavailable);
   }
   storage::MetadataCatalog recovered;

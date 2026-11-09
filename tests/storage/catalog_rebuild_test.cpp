@@ -225,7 +225,7 @@ TEST_F(CatalogRebuildTest, EnumeratesCompleteMetadataAndActualRenamedLocators) {
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded_actual));
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded_expected));
   EXPECT_EQ(std::get<std::string>(encoded_actual), std::get<std::string>(encoded_expected));
-  const auto loaded_log = catalog.find_record(l.id);
+  const auto loaded_log = catalog.read_view().find_record(l.id);
   ASSERT_TRUE(loaded_log.has_value());
   const auto& log_metadata = std::get<storage::LogMetadata>(*loaded_log);
   EXPECT_EQ(log_metadata.relative_path, renamed_log);
@@ -235,13 +235,13 @@ TEST_F(CatalogRebuildTest, EnumeratesCompleteMetadataAndActualRenamedLocators) {
   EXPECT_EQ(log_metadata.metadata.created.timezone, l.created.timezone);
   EXPECT_EQ(log_metadata.metadata.created.location, l.created.location);
   EXPECT_EQ(log_metadata.metadata.log_date.date, l.log_date.date);
-  const auto loaded_memo = catalog.find_record(m.id);
+  const auto loaded_memo = catalog.read_view().find_record(m.id);
   ASSERT_TRUE(loaded_memo.has_value());
   const auto& memo_metadata = std::get<storage::MemoMetadata>(*loaded_memo);
   EXPECT_EQ(memo_metadata.relative_path, renamed_memo);
   EXPECT_EQ(memo_metadata.metadata.directory_id, md.id);
   EXPECT_EQ(memo_metadata.metadata.title, m.title);
-  const auto loaded_todo = catalog.find_record(t.id);
+  const auto loaded_todo = catalog.read_view().find_record(t.id);
   ASSERT_TRUE(loaded_todo.has_value());
   const auto& todo_metadata = std::get<storage::TodoMetadata>(*loaded_todo);
   EXPECT_EQ(todo_metadata.relative_path, renamed_todo);
@@ -250,17 +250,17 @@ TEST_F(CatalogRebuildTest, EnumeratesCompleteMetadataAndActualRenamedLocators) {
   EXPECT_EQ(todo_metadata.metadata.status, t.status);
   EXPECT_EQ(todo_metadata.metadata.priority, t.priority);
   EXPECT_EQ(todo_metadata.metadata.due_date.has_value(), t.due_date.has_value());
-  EXPECT_EQ(catalog.list_root(storage::RecordType::Log).records.size(), 1U);
-  EXPECT_EQ(catalog.list_root(storage::RecordType::Memo).directories.size(), 1U);
-  EXPECT_EQ(catalog.list_root(storage::RecordType::Todo).directories.size(), 1U);
-  EXPECT_EQ(catalog.list_root(storage::RecordType::Memo).records.size(), 1U);
-  EXPECT_EQ(catalog.list_root(storage::RecordType::Todo).records.size(), 1U);
+  EXPECT_EQ(catalog.read_view().list_root(storage::RecordType::Log).records.size(), 1U);
+  EXPECT_EQ(catalog.read_view().list_root(storage::RecordType::Memo).directories.size(), 1U);
+  EXPECT_EQ(catalog.read_view().list_root(storage::RecordType::Todo).directories.size(), 1U);
+  EXPECT_EQ(catalog.read_view().list_root(storage::RecordType::Memo).records.size(), 1U);
+  EXPECT_EQ(catalog.read_view().list_root(storage::RecordType::Todo).records.size(), 1U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-                catalog.list_directory(core::DirectoryKind::Memo, md.id))
+                catalog.read_view().list_directory(core::DirectoryKind::Memo, md.id))
                 .size(),
             1U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-                catalog.list_directory(core::DirectoryKind::Todo, td.id))
+                catalog.read_view().list_directory(core::DirectoryKind::Todo, td.id))
                 .size(),
             1U);
   EXPECT_EQ(bytes(root / renamed_log), before_log);
@@ -451,22 +451,22 @@ TEST_F(CatalogRebuildTest, RebuildFailurePreservesOldCatalogAndUnpersistedState)
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(duplicate));
   EXPECT_EQ(std::get<storage::StorageError>(duplicate).code,
             storage::StorageErrorCode::DuplicateId);
-  EXPECT_TRUE(catalog.find_record(log().id).has_value());
+  EXPECT_TRUE(catalog.read_view().find_record(log().id).has_value());
   EXPECT_FALSE(catalog.unpersisted());
   const auto md = memo_directory();
   auto new_memo = storage::metadata_from(memo(md.id), fs::path{"memos/member.md"});
   const auto bad = catalog.rebuild({}, {std::get<storage::MemoMetadata>(new_memo)}, {}, {});
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(bad));
-  EXPECT_TRUE(catalog.find_record(log().id).has_value());
-  EXPECT_FALSE(catalog.find_record(memo().id).has_value());
+  EXPECT_TRUE(catalog.read_view().find_record(log().id).has_value());
+  EXPECT_FALSE(catalog.read_view().find_record(memo().id).has_value());
   EXPECT_FALSE(catalog.unpersisted());
   const auto cross_kind = catalog.rebuild({}, {},
                                           {std::get<storage::TodoMetadata>(storage::metadata_from(
                                               todo(md.id), fs::path{"todos/incorrect.toml"}))},
                                           {storage::metadata_from(md, fs::path{"memos/group"})});
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(cross_kind));
-  EXPECT_TRUE(catalog.find_record(log().id).has_value());
-  EXPECT_FALSE(catalog.find_record(todo().id).has_value());
+  EXPECT_TRUE(catalog.read_view().find_record(log().id).has_value());
+  EXPECT_FALSE(catalog.read_view().find_record(todo().id).has_value());
   EXPECT_FALSE(catalog.unpersisted());
 
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
@@ -475,7 +475,7 @@ TEST_F(CatalogRebuildTest, RebuildFailurePreservesOldCatalogAndUnpersistedState)
   const auto conflict = catalog.rebuild(
       {std::get<storage::LogMetadata>(old), std::get<storage::LogMetadata>(old)}, {}, {}, {});
   ASSERT_TRUE(std::holds_alternative<storage::StorageError>(conflict));
-  EXPECT_TRUE(catalog.find_directory(md.id).has_value());
+  EXPECT_TRUE(catalog.read_view().find_directory(md.id).has_value());
   EXPECT_TRUE(catalog.unpersisted());
 }
 
@@ -489,11 +489,11 @@ TEST_F(CatalogRebuildTest, SuccessfulEmptyReplacementClearsMembershipAndMarksUnp
   catalog.mark_persisted();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.rebuild({}, {}, {}, {})));
   EXPECT_TRUE(catalog.unpersisted());
-  EXPECT_TRUE(catalog.query().empty());
-  EXPECT_TRUE(catalog.list_directories(core::DirectoryKind::Memo).empty());
-  EXPECT_TRUE(catalog.list_root(storage::RecordType::Memo).directories.empty());
-  EXPECT_FALSE(catalog.find_record(memo().id).has_value());
-  EXPECT_FALSE(catalog.find_directory(md.id).has_value());
+  EXPECT_TRUE(catalog.read_view().query().empty());
+  EXPECT_TRUE(catalog.read_view().list_directories(core::DirectoryKind::Memo).empty());
+  EXPECT_TRUE(catalog.read_view().list_root(storage::RecordType::Memo).directories.empty());
+  EXPECT_FALSE(catalog.read_view().find_record(memo().id).has_value());
+  EXPECT_FALSE(catalog.read_view().find_directory(md.id).has_value());
 }
 
 TEST_F(CatalogRebuildTest, CrossCategoryRebuildFailurePreservesActiveCatalog) {
@@ -514,8 +514,8 @@ TEST_F(CatalogRebuildTest, CrossCategoryRebuildFailurePreservesActiveCatalog) {
     const auto after = storage::index_codec::encode_index(catalog);
     ASSERT_TRUE(std::holds_alternative<std::string>(after));
     EXPECT_EQ(std::get<std::string>(after), std::get<std::string>(before));
-    EXPECT_TRUE(catalog.find_record(old.metadata.id));
-    EXPECT_FALSE(catalog.find_directory(directory.metadata.id));
+    EXPECT_TRUE(catalog.read_view().find_record(old.metadata.id));
+    EXPECT_FALSE(catalog.read_view().find_directory(directory.metadata.id));
   }
 }
 

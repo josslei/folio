@@ -299,7 +299,7 @@ TEST_F(Backend, CrashReleasesOwnershipAndRestartRebuildsDespiteValidStaleIndex) 
   ASSERT_TRUE(until([&] { return fs::exists(children.back().result); }));
   auto decoded = storage::index_codec::decode_index(read(index()));
   ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
-  EXPECT_TRUE(std::get<storage::MetadataCatalog>(decoded).contains_entry(memo.id()));
+  EXPECT_TRUE(std::get<storage::MetadataCatalog>(decoded).read_view().contains_entry(memo.id()));
   EXPECT_FALSE(fs::exists(marker()));
 }
 

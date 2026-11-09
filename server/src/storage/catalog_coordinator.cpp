@@ -183,7 +183,7 @@ CatalogCoordinator::CatalogCoordinator(StoragePaths paths, MetadataCatalog& cata
                                   "Creation requires an initialized, consistent Catalog",
                                   {},
                                   false};
-            if (catalog_.contains_entry(id))
+            if (catalog_.read_view().contains_entry(id))
               return StorageError{StorageErrorCode::DuplicateId,
                                   paths_.normal_root,
                                   "Entry UUID already exists in Catalog",

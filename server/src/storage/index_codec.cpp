@@ -710,8 +710,9 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
 }
 } // namespace
 
-::folio::core::Result<std::string, IndexCodecError> encode_index(const MetadataCatalog& catalog) {
+::folio::core::Result<std::string, IndexCodecError> encode_index(const MetadataCatalog& source) {
   try {
+    const auto catalog = source.read_view();
     auto directories = catalog.list_directories(DirectoryKind::Memo);
     auto todo_directories = catalog.list_directories(DirectoryKind::Todo);
     directories.insert(directories.end(), todo_directories.begin(), todo_directories.end());

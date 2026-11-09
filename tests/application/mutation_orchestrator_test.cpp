@@ -81,7 +81,7 @@ protected:
         if (move_id) {
           EXPECT_EQ(error->status, app::AuthoritativeChangeStatus::Unknown);
           EXPECT_EQ(error->evidence.steps.back().observation, app::StepObservation::Published);
-          const auto saved = *catalog.find_record(*move_id);
+          const auto saved = *catalog.read_view().find_record(*move_id);
           return std::get<storage::Located<Metadata>>(saved).metadata;
         }
       }
@@ -127,7 +127,7 @@ TEST_F(MutationOrchestrator, CreateAllKindsUsesBackendIdsAndPreservesBothFronten
   EXPECT_EQ(todo.modified.timestamp, modified.timestamp);
   EXPECT_EQ(a.modified.timezone, modified.timezone);
   EXPECT_EQ(a.modified.location, modified.location);
-  EXPECT_TRUE(catalog.contains_entry(dir.id));
+  EXPECT_TRUE(catalog.read_view().contains_entry(dir.id));
   EXPECT_TRUE(catalog.unpersisted());
   EXPECT_TRUE(fs::exists(paths.application.state / "session.marker"));
   EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
@@ -146,7 +146,7 @@ TEST_F(MutationOrchestrator, UpdateMoveInEitherOrderPreservesCurrentMembershipAn
   EXPECT_EQ(updated.directory_id, dir.id);
   EXPECT_EQ(updated.modified.timestamp, time.timestamp); // Context is not a monotonic version.
   saved<core::MemoMetadata>(app::internal::MoveMemoRequest{record.id, {}, modified});
-  const auto located = std::get<storage::MemoMetadata>(*catalog.find_record(record.id));
+  const auto located = std::get<storage::MemoMetadata>(*catalog.read_view().find_record(record.id));
   auto state =
       std::get<core::Memo::Snapshot>(repository.load_memo(record.id, located.relative_path));
   EXPECT_EQ(state.title, old_fields.title);
@@ -176,7 +176,8 @@ TEST_F(MutationOrchestrator, LocksCoverRecordsAndDirectoriesAndExpireWithSession
             app::ErrorReason::LockConflict);
   saved<core::DirectoryMetadata>(app::internal::RenameDirectoryRequest{dir.id, "Owner rename"});
   EXPECT_TRUE(std::holds_alternative<core::Memo::Snapshot>(repository.load_memo(
-      record.id, std::get<storage::MemoMetadata>(*catalog.find_record(record.id)).relative_path)));
+      record.id,
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(record.id)).relative_path)));
   first.reset();
   acquire(record.id, second);
   acquire(dir.id, second);
@@ -205,7 +206,8 @@ TEST_F(MutationOrchestrator, ImmediateMutationsDoNotRequireLongLivedLocksButCont
                                                                          {}});
   saved<core::TodoMetadata>(
       app::internal::SetTodoStatusRequest{task.id, core::TodoStatus::Completed, time});
-  const auto locator = std::get<storage::TodoMetadata>(*catalog.find_record(task.id)).relative_path;
+  const auto locator =
+      std::get<storage::TodoMetadata>(*catalog.read_view().find_record(task.id)).relative_path;
   auto state = std::get<core::Todo::Snapshot>(repository.load_todo(task.id, locator));
   EXPECT_EQ(state.notes, "retain notes");
   ASSERT_EQ(state.subtasks.size(), 1u);
@@ -235,7 +237,8 @@ TEST_F(MutationOrchestrator, PrerequisitesAndFailedAcquisitionDoNotPublishOrHold
   auto error = failed(app::internal::MoveMemoRequest{record.id, wrong_dir.id, modified});
   EXPECT_EQ(error.status, app::AuthoritativeChangeStatus::NotApplied);
   EXPECT_EQ(error.error.reason, app::ErrorReason::WrongRecordType);
-  auto locator = std::get<storage::MemoMetadata>(*catalog.find_record(record.id)).relative_path;
+  auto locator =
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(record.id)).relative_path;
   fs::remove(paths.normal_root / locator);
   auto acquired = mutations.handle(ipc::AcquireEditRequest{record.id}, first);
   EXPECT_EQ(std::get<app::ApplicationError>(acquired).reason, app::ErrorReason::StaleLocation);
@@ -284,7 +287,8 @@ TEST_F(MutationOrchestrator, CatalogFailureRetainsAppliedAndPreventsFurtherWrite
   EXPECT_EQ(failure.error.reason, app::ErrorReason::CatalogSynchronizationFailed);
   EXPECT_EQ(failure.evidence.steps[0].observation, app::StepObservation::DurabilityConfirmed);
   storage::internal::repository_test_hooks = {};
-  auto locator = std::get<storage::MemoMetadata>(*catalog.find_record(record.id)).relative_path;
+  auto locator =
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(record.id)).relative_path;
   EXPECT_EQ(std::get<core::Memo::Snapshot>(repository.load_memo(record.id, locator)).content,
             "saved content");
   EXPECT_EQ(
@@ -298,7 +302,8 @@ TEST_F(MutationOrchestrator, CatalogFailureRetainsAppliedAndPreventsFurtherWrite
 TEST_F(MutationOrchestrator, MoveFailureRetainsDurableDestinationAndUnremovedSource) {
   auto record = memo();
   auto dir = directory();
-  auto source = std::get<storage::MemoMetadata>(*catalog.find_record(record.id)).relative_path;
+  auto source =
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(record.id)).relative_path;
   storage::internal::repository_test_hooks.remove_source = [](const fs::path&,
                                                               std::error_code& ec) {
     ec = std::make_error_code(std::errc::permission_denied);
@@ -311,7 +316,9 @@ TEST_F(MutationOrchestrator, MoveFailureRetainsDurableDestinationAndUnremovedSou
   EXPECT_EQ(failure.evidence.steps[1].observation, app::StepObservation::NotCompleted);
   EXPECT_TRUE(fs::exists(paths.normal_root / source));
   EXPECT_TRUE(fs::exists(paths.normal_root / "memos" / dir.id.to_string() / source.filename()));
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(record.id)).relative_path, source);
+  EXPECT_EQ(
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(record.id)).relative_path,
+      source);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
 }
 
@@ -338,7 +345,7 @@ TEST_F(MutationOrchestrator, DirectoryCreationFailureDoesNotCallEmptyFolderAnApp
   EXPECT_EQ(failure.status, app::AuthoritativeChangeStatus::NotApplied);
   EXPECT_TRUE(
       fs::is_directory(paths.normal_root / "memos" / failure.evidence.entry_id.to_string()));
-  EXPECT_FALSE(catalog.contains_entry(failure.evidence.entry_id));
+  EXPECT_FALSE(catalog.read_view().contains_entry(failure.evidence.entry_id));
   EXPECT_TRUE(fs::exists(paths.application.state / "session.marker"));
 }
 
@@ -406,7 +413,7 @@ TEST_F(MutationOrchestrator,
       {std::string(1, char(0xff)), "body", {}}, time, modified, {}});
   EXPECT_EQ(bad.status, app::AuthoritativeChangeStatus::NotApplied);
   EXPECT_EQ(bad.error.reason, app::ErrorReason::InvalidMutation);
-  EXPECT_FALSE(catalog.contains_entry(bad.evidence.entry_id));
+  EXPECT_FALSE(catalog.read_view().contains_entry(bad.evidence.entry_id));
   EXPECT_FALSE(fs::exists(paths.normal_root / "memos"));
   auto record = memo();
   acquire(record.id);
@@ -552,7 +559,7 @@ TEST_F(MutationOrchestrator, LogAndTodoFullEditableFieldsReplaceOnlyTheirSupport
   EXPECT_EQ(updated_log.log_date.date, new_date.date);
   EXPECT_TRUE(updated_log.tags.empty());
   const auto log_locator =
-      std::get<storage::LogMetadata>(*catalog.find_record(log.id)).relative_path;
+      std::get<storage::LogMetadata>(*catalog.read_view().find_record(log.id)).relative_path;
   const auto log_state = std::get<core::Log::Snapshot>(repository.load_log(log.id, log_locator));
   EXPECT_EQ(log_state.content, "new body");
   EXPECT_EQ(log_state.created.timestamp, time.timestamp);
@@ -580,7 +587,7 @@ TEST_F(MutationOrchestrator, LogAndTodoFullEditableFieldsReplaceOnlyTheirSupport
   EXPECT_EQ(updated.priority, core::TodoPriority::Low);
   EXPECT_TRUE(updated.due_date);
   const auto todo_locator =
-      std::get<storage::TodoMetadata>(*catalog.find_record(todo.id)).relative_path;
+      std::get<storage::TodoMetadata>(*catalog.read_view().find_record(todo.id)).relative_path;
   const auto todo_state =
       std::get<core::Todo::Snapshot>(repository.load_todo(todo.id, todo_locator));
   EXPECT_EQ(todo_state.notes, "new notes");
@@ -593,7 +600,7 @@ TEST_F(MutationOrchestrator, LogAndTodoFullEditableFieldsReplaceOnlyTheirSupport
 TEST_F(MutationOrchestrator, AuthoritativeMetadataDisagreementRejectsWithoutImplicitRepair) {
   auto record = memo();
   acquire(record.id);
-  const auto located = std::get<storage::MemoMetadata>(*catalog.find_record(record.id));
+  const auto located = std::get<storage::MemoMetadata>(*catalog.read_view().find_record(record.id));
   auto external =
       std::get<core::Memo::Snapshot>(repository.load_memo(record.id, located.relative_path));
   external.title = "externally changed";
@@ -603,8 +610,9 @@ TEST_F(MutationOrchestrator, AuthoritativeMetadataDisagreementRejectsWithoutImpl
       failed(app::internal::UpdateMemoRequest{record.id, {"edit", "body", {}}, modified});
   EXPECT_EQ(failure.status, app::AuthoritativeChangeStatus::NotApplied);
   EXPECT_EQ(failure.error.reason, app::ErrorReason::InvalidData);
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(record.id)).metadata.title,
-            record.title);
+  EXPECT_EQ(
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(record.id)).metadata.title,
+      record.title);
   EXPECT_EQ(
       std::get<core::Memo::Snapshot>(repository.load_memo(record.id, located.relative_path)).title,
       external.title);
@@ -624,7 +632,8 @@ TEST_F(MutationOrchestrator, UnifiedMoveResolvesTypeAndRejectsIncompatibleTarget
 #ifndef _WIN32
   ASSERT_TRUE(std::holds_alternative<ipc::MutationValue>(moved.result));
 #endif
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(record.id)).metadata.directory_id,
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.read_view().find_record(record.id))
+                .metadata.directory_id,
             folder.id);
   auto denied = failed(ipc::MoveRecordRequest{folder.id, {}, modified});
   EXPECT_EQ(denied.error.reason, app::ErrorReason::WrongRecordType);

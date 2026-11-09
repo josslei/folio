@@ -10,9 +10,8 @@
 
 #include <chrono>
 #include <filesystem>
-#include <map>
+#include <memory>
 #include <optional>
-#include <set>
 #include <string>
 #include <variant>
 #include <vector>
@@ -99,12 +98,21 @@ validate_metadata(const DirectoryMetadata& metadata);
 // Compare existing projected fields/locators without reading authoritative data.
 [[nodiscard]] bool metadata_matches(const RecordMetadata& left, const RecordMetadata& right);
 
-// In-memory metadata only. All four Entry types share one UUID identity namespace.
+class MetadataCatalogView;
+
+/// In-memory metadata only. All four Entry types share one UUID identity namespace.
+/// Capture, mutation and Index bookkeeping remain executor-only. Retained views
+/// hold immutable state independently of subsequent publication.
 // Locators are lexically safe relative paths; physical layout belongs to the
 // repository. Lookups return copies, so callers cannot mutate catalog state
 // indirectly. UUID lookup and Directory membership listing use ordered IDs.
 class MetadataCatalog {
 public:
+  MetadataCatalog();
+
+  /// Retains immutable container roots; later writes do not change this view.
+  [[nodiscard]] MetadataCatalogView read_view() const;
+
   [[nodiscard]] ::folio::core::Result<std::monostate, StorageError>
   insert_record(RecordMetadata metadata);
   // Identical updates are successful no-ops and preserve unpersisted state.
@@ -122,6 +130,44 @@ public:
   rebuild(std::vector<LogMetadata> logs, std::vector<MemoMetadata> memos,
           std::vector<TodoMetadata> todos, std::vector<DirectoryMetadata> directories);
 
+  // Changes since the last acknowledged Index snapshot; unrelated to readiness
+  // or Git synchronization. Acknowledge only after load or successful persistence.
+  [[nodiscard]] bool unpersisted() const noexcept;
+  void mark_persisted() noexcept;
+
+private:
+  friend class MetadataCatalogView;
+  struct State;
+  /// Build in isolation; publish only a successful, non-identical candidate.
+  template <class Change> core::Result<std::monostate, StorageError> change(Change&& apply);
+
+  core::Result<std::monostate, StorageError> remove_directory_candidate(State& next, const Id& id);
+  core::Result<std::monostate, StorageError> update_directory_candidate(State& next,
+                                                                        DirectoryMetadata metadata);
+  core::Result<std::monostate, StorageError> insert_directory_candidate(State& next,
+                                                                        DirectoryMetadata metadata);
+  core::Result<std::monostate, StorageError> remove_record_candidate(State& next, const Id& id);
+  core::Result<std::monostate, StorageError> update_record_candidate(State& next,
+                                                                     RecordMetadata metadata);
+  core::Result<std::monostate, StorageError> insert_record_candidate(State& next,
+                                                                     RecordMetadata metadata);
+  [[nodiscard]] bool record_path_occupied(const std::filesystem::path& path,
+                                          std::optional<Id> except = std::nullopt) const;
+  [[nodiscard]] bool directory_referenced(const DirectoryMetadata& directory) const;
+  void change_members(State& next, RecordType type, std::optional<Id> directory_id,
+                      const std::string& key, bool insert);
+
+  // A candidate copies only persistent roots. Metadata boxes share large values.
+  std::shared_ptr<const State> state_;
+  const State& state() const { return *state_; }
+  bool unpersisted_ = false;
+};
+
+/// Backend-private read capability. No mutators or Index bookkeeping are exposed.
+// Views own their roots, so they can outlive the originating Catalog. Capture and
+// publication remain executor-only until runtime synchronization is introduced.
+class MetadataCatalogView {
+public:
   // UUID membership across all four Entry types, without copying metadata.
   [[nodiscard]] bool contains_entry(const Id& id) const;
   [[nodiscard]] std::optional<RecordMetadata> find_record(const Id& id) const;
@@ -131,26 +177,11 @@ public:
   list_directory(DirectoryKind kind, const Id& id) const;
   [[nodiscard]] std::vector<DirectoryMetadata> list_directories(DirectoryKind kind) const;
   [[nodiscard]] std::vector<RecordMetadata> query(const RecordQuery& query = {}) const;
-  // Changes since the last acknowledged Index snapshot; unrelated to readiness
-  // or Git synchronization. Acknowledge only after load or successful persistence.
-  [[nodiscard]] bool unpersisted() const noexcept;
-  void mark_persisted() noexcept;
 
 private:
-  [[nodiscard]] bool record_path_occupied(const std::filesystem::path& path,
-                                          std::optional<Id> except = std::nullopt) const;
-  [[nodiscard]] bool directory_referenced(const DirectoryMetadata& directory) const;
-  [[nodiscard]] std::set<std::string>& members_for(RecordType type, std::optional<Id> directory_id);
-
-  std::map<std::string, LogMetadata> logs_;
-  std::map<std::string, MemoMetadata> memos_;
-  std::map<std::string, TodoMetadata> todos_;
-  std::map<std::string, DirectoryMetadata> directories_;
-  std::set<std::string> log_roots_;
-  std::set<std::string> memo_roots_;
-  std::set<std::string> todo_roots_;
-  std::map<std::string, std::set<std::string>> directory_members_;
-  bool unpersisted_ = false;
+  friend class MetadataCatalog;
+  explicit MetadataCatalogView(std::shared_ptr<const MetadataCatalog::State> state);
+  std::shared_ptr<const MetadataCatalog::State> state_;
 };
 
 } // namespace folio::core::storage

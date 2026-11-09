@@ -454,3 +454,87 @@ Windows/Linux execution and actual power-loss tests require platform validation.
 The Marker does not repair partially completed authoritative multi-file operations;
 scan conflicts remain errors for later Recovery design.
 
+
+## Catalog read views
+
+MetadataCatalog stores an immutable state containing all typed metadata maps and
+membership indexes. Immer persistent maps/sets share unchanged structure; boxed
+metadata shares strings, tags and locators across versions. Each successful change
+builds a private candidate and publishes all affected indexes together. Invalid
+candidates and exceptions retain the previous state; identical updates do not publish.
+
+`read_view()` retains a state independently of the Catalog lifetime. Lookup, listing
+and query methods belong to the view; MetadataCatalog exposes mutation, view
+acquisition and Index bookkeeping rather than duplicate read wrappers. Queries and
+listings return owned results; UUID listing order and query sorting remain explicit.
+Root Browse and Index encoding use one view across their related reads. Index schema
+and Repository/Coordinator callbacks are unchanged. Index-dirty bookkeeping remains
+Catalog-owned and separate from retained views.
+
+Capture, publication and Coordinator readiness remain executor-only in this increment;
+this change does not authorize concurrent access to the live Catalog. Old views are
+valid metadata snapshots, not proof that their filesystem locators remain current.
+Long readers retain old structural branches until their views are released.
+
+### How a metadata change is published
+
+Example: change Memo X's title from `Old` to `New`. These diagrams describe
+in-memory Catalog publication, not authoritative-file persistence.
+
+**1. Current state.** Catalog and an existing MetadataCatalogView retain the same
+immutable State A.
+
+```text
+Catalog.state_ --+
+                 +--> State A --> Memo map --> Box X: "Old"
+Existing view ---+
+```
+
+**2. Private candidate.** `change()` constructs State B by copying the small
+persistent-container root handles. It does not copy all metadata or map nodes.
+B is not yet visible through the Catalog or its existing views.
+
+```text
+Catalog.state_ --> State A -+
+                            |
+                            +--> Shared Memo map --> Box X: "Old"
+                            |
+Private candidate State B --+
+```
+
+**3. Change only the candidate.** The operation-specific helper validates the
+metadata, then updates B's persistent containers. Immer copies the affected map
+paths and creates a new metadata box for X; unrelated branches/values remain
+shared. A's maps and values are untouched.
+
+```text
+State A --> Map root A --> Box X: "Old"
+                 |
+                 +----+
+                      |
+                      +--> Shared unchanged branches / values
+                      |
+                 +----+
+                 |
+State B --> Map root B --> Box X: "New"
+```
+
+If membership changes, the corresponding membership indexes are also updated in
+B before publication. All affected indexes belong to the same candidate state.
+
+**4. Publish or discard.** A successful, non-identical change replaces the
+Catalog's state pointer with B and marks the Index projection dirty. Existing
+views retain A; views acquired afterward retain B.
+
+```text
+Existing view ------> State A --> X: "Old"
+
+Catalog.state_ --+
+                 +--> State B --> X: "New"
+New view --------+
+```
+
+On validation failure or an exception, B is discarded and Catalog continues to
+retain A. An identical update also leaves the current state and dirty flag
+unchanged. No rollback of A is needed: A was never modified. Shared ownership
+releases old states and their unshared data after their last owners disappear.

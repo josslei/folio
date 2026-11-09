@@ -174,7 +174,8 @@ TEST_F(MetadataAccess, CompleteTypedLoadsAndMissingWrongTypeStaleAreDistinct) {
             app::ErrorReason::WrongRecordType);
   EXPECT_EQ(value<app::ApplicationError>(access::LoadMemoRequest{core::Id::generate()}).reason,
             app::ErrorReason::NotFound);
-  const auto metadata = std::get<storage::MemoMetadata>(*catalog.find_record(root.id()));
+  const auto metadata =
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(root.id()));
   fs::remove(paths.normal_root / metadata.relative_path);
   EXPECT_EQ(value<app::ApplicationError>(access::LoadMemoRequest{root.id()}).reason,
             app::ErrorReason::StaleLocation);
@@ -211,7 +212,8 @@ TEST_F(MetadataAccess, InconsistentCatalogProducesWarningAndUnavailableIsAnError
 }
 
 TEST_F(MetadataAccess, MalformedRecordFailureDoesNotPoisonOtherReadsOrFinalizeSession) {
-  const auto metadata = std::get<storage::MemoMetadata>(*catalog.find_record(root.id()));
+  const auto metadata =
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(root.id()));
   std::ofstream(paths.normal_root / metadata.relative_path, std::ios::trunc)
       << "malformed authoritative Record";
   const auto failure = value<app::ApplicationError>(access::LoadMemoRequest{root.id()});
@@ -239,7 +241,7 @@ TEST_F(MetadataAccess, FinalizedSessionRejectsAccessAndManagedCreation) {
   ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(result));
   EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
             storage::MutationFailureStage::BeforeAuthoritativeChange);
-  EXPECT_FALSE(catalog.contains_entry(late.id()));
+  EXPECT_FALSE(catalog.read_view().contains_entry(late.id()));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Stopped);
   EXPECT_FALSE(fs::exists(paths.application.state / "session.marker"));
 }

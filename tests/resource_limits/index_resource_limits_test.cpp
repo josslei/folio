@@ -88,7 +88,7 @@ protected:
     EXPECT_TRUE(outcome.diagnostics.empty());
     EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
     EXPECT_TRUE(owned_catalog.unpersisted());
-    EXPECT_EQ(owned_catalog.query().size(), expected_entries);
+    EXPECT_EQ(owned_catalog.read_view().query().size(), expected_entries);
     expect_cache_unchanged();
     const auto repeated = coordinator.startup_load();
     ASSERT_TRUE(std::holds_alternative<storage::CoordinatorError>(repeated));

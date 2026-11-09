@@ -162,7 +162,8 @@ OperationResponse MutationOrchestrator::acquire_edit(const core::Id& id, const S
                    ErrorCategory::ApplicationUnavailable);
   if (auto error = check_lock(id, session, false)) return *error;
   std::optional<EditSnapshot> snapshot;
-  if (const auto directory = catalog_.find_directory(id)) {
+  const auto view = catalog_.read_view();
+  if (const auto directory = view.find_directory(id)) {
     if (directory->relative_path != directory_path(directory->metadata))
       return problem(ErrorReason::StaleLocation, "Directory location disagrees with Catalog",
                      ErrorCategory::AuthoritativeDataProblem);
@@ -176,7 +177,7 @@ OperationResponse MutationOrchestrator::acquire_edit(const core::Id& id, const S
                      ErrorCategory::AuthoritativeDataProblem);
     snapshot = std::move(value);
   } else {
-    const auto metadata = catalog_.find_record(id);
+    const auto metadata = view.find_record(id);
     if (!metadata)
       return problem(ErrorReason::NotFound, "Entry not found", ErrorCategory::TargetUnavailable);
     OperationRequest request = LoadLogRequest{id};
@@ -246,9 +247,10 @@ NormalMutationResponse MutationOrchestrator::mutate(const MutationRequest& reque
                                                     const Session& session) {
   return std::visit(
       [&](const auto& operation) -> NormalMutationResponse {
+        const auto view = catalog_.read_view();
         using T = std::decay_t<decltype(operation)>;
         if constexpr (std::is_same_v<T, MoveRecordRequest>) {
-          const auto metadata = catalog_.find_record(operation.id);
+          const auto metadata = view.find_record(operation.id);
           if (metadata && std::holds_alternative<storage::Located<core::MemoMetadata>>(*metadata))
             return mutate(
                 {request.mutation_id,
@@ -261,7 +263,7 @@ NormalMutationResponse MutationOrchestrator::mutate(const MutationRequest& reque
                 session);
           return {request.mutation_id,
                   MutationFailure{
-                      problem(metadata || catalog_.contains_entry(operation.id)
+                      problem(metadata || view.contains_entry(operation.id)
                                   ? ErrorReason::WrongRecordType
                                   : ErrorReason::NotFound,
                               "Requested Entry cannot be moved", ErrorCategory::TargetUnavailable),
@@ -318,12 +320,11 @@ NormalMutationResponse MutationOrchestrator::mutate(const MutationRequest& reque
           std::filesystem::path locator;
           if constexpr (!create) {
             if constexpr (directory) {
-              dir_metadata = catalog_.find_directory(id);
+              dir_metadata = view.find_directory(id);
               if (!dir_metadata)
-                return reject(problem(catalog_.contains_entry(id) ? ErrorReason::WrongRecordType
-                                                                  : ErrorReason::NotFound,
-                                      "Requested Directory is unavailable",
-                                      ErrorCategory::TargetUnavailable));
+                return reject(problem(
+                    view.contains_entry(id) ? ErrorReason::WrongRecordType : ErrorReason::NotFound,
+                    "Requested Directory is unavailable", ErrorCategory::TargetUnavailable));
               if (dir_metadata->relative_path != directory_path(dir_metadata->metadata))
                 return reject(problem(ErrorReason::StaleLocation,
                                       "Directory location disagrees with Catalog",
@@ -338,12 +339,11 @@ NormalMutationResponse MutationOrchestrator::mutate(const MutationRequest& reque
                                       "Authoritative Directory disagrees with Catalog",
                                       ErrorCategory::AuthoritativeDataProblem));
             } else {
-              metadata = catalog_.find_record(id);
+              metadata = view.find_record(id);
               if (!metadata)
-                return reject(problem(catalog_.contains_entry(id) ? ErrorReason::WrongRecordType
-                                                                  : ErrorReason::NotFound,
-                                      "Requested Record is unavailable",
-                                      ErrorCategory::TargetUnavailable));
+                return reject(problem(
+                    view.contains_entry(id) ? ErrorReason::WrongRecordType : ErrorReason::NotFound,
+                    "Requested Record is unavailable", ErrorCategory::TargetUnavailable));
               if (storage::record_type(*metadata) != type)
                 return reject(problem(ErrorReason::WrongRecordType, "Wrong Record type"));
               locator =
@@ -356,7 +356,7 @@ NormalMutationResponse MutationOrchestrator::mutate(const MutationRequest& reque
           if constexpr (create_memo || create_todo || move) {
             evidence.destination = location(type, operation.directory_id);
             if (operation.directory_id) {
-              auto target = catalog_.find_directory(*operation.directory_id);
+              auto target = view.find_directory(*operation.directory_id);
               if (!target)
                 return reject(problem(ErrorReason::NotFound, "Target Directory not found",
                                       ErrorCategory::TargetUnavailable));
@@ -506,10 +506,10 @@ NormalMutationResponse MutationOrchestrator::mutate(const MutationRequest& reque
           }
 #endif
           if constexpr (directory) {
-            const auto saved = catalog_.find_directory(id);
+            const auto saved = catalog_.read_view().find_directory(id);
             if (saved) return {request.mutation_id, MutationValue{saved->metadata}};
           } else {
-            const auto saved = catalog_.find_record(id);
+            const auto saved = catalog_.read_view().find_record(id);
             if (saved)
               return std::visit(
                   [&](const auto& value) -> NormalMutationResponse {

@@ -225,16 +225,17 @@ TEST(MetadataCatalogTest, MutationsTrackUnpersistedAndLookupsReturnIndependentCo
       catalog.insert_record(storage::metadata_from(memo, memo_path))));
   EXPECT_TRUE(catalog.unpersisted());
   catalog.mark_persisted();
-  auto looked_up = catalog.find_record(memo.id);
+  auto looked_up = catalog.read_view().find_record(memo.id);
   ASSERT_TRUE(looked_up.has_value());
   std::get<storage::MemoMetadata>(*looked_up).metadata.title = "Changed copy";
-  ASSERT_TRUE(catalog.find_record(memo.id).has_value());
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(memo.id)).metadata.title,
-            memo.title);
-  auto directory_copy = catalog.find_directory(directory.id);
+  ASSERT_TRUE(catalog.read_view().find_record(memo.id).has_value());
+  EXPECT_EQ(
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(memo.id)).metadata.title,
+      memo.title);
+  auto directory_copy = catalog.read_view().find_directory(directory.id);
   ASSERT_TRUE(directory_copy.has_value());
   directory_copy->metadata.name = "Changed copy";
-  EXPECT_EQ(catalog.find_directory(directory.id)->metadata.name, directory.name);
+  EXPECT_EQ(catalog.read_view().find_directory(directory.id)->metadata.name, directory.name);
   EXPECT_FALSE(catalog.unpersisted());
 
   auto edited = memo;
@@ -243,8 +244,9 @@ TEST(MetadataCatalogTest, MutationsTrackUnpersistedAndLookupsReturnIndependentCo
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       catalog.update_record(storage::metadata_from(edited, memo_path))));
   EXPECT_TRUE(catalog.unpersisted());
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(memo.id)).metadata.title,
-            edited.title);
+  EXPECT_EQ(
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(memo.id)).metadata.title,
+      edited.title);
   catalog.mark_persisted();
 
   auto renamed_directory = directory;
@@ -252,7 +254,8 @@ TEST(MetadataCatalogTest, MutationsTrackUnpersistedAndLookupsReturnIndependentCo
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       catalog.update_directory(storage::metadata_from(renamed_directory, folder))));
   EXPECT_TRUE(catalog.unpersisted());
-  EXPECT_EQ(catalog.find_directory(directory.id)->metadata.name, renamed_directory.name);
+  EXPECT_EQ(catalog.read_view().find_directory(directory.id)->metadata.name,
+            renamed_directory.name);
   catalog.mark_persisted();
 
   expect_error(catalog.remove_directory(directory.id),
@@ -263,8 +266,8 @@ TEST(MetadataCatalogTest, MutationsTrackUnpersistedAndLookupsReturnIndependentCo
   catalog.mark_persisted();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.remove_directory(directory.id)));
   EXPECT_TRUE(catalog.unpersisted());
-  EXPECT_FALSE(catalog.find_record(memo.id).has_value());
-  EXPECT_FALSE(catalog.find_directory(directory.id).has_value());
+  EXPECT_FALSE(catalog.read_view().find_record(memo.id).has_value());
+  EXPECT_FALSE(catalog.read_view().find_directory(directory.id).has_value());
 }
 
 TEST(MetadataCatalogTest, RejectsDuplicatesInvalidValuesAndUnsafeLocators) {
@@ -301,15 +304,18 @@ TEST(MetadataCatalogTest, RejectsDuplicatesInvalidValuesAndUnsafeLocators) {
   catalog.mark_persisted();
   expect_error(catalog.update_record(storage::metadata_from(memo, "memos/other.md")),
                storage::StorageErrorCode::InvalidMetadata);
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(memo.id)).relative_path,
-            first_path);
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(valid_other.id)).relative_path,
+  EXPECT_EQ(
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(memo.id)).relative_path,
+      first_path);
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.read_view().find_record(valid_other.id))
+                .relative_path,
             fs::path{"memos/other.md"});
   EXPECT_FALSE(catalog.unpersisted());
-  ASSERT_TRUE(catalog.find_record(memo.id).has_value());
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(memo.id)).relative_path,
-            first_path);
-  EXPECT_TRUE(catalog.find_record(other.id).has_value());
+  ASSERT_TRUE(catalog.read_view().find_record(memo.id).has_value());
+  EXPECT_EQ(
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(memo.id)).relative_path,
+      first_path);
+  EXPECT_TRUE(catalog.read_view().find_record(other.id).has_value());
 
   auto bad_todo = todo_snapshot();
   bad_todo.status = static_cast<core::TodoStatus>(99);
@@ -334,7 +340,7 @@ TEST(MetadataCatalogTest, RejectsDuplicatesInvalidValuesAndUnsafeLocators) {
   EXPECT_FALSE(catalog.unpersisted());
   auto unsafe_folder = storage::metadata_from(directory, "memos/../other-name");
   expect_any_error(catalog.update_directory(unsafe_folder));
-  EXPECT_EQ(catalog.find_directory(directory.id)->relative_path, folder);
+  EXPECT_EQ(catalog.read_view().find_directory(directory.id)->relative_path, folder);
   EXPECT_FALSE(catalog.unpersisted());
 }
 
@@ -364,28 +370,30 @@ TEST(MetadataCatalogTest, ListsModuleRootsAndDirectoryChildrenNonrecursively) {
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       catalog.insert_record(storage::metadata_from(grouped_todo, todo_folder / "task.toml"))));
 
-  const auto log_root = catalog.list_root(storage::RecordType::Log);
+  const auto log_root = catalog.read_view().list_root(storage::RecordType::Log);
   ASSERT_EQ(log_root.records.size(), 1U);
   EXPECT_TRUE(log_root.directories.empty());
-  const auto memo_root = catalog.list_root(storage::RecordType::Memo);
+  const auto memo_root = catalog.read_view().list_root(storage::RecordType::Memo);
   ASSERT_EQ(memo_root.records.size(), 1U);
   ASSERT_EQ(memo_root.directories.size(), 1U);
   EXPECT_EQ(std::get<storage::MemoMetadata>(memo_root.records.front()).metadata.id, root_memo.id);
   EXPECT_EQ(memo_root.directories.front().metadata.id, memo_directory.id);
-  const auto todo_root = catalog.list_root(storage::RecordType::Todo);
+  const auto todo_root = catalog.read_view().list_root(storage::RecordType::Todo);
   EXPECT_TRUE(todo_root.records.empty());
   ASSERT_EQ(todo_root.directories.size(), 1U);
   EXPECT_EQ(todo_root.directories.front().metadata.id, todo_directory.id);
-  const auto children = catalog.list_directory(storage::DirectoryKind::Memo, memo_directory.id);
+  const auto children =
+      catalog.read_view().list_directory(storage::DirectoryKind::Memo, memo_directory.id);
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::RecordMetadata>>(children));
   ASSERT_EQ(std::get<std::vector<storage::RecordMetadata>>(children).size(), 1U);
   EXPECT_EQ(std::get<storage::MemoMetadata>(
                 std::get<std::vector<storage::RecordMetadata>>(children).front())
                 .metadata.id,
             grouped_memo.id);
-  EXPECT_EQ(catalog.list_directories(storage::DirectoryKind::Memo).size(), 1U);
-  EXPECT_EQ(catalog.list_directories(storage::DirectoryKind::Todo).size(), 1U);
-  expect_any_error(catalog.list_directory(storage::DirectoryKind::Todo, memo_directory.id));
+  EXPECT_EQ(catalog.read_view().list_directories(storage::DirectoryKind::Memo).size(), 1U);
+  EXPECT_EQ(catalog.read_view().list_directories(storage::DirectoryKind::Todo).size(), 1U);
+  expect_any_error(
+      catalog.read_view().list_directory(storage::DirectoryKind::Todo, memo_directory.id));
   EXPECT_TRUE(catalog.unpersisted());
 }
 
@@ -433,69 +441,74 @@ TEST(MetadataCatalogTest, QueriesAcrossModulesWithIndependentFilters) {
   }
   catalog.mark_persisted();
   storage::RecordQuery query;
-  EXPECT_EQ(catalog.query(query).size(), 7U);
+  EXPECT_EQ(catalog.read_view().query(query).size(), 7U);
   query.type = storage::RecordType::Memo;
-  EXPECT_EQ(catalog.query(query).size(), 2U);
+  EXPECT_EQ(catalog.read_view().query(query).size(), 2U);
   query.type.reset();
   query.directory = std::optional<core::Id>{};
-  EXPECT_EQ(catalog.query(query).size(), 5U);
+  EXPECT_EQ(catalog.read_view().query(query).size(), 5U);
   query.directory = std::optional<core::Id>{memo_directory.id};
-  ASSERT_EQ(catalog.query(query).size(), 1U);
-  EXPECT_EQ(std::get<storage::MemoMetadata>(catalog.query(query).front()).metadata.id, memo.id);
+  ASSERT_EQ(catalog.read_view().query(query).size(), 1U);
+  EXPECT_EQ(std::get<storage::MemoMetadata>(catalog.read_view().query(query).front()).metadata.id,
+            memo.id);
   query.directory.reset();
   query.privacy = core::Privacy::Hidden;
-  EXPECT_EQ(catalog.query(query).size(), 3U);
+  EXPECT_EQ(catalog.read_view().query(query).size(), 3U);
   query.privacy.reset();
   query.text = "alpha";
-  EXPECT_EQ(catalog.query(query).size(), 2U);
+  EXPECT_EQ(catalog.read_view().query(query).size(), 2U);
   query.text = "旅行";
-  ASSERT_EQ(catalog.query(query).size(), 1U);
-  EXPECT_EQ(std::get<storage::LogMetadata>(catalog.query(query).front()).metadata.id, log.id);
+  ASSERT_EQ(catalog.read_view().query(query).size(), 1U);
+  EXPECT_EQ(std::get<storage::LogMetadata>(catalog.read_view().query(query).front()).metadata.id,
+            log.id);
   query.text = "CAFÉ";
-  EXPECT_TRUE(catalog.query(query).empty());
+  EXPECT_TRUE(catalog.read_view().query(query).empty());
   query.text = "Café";
-  ASSERT_EQ(catalog.query(query).size(), 1U);
-  EXPECT_EQ(std::get<storage::MemoMetadata>(catalog.query(query).front()).metadata.id, memo.id);
+  ASSERT_EQ(catalog.read_view().query(query).size(), 1U);
+  EXPECT_EQ(std::get<storage::MemoMetadata>(catalog.read_view().query(query).front()).metadata.id,
+            memo.id);
   query.text = "Private notes";
-  EXPECT_TRUE(catalog.query(query).empty());
+  EXPECT_TRUE(catalog.read_view().query(query).empty());
   query.text = "";
   query.tag = core::Tag{"TRAV"};
-  ASSERT_EQ(catalog.query(query).size(), 1U);
-  EXPECT_EQ(std::get<storage::LogMetadata>(catalog.query(query).front()).metadata.id, log.id);
+  ASSERT_EQ(catalog.read_view().query(query).size(), 1U);
+  EXPECT_EQ(std::get<storage::LogMetadata>(catalog.read_view().query(query).front()).metadata.id,
+            log.id);
   query.tag = core::Tag{"旅行"};
-  EXPECT_EQ(catalog.query(query).size(), 3U);
+  EXPECT_EQ(catalog.read_view().query(query).size(), 3U);
   query.tag.reset();
   query.created.from = log.created.timestamp;
   query.created.through = log.created.timestamp;
-  EXPECT_EQ(catalog.query(query).size(), 2U);
+  EXPECT_EQ(catalog.read_view().query(query).size(), 2U);
   query.created = {};
   query.modified.from = todo.modified.timestamp;
-  EXPECT_EQ(catalog.query(query).size(), 3U);
+  EXPECT_EQ(catalog.read_view().query(query).size(), 3U);
   query.modified = {};
   query.log_date.from = std::chrono::year{2027} / 1 / 15;
   query.log_date.through = std::chrono::year{2027} / 1 / 15;
-  ASSERT_EQ(catalog.query(query).size(), 1U);
-  EXPECT_EQ(std::get<storage::LogMetadata>(catalog.query(query).front()).metadata.id, log.id);
+  ASSERT_EQ(catalog.read_view().query(query).size(), 1U);
+  EXPECT_EQ(std::get<storage::LogMetadata>(catalog.read_view().query(query).front()).metadata.id,
+            log.id);
   query.log_date = {};
   query.todo_status = core::TodoStatus::Completed;
   query.todo_priority = core::TodoPriority::High;
-  EXPECT_EQ(catalog.query(query).size(), 2U);
+  EXPECT_EQ(catalog.read_view().query(query).size(), 2U);
   query.todo_status.reset();
   query.todo_priority.reset();
   query.has_due_date = false;
-  EXPECT_EQ(catalog.query(query).size(), 1U);
+  EXPECT_EQ(catalog.read_view().query(query).size(), 1U);
   query.has_due_date = true;
-  EXPECT_EQ(catalog.query(query).size(), 2U);
+  EXPECT_EQ(catalog.read_view().query(query).size(), 2U);
   query.has_due_date.reset();
   query.due_kind = storage::DueKind::Date;
-  EXPECT_EQ(catalog.query(query).size(), 1U);
+  EXPECT_EQ(catalog.read_view().query(query).size(), 1U);
   query.due_kind = storage::DueKind::Datetime;
-  EXPECT_EQ(catalog.query(query).size(), 1U);
+  EXPECT_EQ(catalog.read_view().query(query).size(), 1U);
   query.due_kind.reset();
   query.due_from =
       core::DueDate{core::DateContext{{std::chrono::year{2027} / 3 / 3}, "UTC", std::nullopt}};
   query.due_through = query.due_from;
-  EXPECT_EQ(catalog.query(query).size(), 1U);
+  EXPECT_EQ(catalog.read_view().query(query).size(), 1U);
   query.due_from.reset();
   query.due_through.reset();
   EXPECT_FALSE(catalog.unpersisted());
@@ -518,28 +531,28 @@ TEST(MetadataCatalogTest, SortingIsStableByUuidAndKeepsMissingKeysLast) {
   }
   storage::RecordQuery query;
   query.sort = storage::MetadataSort::Title;
-  auto sorted = catalog.query(query);
+  auto sorted = catalog.read_view().query(query);
   ASSERT_EQ(sorted.size(), 4U);
   EXPECT_EQ(std::get<storage::MemoMetadata>(sorted[0]).metadata.id, memo.id);
   EXPECT_EQ(std::get<storage::LogMetadata>(sorted[1]).metadata.id, second.id);
   EXPECT_EQ(std::get<storage::LogMetadata>(sorted[2]).metadata.id, first.id);
   query.descending = true;
-  sorted = catalog.query(query);
+  sorted = catalog.read_view().query(query);
   ASSERT_EQ(sorted.size(), 4U);
   EXPECT_EQ(std::get<storage::LogMetadata>(sorted[1]).metadata.id, second.id);
   EXPECT_EQ(std::get<storage::LogMetadata>(sorted[2]).metadata.id, first.id);
   query.sort = storage::MetadataSort::LogDate;
-  sorted = catalog.query(query);
+  sorted = catalog.read_view().query(query);
   ASSERT_EQ(sorted.size(), 4U);
   EXPECT_TRUE(std::holds_alternative<storage::LogMetadata>(sorted[0]));
   EXPECT_TRUE(std::holds_alternative<storage::LogMetadata>(sorted[1]));
   query.sort = storage::MetadataSort::DueDate;
   query.descending = false;
-  sorted = catalog.query(query);
+  sorted = catalog.read_view().query(query);
   ASSERT_EQ(sorted.size(), 4U);
   EXPECT_EQ(std::get<storage::TodoMetadata>(sorted[0]).metadata.id, todo.id);
   query.descending = true;
-  sorted = catalog.query(query);
+  sorted = catalog.read_view().query(query);
   ASSERT_EQ(sorted.size(), 4U);
   EXPECT_EQ(std::get<storage::TodoMetadata>(sorted[0]).metadata.id, todo.id);
 }
@@ -551,7 +564,7 @@ TEST(MetadataCatalogTest, EmptyTitleMatchesUnfilteredQuery) {
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       catalog.insert_record(storage::metadata_from(memo, "memos/untitled.md"))));
   catalog.mark_persisted();
-  const auto all = catalog.query();
+  const auto all = catalog.read_view().query();
   ASSERT_EQ(all.size(), 1U);
   EXPECT_EQ(std::get<storage::MemoMetadata>(all.front()).metadata.id, memo.id);
   EXPECT_FALSE(catalog.unpersisted());
@@ -587,8 +600,8 @@ TEST(MetadataCatalogTest, MovesAndRefreshesMetadataWithoutChangingIdentity) {
       catalog.update_record(storage::metadata_from(invalid_todo, memo_folder / "bad.toml")),
       storage::StorageErrorCode::InvalidMetadata);
   EXPECT_FALSE(catalog.unpersisted());
-  EXPECT_EQ(catalog.list_root(storage::RecordType::Memo).records.size(), 1U);
-  EXPECT_EQ(catalog.list_root(storage::RecordType::Todo).records.size(), 0U);
+  EXPECT_EQ(catalog.read_view().list_root(storage::RecordType::Memo).records.size(), 1U);
+  EXPECT_EQ(catalog.read_view().list_root(storage::RecordType::Todo).records.size(), 0U);
 
   memo.directory_id = memo_dir.id;
   memo.privacy = core::Privacy::Hidden;
@@ -599,15 +612,17 @@ TEST(MetadataCatalogTest, MovesAndRefreshesMetadataWithoutChangingIdentity) {
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       catalog.update_record(storage::metadata_from(todo, "todos/moved.toml"))));
   EXPECT_TRUE(catalog.unpersisted());
-  EXPECT_TRUE(catalog.list_root(storage::RecordType::Memo).records.empty());
-  EXPECT_EQ(catalog.list_root(storage::RecordType::Todo).records.size(), 1U);
-  const auto memo_children = catalog.list_directory(storage::DirectoryKind::Memo, memo_dir.id);
+  EXPECT_TRUE(catalog.read_view().list_root(storage::RecordType::Memo).records.empty());
+  EXPECT_EQ(catalog.read_view().list_root(storage::RecordType::Todo).records.size(), 1U);
+  const auto memo_children =
+      catalog.read_view().list_directory(storage::DirectoryKind::Memo, memo_dir.id);
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::RecordMetadata>>(memo_children));
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(memo_children).size(), 1U);
-  const auto todo_children = catalog.list_directory(storage::DirectoryKind::Todo, todo_dir.id);
+  const auto todo_children =
+      catalog.read_view().list_directory(storage::DirectoryKind::Todo, todo_dir.id);
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::RecordMetadata>>(todo_children));
   EXPECT_TRUE(std::get<std::vector<storage::RecordMetadata>>(todo_children).empty());
-  const auto saved = std::get<storage::MemoMetadata>(*catalog.find_record(memo.id));
+  const auto saved = std::get<storage::MemoMetadata>(*catalog.read_view().find_record(memo.id));
   EXPECT_EQ(saved.metadata.privacy, core::Privacy::Hidden);
   expect_context(saved.metadata.created, memo.created);
   EXPECT_EQ(saved.relative_path, memo_folder / "moved.md");
@@ -620,8 +635,9 @@ TEST(MetadataCatalogTest, MovesAndRefreshesMetadataWithoutChangingIdentity) {
                storage::StorageErrorCode::MetadataNotFound);
   expect_error(catalog.remove_directory(id("a7183823-2574-4bfd-b411-99ed177d3e43")),
                storage::StorageErrorCode::MetadataNotFound);
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(memo.id)).relative_path,
-            saved.relative_path);
+  EXPECT_EQ(
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(memo.id)).relative_path,
+      saved.relative_path);
   EXPECT_FALSE(catalog.unpersisted());
 }
 
@@ -660,8 +676,10 @@ TEST(MetadataCatalogTest, ReverseMembershipFollowsMovesAndGuardsKindChanges) {
   memo.directory_id = second.id;
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       catalog.update_record(storage::metadata_from(memo, second_path / "memo.md"))));
-  const auto old_members = catalog.list_directory(storage::DirectoryKind::Memo, first.id);
-  const auto new_members = catalog.list_directory(storage::DirectoryKind::Memo, second.id);
+  const auto old_members =
+      catalog.read_view().list_directory(storage::DirectoryKind::Memo, first.id);
+  const auto new_members =
+      catalog.read_view().list_directory(storage::DirectoryKind::Memo, second.id);
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::RecordMetadata>>(old_members));
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::RecordMetadata>>(new_members));
   EXPECT_TRUE(std::get<std::vector<storage::RecordMetadata>>(old_members).empty());
@@ -677,7 +695,7 @@ TEST(MetadataCatalogTest, ReverseMembershipFollowsMovesAndGuardsKindChanges) {
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       catalog.update_record(storage::metadata_from(todo, "todos/root.toml"))));
   EXPECT_TRUE(std::get<std::vector<storage::RecordMetadata>>(
-                  catalog.list_directory(storage::DirectoryKind::Todo, tasks.id))
+                  catalog.read_view().list_directory(storage::DirectoryKind::Todo, tasks.id))
                   .empty());
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.remove_directory(tasks.id)));
 
@@ -686,12 +704,13 @@ TEST(MetadataCatalogTest, ReverseMembershipFollowsMovesAndGuardsKindChanges) {
   retagged.kind = storage::DirectoryKind::Todo;
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       catalog.update_directory(storage::metadata_from(retagged, second_path))));
-  EXPECT_TRUE(catalog.list_directories(storage::DirectoryKind::Memo).empty());
-  ASSERT_EQ(catalog.list_directories(storage::DirectoryKind::Todo).size(), 1U);
-  EXPECT_EQ(catalog.list_directories(storage::DirectoryKind::Todo).front().metadata.id, second.id);
-  EXPECT_TRUE(catalog.list_root(storage::RecordType::Memo).directories.empty());
-  EXPECT_EQ(catalog.list_root(storage::RecordType::Todo).directories.size(), 1U);
-  EXPECT_EQ(catalog.list_root(storage::RecordType::Todo).records.size(), 1U);
+  EXPECT_TRUE(catalog.read_view().list_directories(storage::DirectoryKind::Memo).empty());
+  ASSERT_EQ(catalog.read_view().list_directories(storage::DirectoryKind::Todo).size(), 1U);
+  EXPECT_EQ(catalog.read_view().list_directories(storage::DirectoryKind::Todo).front().metadata.id,
+            second.id);
+  EXPECT_TRUE(catalog.read_view().list_root(storage::RecordType::Memo).directories.empty());
+  EXPECT_EQ(catalog.read_view().list_root(storage::RecordType::Todo).directories.size(), 1U);
+  EXPECT_EQ(catalog.read_view().list_root(storage::RecordType::Todo).records.size(), 1U);
 }
 
 TEST(MetadataCatalogTest, SortsTypedFieldsAndDueVariants) {
@@ -717,34 +736,34 @@ TEST(MetadataCatalogTest, SortsTypedFieldsAndDueVariants) {
   }
   storage::RecordQuery query;
   query.sort = storage::MetadataSort::Type;
-  auto ordered = catalog.query(query);
+  auto ordered = catalog.read_view().query(query);
   ASSERT_EQ(ordered.size(), 5U);
   EXPECT_EQ(storage::record_type(ordered[0]), storage::RecordType::Log);
   EXPECT_EQ(storage::record_type(ordered[1]), storage::RecordType::Memo);
   query.sort = storage::MetadataSort::Created;
-  ordered = catalog.query(query);
+  ordered = catalog.read_view().query(query);
   EXPECT_EQ(std::get<storage::LogMetadata>(ordered[0]).metadata.id, log.id);
   EXPECT_EQ(std::get<storage::MemoMetadata>(ordered[1]).metadata.id, memo.id);
   query.sort = storage::MetadataSort::Modified;
-  ordered = catalog.query(query);
+  ordered = catalog.read_view().query(query);
   EXPECT_EQ(std::get<storage::LogMetadata>(ordered[0]).metadata.id, log.id);
   EXPECT_EQ(std::get<storage::TodoMetadata>(ordered.back()).metadata.id, timed.id);
   query.sort = storage::MetadataSort::DueDate;
-  ordered = catalog.query(query);
+  ordered = catalog.read_view().query(query);
   ASSERT_EQ(ordered.size(), 5U);
   EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[0]).metadata.id, dated.id);
   EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[1]).metadata.id, timed.id);
   EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[2]).metadata.id, undated.id);
   query.sort = storage::MetadataSort::Status;
-  ordered = catalog.query(query);
+  ordered = catalog.read_view().query(query);
   EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[0]).metadata.id, timed.id);
   query.sort = storage::MetadataSort::Priority;
-  ordered = catalog.query(query);
+  ordered = catalog.read_view().query(query);
   EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[0]).metadata.id, timed.id);
   query.due_from = timed.due_date;
   query.due_through = timed.due_date;
   query.sort = storage::MetadataSort::Id;
-  ordered = catalog.query(query);
+  ordered = catalog.read_view().query(query);
   ASSERT_EQ(ordered.size(), 1U);
   EXPECT_EQ(std::get<storage::TodoMetadata>(ordered[0]).metadata.id, timed.id);
 }
@@ -785,10 +804,13 @@ TEST(MetadataCatalogTest, RejectsIdentityAndLocatorCollisionsAcrossEntryTypes) {
   expect_error(catalog.insert_record(storage::metadata_from(duplicate_todo, "mixed/log.enc")),
                storage::StorageErrorCode::InvalidMetadata);
   EXPECT_FALSE(catalog.unpersisted());
-  EXPECT_EQ(storage::record_type(*catalog.find_record(log.id)), storage::RecordType::Log);
-  EXPECT_EQ(storage::record_type(*catalog.find_record(memo.id)), storage::RecordType::Memo);
-  EXPECT_EQ(storage::record_type(*catalog.find_record(todo.id)), storage::RecordType::Todo);
-  EXPECT_EQ(catalog.query().size(), 3U);
+  EXPECT_EQ(storage::record_type(*catalog.read_view().find_record(log.id)),
+            storage::RecordType::Log);
+  EXPECT_EQ(storage::record_type(*catalog.read_view().find_record(memo.id)),
+            storage::RecordType::Memo);
+  EXPECT_EQ(storage::record_type(*catalog.read_view().find_record(todo.id)),
+            storage::RecordType::Todo);
+  EXPECT_EQ(catalog.read_view().query().size(), 3U);
 }
 
 TEST(MetadataCatalogTest, CrossTypeQueriesAndMutationsKeepOtherEntriesIntact) {
@@ -809,7 +831,7 @@ TEST(MetadataCatalogTest, CrossTypeQueriesAndMutationsKeepOtherEntriesIntact) {
 
   storage::RecordQuery query;
   query.sort = storage::MetadataSort::Title;
-  const auto ordered = catalog.query(query);
+  const auto ordered = catalog.read_view().query(query);
   ASSERT_EQ(ordered.size(), 3U);
   EXPECT_EQ(storage::record_type(ordered[0]), storage::RecordType::Memo);
   EXPECT_EQ(storage::record_type(ordered[1]), storage::RecordType::Todo);
@@ -817,10 +839,10 @@ TEST(MetadataCatalogTest, CrossTypeQueriesAndMutationsKeepOtherEntriesIntact) {
   for (const auto type :
        {storage::RecordType::Log, storage::RecordType::Memo, storage::RecordType::Todo}) {
     query.type = type;
-    const auto filtered = catalog.query(query);
+    const auto filtered = catalog.read_view().query(query);
     ASSERT_EQ(filtered.size(), 1U);
     EXPECT_EQ(storage::record_type(filtered.front()), type);
-    const auto listing = catalog.list_root(type);
+    const auto listing = catalog.read_view().list_root(type);
     ASSERT_EQ(listing.records.size(), 1U);
     EXPECT_EQ(storage::record_type(listing.records.front()), type);
   }
@@ -836,19 +858,22 @@ TEST(MetadataCatalogTest, CrossTypeQueriesAndMutationsKeepOtherEntriesIntact) {
     EXPECT_TRUE(catalog.unpersisted());
     catalog.mark_persisted();
   }
-  EXPECT_EQ(std::get<storage::LogMetadata>(*catalog.find_record(log.id)).metadata.title,
+  EXPECT_EQ(std::get<storage::LogMetadata>(*catalog.read_view().find_record(log.id)).metadata.title,
             "Updated Log");
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(memo.id)).metadata.title,
-            "Updated Memo");
-  EXPECT_EQ(std::get<storage::TodoMetadata>(*catalog.find_record(todo.id)).metadata.title,
-            "Updated Todo");
+  EXPECT_EQ(
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(memo.id)).metadata.title,
+      "Updated Memo");
+  EXPECT_EQ(
+      std::get<storage::TodoMetadata>(*catalog.read_view().find_record(todo.id)).metadata.title,
+      "Updated Todo");
 
   expect_error(catalog.update_record(storage::metadata_from(log, "entries/memo.enc")),
                storage::StorageErrorCode::InvalidMetadata);
-  EXPECT_EQ(std::get<storage::LogMetadata>(*catalog.find_record(log.id)).relative_path,
+  EXPECT_EQ(std::get<storage::LogMetadata>(*catalog.read_view().find_record(log.id)).relative_path,
             fs::path{"entries/log.enc"});
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*catalog.find_record(memo.id)).relative_path,
-            fs::path{"entries/memo.enc"});
+  EXPECT_EQ(
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(memo.id)).relative_path,
+      fs::path{"entries/memo.enc"});
   auto wrong_type = storage::metadata_from(memo, "entries/memo.enc");
   std::get<storage::MemoMetadata>(wrong_type).metadata.id = log.id;
   expect_error(catalog.update_record(wrong_type), storage::StorageErrorCode::InvalidMetadata);
@@ -859,13 +884,13 @@ TEST(MetadataCatalogTest, CrossTypeQueriesAndMutationsKeepOtherEntriesIntact) {
     ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.remove_record(removed)));
     EXPECT_TRUE(catalog.unpersisted());
     catalog.mark_persisted();
-    EXPECT_FALSE(catalog.find_record(removed).has_value());
-    EXPECT_EQ(catalog.query().size(), removal_order.size() - i - 1);
+    EXPECT_FALSE(catalog.read_view().find_record(removed).has_value());
+    EXPECT_EQ(catalog.read_view().query().size(), removal_order.size() - i - 1);
     for (std::size_t remaining = i + 1; remaining < removal_order.size(); ++remaining) {
-      EXPECT_TRUE(catalog.find_record(removal_order[remaining]).has_value());
+      EXPECT_TRUE(catalog.read_view().find_record(removal_order[remaining]).has_value());
     }
   }
-  EXPECT_TRUE(catalog.query().empty());
+  EXPECT_TRUE(catalog.read_view().query().empty());
   expect_error(catalog.remove_record(log.id), storage::StorageErrorCode::MetadataNotFound);
   EXPECT_FALSE(catalog.unpersisted());
 }
@@ -885,20 +910,85 @@ TEST(MetadataCatalogTest, AllEntryTypesShareOneIdentityNamespace) {
         ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_directory(directory)));
         catalog.mark_persisted();
         expect_error(catalog.insert_record(record), storage::StorageErrorCode::DuplicateId);
-        EXPECT_FALSE(catalog.find_record(uuid));
-        EXPECT_TRUE(catalog.find_directory(uuid));
-        EXPECT_TRUE(catalog.list_root(storage::RecordType::Memo).records.empty());
+        EXPECT_FALSE(catalog.read_view().find_record(uuid));
+        EXPECT_TRUE(catalog.read_view().find_directory(uuid));
+        EXPECT_TRUE(catalog.read_view().list_root(storage::RecordType::Memo).records.empty());
       } else {
         ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_record(record)));
         catalog.mark_persisted();
         expect_error(catalog.insert_directory(directory), storage::StorageErrorCode::DuplicateId);
-        EXPECT_TRUE(catalog.find_record(uuid));
-        EXPECT_FALSE(catalog.find_directory(uuid));
-        EXPECT_EQ(catalog.query().size(), 1u);
+        EXPECT_TRUE(catalog.read_view().find_record(uuid));
+        EXPECT_FALSE(catalog.read_view().find_directory(uuid));
+        EXPECT_EQ(catalog.read_view().query().size(), 1u);
       }
       EXPECT_FALSE(catalog.unpersisted());
     }
   }
+}
+
+TEST(MetadataCatalogViewTest, RetainsMetadataAndMembershipAcrossPublicationAndRebuild) {
+  storage::MetadataCatalog catalog;
+  auto memo = memo_snapshot();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      catalog.insert_record(storage::metadata_from(memo, "memos/original.md"))));
+  const auto before = catalog.read_view();
+  memo.title = "Updated";
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      catalog.update_record(storage::metadata_from(memo, "memos/new.md"))));
+  EXPECT_NE(std::get<storage::MemoMetadata>(*before.find_record(memo.id)).metadata.title,
+            memo.title);
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*before.find_record(memo.id)).relative_path,
+            "memos/original.md");
+  EXPECT_EQ(
+      std::get<storage::MemoMetadata>(*catalog.read_view().find_record(memo.id)).metadata.title,
+      memo.title);
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.rebuild({}, {}, {}, {})));
+  EXPECT_FALSE(catalog.read_view().contains_entry(memo.id));
+  EXPECT_TRUE(before.contains_entry(memo.id));
+  EXPECT_EQ(before.list_root(core::RecordType::Memo).records.size(), 1u);
+}
+
+TEST(MetadataCatalogViewTest, OutlivesCatalogAndRejectsInvalidCandidateWithoutPublication) {
+  const auto retained = [] {
+    storage::MetadataCatalog catalog;
+    auto memo = memo_snapshot();
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(
+        catalog.insert_record(storage::metadata_from(memo, "memos/a.md"))));
+    catalog.mark_persisted();
+    memo.directory_id = id("87183823-2574-4bfd-b411-99ed177d3e43");
+    EXPECT_TRUE(std::holds_alternative<storage::StorageError>(
+        catalog.update_record(storage::metadata_from(memo, "memos/b.md"))));
+    EXPECT_FALSE(catalog.unpersisted());
+    return catalog.read_view();
+  }();
+  EXPECT_EQ(retained.query().size(), 1u);
+  EXPECT_EQ(retained.list_root(core::RecordType::Memo).records.size(), 1u);
+}
+
+TEST(MetadataCatalogViewTest, MovePublishesMembershipAndLocatorTogether) {
+  storage::MetadataCatalog catalog;
+  const core::Directory::Snapshot directory{id("87183823-2574-4bfd-b411-99ed177d3e43"),
+                                            core::DirectoryKind::Memo, "Group"};
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      catalog.insert_directory(storage::metadata_from(directory, "memos/group"))));
+  auto memo = memo_snapshot();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      catalog.insert_record(storage::metadata_from(memo, "memos/root.md"))));
+  const auto root_view = catalog.read_view();
+  memo.directory_id = directory.id;
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      catalog.update_record(storage::metadata_from(memo, "memos/group/memo.md"))));
+  const auto moved_view = catalog.read_view();
+  EXPECT_EQ(root_view.list_root(core::RecordType::Memo).records.size(), 1u);
+  EXPECT_TRUE(moved_view.list_root(core::RecordType::Memo).records.empty());
+  using Members = std::vector<storage::RecordMetadata>;
+  EXPECT_TRUE(std::get<Members>(root_view.list_directory(directory.kind, directory.id)).empty());
+  const auto children = std::get<Members>(moved_view.list_directory(directory.kind, directory.id));
+  ASSERT_EQ(children.size(), 1u);
+  EXPECT_EQ(std::get<storage::MemoMetadata>(children.front()).relative_path, "memos/group/memo.md");
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.remove_record(memo.id)));
+  EXPECT_TRUE(catalog.read_view().query().empty());
+  EXPECT_EQ(moved_view.query().size(), 1u);
 }
 
 } // namespace

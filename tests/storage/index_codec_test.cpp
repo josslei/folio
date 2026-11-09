@@ -258,7 +258,7 @@ TEST(IndexCodecTest, LocatedMetadataPreservesExactSchemaOneWireEncoding) {
   EXPECT_EQ(value_of(encoded), expected);
   const auto decoded = codec::decode_index(expected);
   ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
-  const auto restored = value_of(decoded).find_record(record_id);
+  const auto restored = value_of(decoded).read_view().find_record(record_id);
   ASSERT_TRUE(restored);
   const auto& located = std::get<storage::MemoMetadata>(*restored);
   EXPECT_EQ(located.metadata.title, "Memo");
@@ -274,16 +274,16 @@ TEST(IndexCodecTest, RoundTripsAllMetadataFieldsAndRestoresPersistedMembership) 
   ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
   const auto& restored = value_of(decoded);
   EXPECT_FALSE(restored.unpersisted());
-  EXPECT_EQ(restored.query().size(), 4U);
-  EXPECT_EQ(restored.list_root(storage::RecordType::Log).records.size(), 1U);
-  EXPECT_EQ(restored.list_root(storage::RecordType::Memo).directories.size(), 1U);
-  EXPECT_EQ(restored.list_root(storage::RecordType::Todo).records.size(), 1U);
-  EXPECT_EQ(restored.list_root(storage::RecordType::Todo).directories.size(), 1U);
+  EXPECT_EQ(restored.read_view().query().size(), 4U);
+  EXPECT_EQ(restored.read_view().list_root(storage::RecordType::Log).records.size(), 1U);
+  EXPECT_EQ(restored.read_view().list_root(storage::RecordType::Memo).directories.size(), 1U);
+  EXPECT_EQ(restored.read_view().list_root(storage::RecordType::Todo).records.size(), 1U);
+  EXPECT_EQ(restored.read_view().list_root(storage::RecordType::Todo).directories.size(), 1U);
 
   const auto memo_dir = id("87183823-2574-4bfd-b411-99ed177d3e43");
   const auto todo_dir = id("97183823-2574-4bfd-b411-99ed177d3e43");
-  const auto memo_directory = restored.find_directory(memo_dir);
-  const auto todo_directory = restored.find_directory(todo_dir);
+  const auto memo_directory = restored.read_view().find_directory(memo_dir);
+  const auto todo_directory = restored.read_view().find_directory(todo_dir);
   ASSERT_TRUE(memo_directory.has_value());
   ASSERT_TRUE(todo_directory.has_value());
   EXPECT_EQ(memo_directory->metadata.kind, core::DirectoryKind::Memo);
@@ -291,17 +291,19 @@ TEST(IndexCodecTest, RoundTripsAllMetadataFieldsAndRestoresPersistedMembership) 
   EXPECT_EQ(memo_directory->relative_path, fs::path{"vault/memo"} / memo_dir.to_string());
   EXPECT_EQ(todo_directory->metadata.kind, core::DirectoryKind::Todo);
   EXPECT_EQ(todo_directory->metadata.name, "任务");
-  const auto memo_children = restored.list_directory(core::DirectoryKind::Memo, memo_dir);
-  const auto todo_children = restored.list_directory(core::DirectoryKind::Todo, todo_dir);
+  const auto memo_children =
+      restored.read_view().list_directory(core::DirectoryKind::Memo, memo_dir);
+  const auto todo_children =
+      restored.read_view().list_directory(core::DirectoryKind::Todo, todo_dir);
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::RecordMetadata>>(memo_children));
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::RecordMetadata>>(todo_children));
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(memo_children).size(), 1U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(todo_children).size(), 1U);
 
-  const auto log = restored.find_record(id("17183823-2574-4bfd-b411-99ed177d3e43"));
-  const auto memo = restored.find_record(id("27183823-2574-4bfd-b411-99ed177d3e43"));
-  const auto dated = restored.find_record(id("37183823-2574-4bfd-b411-99ed177d3e43"));
-  const auto timed = restored.find_record(id("47183823-2574-4bfd-b411-99ed177d3e43"));
+  const auto log = restored.read_view().find_record(id("17183823-2574-4bfd-b411-99ed177d3e43"));
+  const auto memo = restored.read_view().find_record(id("27183823-2574-4bfd-b411-99ed177d3e43"));
+  const auto dated = restored.read_view().find_record(id("37183823-2574-4bfd-b411-99ed177d3e43"));
+  const auto timed = restored.read_view().find_record(id("47183823-2574-4bfd-b411-99ed177d3e43"));
   ASSERT_TRUE(log && memo && dated && timed);
   ASSERT_TRUE(std::holds_alternative<storage::LogMetadata>(*log));
   ASSERT_TRUE(std::holds_alternative<storage::MemoMetadata>(*memo));
@@ -374,22 +376,22 @@ TEST(IndexCodecTest, RoundTripsEmptyAndEachEntryTypeAlone) {
   ASSERT_TRUE(std::holds_alternative<std::string>(empty_bytes));
   const auto empty_decoded = codec::decode_index(value_of(empty_bytes));
   ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(empty_decoded));
-  EXPECT_TRUE(value_of(empty_decoded).query().empty());
+  EXPECT_TRUE(value_of(empty_decoded).read_view().query().empty());
   EXPECT_FALSE(value_of(empty_decoded).unpersisted());
 
   const auto fixture = make_catalog();
-  for (const auto& item : fixture.query()) {
+  for (const auto& item : fixture.read_view().query()) {
     SCOPED_TRACE(static_cast<int>(storage::record_type(item)));
     storage::MetadataCatalog one;
     if (const auto* memo = std::get_if<storage::MemoMetadata>(&item)) {
       ASSERT_TRUE(memo->metadata.directory_id.has_value());
       ASSERT_TRUE(std::holds_alternative<std::monostate>(
-          one.insert_directory(*fixture.find_directory(*memo->metadata.directory_id))));
+          one.insert_directory(*fixture.read_view().find_directory(*memo->metadata.directory_id))));
     }
     if (const auto* todo = std::get_if<storage::TodoMetadata>(&item)) {
       if (todo->metadata.directory_id) {
-        ASSERT_TRUE(std::holds_alternative<std::monostate>(
-            one.insert_directory(*fixture.find_directory(*todo->metadata.directory_id))));
+        ASSERT_TRUE(std::holds_alternative<std::monostate>(one.insert_directory(
+            *fixture.read_view().find_directory(*todo->metadata.directory_id))));
       }
     }
     ASSERT_TRUE(std::holds_alternative<std::monostate>(one.insert_record(item)));
@@ -397,11 +399,11 @@ TEST(IndexCodecTest, RoundTripsEmptyAndEachEntryTypeAlone) {
     ASSERT_TRUE(std::holds_alternative<std::string>(bytes));
     const auto decoded = codec::decode_index(value_of(bytes));
     ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
-    const auto found = value_of(decoded).find_record(
+    const auto found = value_of(decoded).read_view().find_record(
         std::visit([](const auto& value) { return value.metadata.id; }, item));
     ASSERT_TRUE(found.has_value());
     EXPECT_EQ(storage::record_type(*found), storage::record_type(item));
-    EXPECT_EQ(value_of(decoded).query().size(), 1U);
+    EXPECT_EQ(value_of(decoded).read_view().query().size(), 1U);
   }
 }
 
@@ -427,7 +429,7 @@ TEST(IndexCodecTest, PreservesLongTodoTitleAndNegativeFractionalTimestamp) {
   EXPECT_EQ(std::get<std::string>(field(field(entry(wire), "created"), "location").value), "");
   const auto decoded = codec::decode_index(value_of(encoded));
   ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
-  const auto saved = value_of(decoded).find_record(todo.metadata.id);
+  const auto saved = value_of(decoded).read_view().find_record(todo.metadata.id);
   ASSERT_TRUE(saved.has_value());
   const auto& restored = std::get<storage::TodoMetadata>(*saved);
   EXPECT_EQ(restored.metadata.title, todo.metadata.title);
@@ -438,12 +440,14 @@ TEST(IndexCodecTest, PreservesLongTodoTitleAndNegativeFractionalTimestamp) {
 TEST(IndexCodecTest, EncodingIsIndependentOfCatalogInsertionOrder) {
   const auto first = make_catalog();
   storage::MetadataCatalog reversed;
-  const auto todo_dir = first.find_directory(id("97183823-2574-4bfd-b411-99ed177d3e43"));
-  const auto memo_dir = first.find_directory(id("87183823-2574-4bfd-b411-99ed177d3e43"));
+  const auto todo_dir =
+      first.read_view().find_directory(id("97183823-2574-4bfd-b411-99ed177d3e43"));
+  const auto memo_dir =
+      first.read_view().find_directory(id("87183823-2574-4bfd-b411-99ed177d3e43"));
   ASSERT_TRUE(todo_dir && memo_dir);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(reversed.insert_directory(*todo_dir)));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(reversed.insert_directory(*memo_dir)));
-  const auto entries = first.query();
+  const auto entries = first.read_view().query();
   for (auto it = entries.rbegin(); it != entries.rend(); ++it)
     ASSERT_TRUE(std::holds_alternative<std::monostate>(reversed.insert_record(*it)));
   const auto forward_bytes = codec::encode_index(first);
@@ -497,7 +501,7 @@ TEST(IndexCodecTest, PreservesNativeTimestampPrecisionAtMinAndMax) {
   ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
   const auto decoded = codec::decode_index(value_of(encoded));
   ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
-  const auto restored = value_of(decoded).find_record(log.metadata.id);
+  const auto restored = value_of(decoded).read_view().find_record(log.metadata.id);
   ASSERT_TRUE(restored.has_value());
   const auto& saved = std::get<storage::LogMetadata>(*restored);
   EXPECT_EQ(saved.metadata.created.timestamp, core::Timestamp::min());

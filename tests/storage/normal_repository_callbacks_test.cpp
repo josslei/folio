@@ -170,15 +170,17 @@ TEST_F(NormalRepositoryCallbacksTest, CreatesAndUpdatesAllTypesWithoutIndexIo) {
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.create_todo(todo, coordinator.todo_creation_callback())));
   const auto log_path =
-      std::get<storage::LogMetadata>(*owned_catalog.find_record(log.id)).relative_path;
+      std::get<storage::LogMetadata>(*owned_catalog.read_view().find_record(log.id)).relative_path;
   const auto memo_path =
-      std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).relative_path;
+      std::get<storage::MemoMetadata>(*owned_catalog.read_view().find_record(memo.id))
+          .relative_path;
   const auto todo_path =
-      std::get<storage::TodoMetadata>(*owned_catalog.find_record(todo.id)).relative_path;
+      std::get<storage::TodoMetadata>(*owned_catalog.read_view().find_record(todo.id))
+          .relative_path;
   EXPECT_EQ(log_path.parent_path(), fs::path{"logs"});
   EXPECT_EQ(memo_path.parent_path(), fs::path{"memos"});
   EXPECT_EQ(todo_path.parent_path(), fs::path{"todos"});
-  EXPECT_EQ(owned_catalog.query().size(), 3U);
+  EXPECT_EQ(owned_catalog.read_view().query().size(), 3U);
   EXPECT_EQ(bytes(index), prior_index);
 
   // Explicit locators bypass unrelated malformed formal files in the same module.
@@ -201,11 +203,14 @@ TEST_F(NormalRepositoryCallbacksTest, CreatesAndUpdatesAllTypesWithoutIndexIo) {
       repository.update_memo(edited_memo, memo_path, coordinator.memo_update_callback())));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.update_todo(edited_todo, todo_path, coordinator.todo_update_callback())));
-  EXPECT_EQ(std::get<storage::LogMetadata>(*owned_catalog.find_record(log.id)).metadata.title,
-            "Edited Log");
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).metadata.title,
+  EXPECT_EQ(
+      std::get<storage::LogMetadata>(*owned_catalog.read_view().find_record(log.id)).metadata.title,
+      "Edited Log");
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.read_view().find_record(memo.id))
+                .metadata.title,
             "Edited Memo");
-  EXPECT_EQ(std::get<storage::TodoMetadata>(*owned_catalog.find_record(todo.id)).metadata.title,
+  EXPECT_EQ(std::get<storage::TodoMetadata>(*owned_catalog.read_view().find_record(todo.id))
+                .metadata.title,
             "Edited Todo");
   EXPECT_EQ(std::get<core::Log::Snapshot>(repository.load_log(log.id, log_path)).content,
             "second body");
@@ -294,42 +299,43 @@ TEST_F(NormalRepositoryCallbacksTest, MovesAndDirectoryRenameKeepMembershipCurre
       repository.move_memo(memo.id, memo_dir.id, modified(), coordinator.memo_update_callback())));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.move_todo(todo.id, todo_dir.id, modified(), coordinator.todo_update_callback())));
-  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Memo).records.size(), 0U);
-  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Todo).records.size(), 0U);
+  EXPECT_EQ(owned_catalog.read_view().list_root(storage::RecordType::Memo).records.size(), 0U);
+  EXPECT_EQ(owned_catalog.read_view().list_root(storage::RecordType::Todo).records.size(), 0U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-                owned_catalog.list_directory(core::DirectoryKind::Memo, memo_dir.id))
+                owned_catalog.read_view().list_directory(core::DirectoryKind::Memo, memo_dir.id))
                 .size(),
             1U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-                owned_catalog.list_directory(core::DirectoryKind::Todo, todo_dir.id))
+                owned_catalog.read_view().list_directory(core::DirectoryKind::Todo, todo_dir.id))
                 .size(),
             1U);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.move_memo(
       memo.id, memo_second.id, modified(), coordinator.memo_update_callback())));
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-                owned_catalog.list_directory(core::DirectoryKind::Memo, memo_dir.id))
+                owned_catalog.read_view().list_directory(core::DirectoryKind::Memo, memo_dir.id))
                 .size(),
             0U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-                owned_catalog.list_directory(core::DirectoryKind::Memo, memo_second.id))
+                owned_catalog.read_view().list_directory(core::DirectoryKind::Memo, memo_second.id))
                 .size(),
             1U);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.rename_directory(core::DirectoryKind::Memo, memo_second.id, "Renamed / 研究",
                                   coordinator.directory_update_callback())));
-  EXPECT_EQ(owned_catalog.find_directory(memo_second.id)->metadata.name, "Renamed / 研究");
+  EXPECT_EQ(owned_catalog.read_view().find_directory(memo_second.id)->metadata.name,
+            "Renamed / 研究");
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.move_memo(memo.id, std::nullopt, modified(), coordinator.memo_update_callback())));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.move_todo(todo.id, std::nullopt, modified(), coordinator.todo_update_callback())));
-  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Memo).records.size(), 1U);
-  EXPECT_EQ(owned_catalog.list_root(storage::RecordType::Todo).records.size(), 1U);
+  EXPECT_EQ(owned_catalog.read_view().list_root(storage::RecordType::Memo).records.size(), 1U);
+  EXPECT_EQ(owned_catalog.read_view().list_root(storage::RecordType::Todo).records.size(), 1U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-                owned_catalog.list_directory(core::DirectoryKind::Memo, memo_second.id))
+                owned_catalog.read_view().list_directory(core::DirectoryKind::Memo, memo_second.id))
                 .size(),
             0U);
   EXPECT_EQ(std::get<std::vector<storage::RecordMetadata>>(
-                owned_catalog.list_directory(core::DirectoryKind::Todo, todo_dir.id))
+                owned_catalog.read_view().list_directory(core::DirectoryKind::Todo, todo_dir.id))
                 .size(),
             0U);
   EXPECT_TRUE(owned_catalog.unpersisted());
@@ -358,7 +364,7 @@ TEST_F(NormalRepositoryCallbacksTest, RepositoryFailureNotifiesWithoutProvidingS
   edited.title = "Blocked edit";
   edited.modified = modified();
   const auto path =
-      std::get<storage::LogMetadata>(*owned_catalog.find_record(log.id)).relative_path;
+      std::get<storage::LogMetadata>(*owned_catalog.read_view().find_record(log.id)).relative_path;
   const auto pending =
       normal / path.parent_path() /
       ("." + path.filename().string() + ".tmp-" + core::Id::generate().to_string());
@@ -382,7 +388,8 @@ TEST_F(NormalRepositoryCallbacksTest, StaleLocatorCanBeCorrectedByCallerDiscover
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.shutdown_save()));
   const auto prior_index = bytes(index);
   const auto old_path =
-      std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).relative_path;
+      std::get<storage::MemoMetadata>(*owned_catalog.read_view().find_record(memo.id))
+          .relative_path;
   const fs::path renamed = fs::path{"memos"} / "externally-renamed.md";
   fs::rename(normal / old_path, normal / renamed);
   auto edited = memo;
@@ -390,12 +397,14 @@ TEST_F(NormalRepositoryCallbacksTest, StaleLocatorCanBeCorrectedByCallerDiscover
   edited.modified = modified();
   const auto stale = repository.update_memo(edited, old_path, coordinator.memo_update_callback());
   expect_code(stale, storage::StorageErrorCode::StaleLocator);
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).relative_path,
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.read_view().find_record(memo.id))
+                .relative_path,
             old_path);
   EXPECT_FALSE(owned_catalog.unpersisted());
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.update_memo(edited, std::nullopt, coordinator.memo_update_callback())));
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).relative_path,
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.read_view().find_record(memo.id))
+                .relative_path,
             renamed);
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
@@ -419,7 +428,7 @@ TEST_F(NormalRepositoryCallbacksTest, FailedCallbackReportsPublishedFileAndBlock
   EXPECT_TRUE(diagnostic(std::get<storage::RepositoryMutationError>(failed)).replacement_completed);
   EXPECT_TRUE(
       fs::is_regular_file(diagnostic(std::get<storage::RepositoryMutationError>(failed)).path));
-  EXPECT_FALSE(owned_catalog.find_record(log.id).has_value());
+  EXPECT_FALSE(owned_catalog.read_view().find_record(log.id).has_value());
   // The callback reports the stale locator conflict; observing the result flags it.
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
   const auto blocked = coordinator.shutdown_save();
@@ -430,7 +439,7 @@ TEST_F(NormalRepositoryCallbacksTest, FailedCallbackReportsPublishedFileAndBlock
   ASSERT_TRUE(
       std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
-  EXPECT_TRUE(owned_catalog.find_record(log.id).has_value());
+  EXPECT_TRUE(owned_catalog.read_view().find_record(log.id).has_value());
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_EQ(bytes(index), old_index);
 }
@@ -449,12 +458,12 @@ TEST_F(NormalRepositoryCallbacksTest, DirectoryCallbackFailureLeavesSavedMetadat
   ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(failed));
   EXPECT_TRUE(diagnostic(std::get<storage::RepositoryMutationError>(failed)).replacement_completed);
   EXPECT_TRUE(fs::is_regular_file(normal / "memos" / directory.id.to_string() / ".folio-dir.toml"));
-  EXPECT_FALSE(owned_catalog.find_directory(directory.id).has_value());
+  EXPECT_FALSE(owned_catalog.read_view().find_directory(directory.id).has_value());
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
   EXPECT_EQ(bytes(index), prior_index);
   ASSERT_TRUE(
       std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
-  EXPECT_TRUE(owned_catalog.find_directory(directory.id).has_value());
+  EXPECT_TRUE(owned_catalog.read_view().find_directory(directory.id).has_value());
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
 }
 
@@ -462,13 +471,13 @@ TEST_F(NormalRepositoryCallbacksTest, CallbackOmissionLeavesCatalogUntouched) {
   const auto log = log_snapshot();
   const auto prior_index = bytes(index);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(log)));
-  EXPECT_FALSE(owned_catalog.find_record(log.id).has_value());
+  EXPECT_FALSE(owned_catalog.read_view().find_record(log.id).has_value());
   EXPECT_FALSE(owned_catalog.unpersisted());
   EXPECT_TRUE(fs::exists(normal / "logs"));
   EXPECT_EQ(bytes(index), prior_index);
   ASSERT_TRUE(
       std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
-  EXPECT_TRUE(owned_catalog.find_record(log.id).has_value());
+  EXPECT_TRUE(owned_catalog.read_view().find_record(log.id).has_value());
   EXPECT_TRUE(owned_catalog.unpersisted());
 }
 
@@ -485,7 +494,7 @@ TEST_F(NormalRepositoryCallbacksTest, BodyOnlyUpdateAndSameNameRenameKeepCatalog
   auto edited = log;
   edited.content = "body only edit";
   const auto path =
-      std::get<storage::LogMetadata>(*owned_catalog.find_record(log.id)).relative_path;
+      std::get<storage::LogMetadata>(*owned_catalog.read_view().find_record(log.id)).relative_path;
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.update_log(edited, path, coordinator.log_update_callback())));
   EXPECT_FALSE(owned_catalog.unpersisted());
@@ -506,8 +515,8 @@ TEST_F(NormalRepositoryCallbacksTest, TodoNotesAndSubtasksPreservePersistedMetad
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.shutdown_save()));
   ASSERT_FALSE(owned_catalog.unpersisted());
   const auto prior_index = bytes(index);
-  const auto path =
-      std::get<storage::TodoMetadata>(*owned_catalog.find_record(todo.id)).relative_path;
+  const auto path = std::get<storage::TodoMetadata>(*owned_catalog.read_view().find_record(todo.id))
+                        .relative_path;
   auto edited = todo;
   edited.notes = "Unicode notes: 研究 / café";
   edited.subtasks = {{"Revised subtask", true}};
@@ -521,11 +530,11 @@ TEST_F(NormalRepositoryCallbacksTest, TodoNotesAndSubtasksPreservePersistedMetad
   EXPECT_EQ(std::get<core::Todo::Snapshot>(loaded).subtasks.front().content, "Revised subtask");
   storage::RecordQuery query;
   query.text = "Revised subtask";
-  EXPECT_TRUE(owned_catalog.query(query).empty());
+  EXPECT_TRUE(owned_catalog.read_view().query(query).empty());
   query.text = "Unicode notes";
-  EXPECT_TRUE(owned_catalog.query(query).empty());
+  EXPECT_TRUE(owned_catalog.read_view().query(query).empty());
   query.text = "Todo title";
-  EXPECT_EQ(owned_catalog.query(query).size(), 1U);
+  EXPECT_EQ(owned_catalog.read_view().query(query).size(), 1U);
   EXPECT_EQ(bytes(index), prior_index);
 }
 
@@ -543,8 +552,9 @@ TEST_F(NormalRepositoryCallbacksTest, CallbackObservesCommittedFileAndActualLoca
       };
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(log, observer)));
   EXPECT_TRUE(observed_file);
-  EXPECT_EQ(observed_path,
-            std::get<storage::LogMetadata>(*owned_catalog.find_record(log.id)).relative_path);
+  EXPECT_EQ(
+      observed_path,
+      std::get<storage::LogMetadata>(*owned_catalog.read_view().find_record(log.id)).relative_path);
   EXPECT_EQ(std::get<core::Log::Snapshot>(repository.load_log(log.id, observed_path)).content,
             log.content);
 }
@@ -584,8 +594,8 @@ TEST_F(NormalRepositoryCallbacksTest, ThrowingCallbacksReportSavedDataWithoutRol
   EXPECT_EQ(bytes(index), prior_index);
   ASSERT_TRUE(
       std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
-  EXPECT_TRUE(owned_catalog.find_record(first.id).has_value());
-  EXPECT_TRUE(owned_catalog.find_record(second.id).has_value());
+  EXPECT_TRUE(owned_catalog.read_view().find_record(first.id).has_value());
+  EXPECT_TRUE(owned_catalog.read_view().find_record(second.id).has_value());
 }
 
 TEST_F(NormalRepositoryCallbacksTest, NoOpMoveCorrectsStaleCatalogLocator) {
@@ -596,12 +606,14 @@ TEST_F(NormalRepositoryCallbacksTest, NoOpMoveCorrectsStaleCatalogLocator) {
   ASSERT_FALSE(owned_catalog.unpersisted());
   const auto prior_index = bytes(index);
   const auto old_path =
-      std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).relative_path;
+      std::get<storage::MemoMetadata>(*owned_catalog.read_view().find_record(memo.id))
+          .relative_path;
   const fs::path renamed = fs::path{"memos"} / "renamed-without-move.md";
   fs::rename(normal / old_path, normal / renamed);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.move_memo(memo.id, std::nullopt, modified(), coordinator.memo_update_callback())));
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).relative_path,
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.read_view().find_record(memo.id))
+                .relative_path,
             renamed);
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_EQ(bytes(index), prior_index);
@@ -626,8 +638,8 @@ TEST_F(NormalRepositoryCallbacksTest, SavedUpdateWithMissingCatalogIdRequiresRef
   ASSERT_TRUE(std::holds_alternative<storage::RepositoryMutationError>(failed));
   EXPECT_TRUE(diagnostic(std::get<storage::RepositoryMutationError>(failed)).replacement_completed);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
-  EXPECT_FALSE(owned_catalog.find_record(log.id).has_value());
-  EXPECT_TRUE(owned_catalog.find_record(stale.id).has_value());
+  EXPECT_FALSE(owned_catalog.read_view().find_record(log.id).has_value());
+  EXPECT_TRUE(owned_catalog.read_view().find_record(stale.id).has_value());
   EXPECT_EQ(std::get<core::Log::Snapshot>(repository.load_log(log.id, path)).title, edited.title);
   EXPECT_EQ(bytes(index), prior_index);
   const auto blocked = coordinator.shutdown_save();
@@ -637,8 +649,8 @@ TEST_F(NormalRepositoryCallbacksTest, SavedUpdateWithMissingCatalogIdRequiresRef
   ASSERT_TRUE(
       std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
-  EXPECT_TRUE(owned_catalog.find_record(log.id).has_value());
-  EXPECT_FALSE(owned_catalog.find_record(stale.id).has_value());
+  EXPECT_TRUE(owned_catalog.read_view().find_record(log.id).has_value());
+  EXPECT_FALSE(owned_catalog.read_view().find_record(stale.id).has_value());
 }
 
 TEST_F(NormalRepositoryCallbacksTest, FailedRefreshPreservesPersistedInconsistentCatalog) {
@@ -661,7 +673,7 @@ TEST_F(NormalRepositoryCallbacksTest, FailedRefreshPreservesPersistedInconsisten
   ASSERT_TRUE(std::holds_alternative<storage::CoordinatorError>(failed));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
   EXPECT_FALSE(owned_catalog.unpersisted());
-  EXPECT_TRUE(owned_catalog.query().empty());
+  EXPECT_TRUE(owned_catalog.read_view().query().empty());
   EXPECT_EQ(bytes(index), prior_index);
   const auto blocked = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::CoordinatorError>(blocked));
@@ -684,7 +696,7 @@ TEST_F(NormalRepositoryCallbacksTest, ManagedPrePublicationFailurePreservesReady
   EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
             storage::MutationFailureStage::BeforeAuthoritativeChange);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
-  EXPECT_TRUE(owned_catalog.query().empty());
+  EXPECT_TRUE(owned_catalog.read_view().query().empty());
   EXPECT_FALSE(owned_catalog.unpersisted());
 }
 
@@ -703,7 +715,7 @@ TEST_F(NormalRepositoryCallbacksTest, NonstandardPreflightExceptionDoesNotPoison
   EXPECT_FALSE(owned_catalog.unpersisted());
   EXPECT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(
       snapshot, coordinator.log_creation_callback(), coordinator.creation_check())));
-  EXPECT_TRUE(owned_catalog.contains_entry(snapshot.id));
+  EXPECT_TRUE(owned_catalog.read_view().contains_entry(snapshot.id));
 }
 
 TEST_F(NormalRepositoryCallbacksTest, ProjectionFailureIsClassifiedBeforeSuccessCallbackRuns) {
@@ -721,7 +733,7 @@ TEST_F(NormalRepositoryCallbacksTest, ProjectionFailureIsClassifiedBeforeSuccess
             storage::MutationFailureStage::CatalogSynchronizationFailed);
   EXPECT_NE(error.message.find("synthetic projection failure"), std::string::npos);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
-  EXPECT_TRUE(owned_catalog.query().empty());
+  EXPECT_TRUE(owned_catalog.read_view().query().empty());
   EXPECT_FALSE(owned_catalog.unpersisted());
   EXPECT_TRUE(std::holds_alternative<storage::CoordinatorError>(coordinator.shutdown_save()));
   EXPECT_EQ(bytes(index), prior);
@@ -734,7 +746,7 @@ TEST_F(NormalRepositoryCallbacksTest, ProjectionFailureIsClassifiedBeforeSuccess
   ASSERT_TRUE(
       std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
-  EXPECT_TRUE(owned_catalog.find_record(log.id));
+  EXPECT_TRUE(owned_catalog.read_view().find_record(log.id));
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_EQ(bytes(index), prior);
 }
@@ -876,7 +888,7 @@ TEST_F(NormalRepositoryCallbacksTest,
   EXPECT_EQ(error.message, "metadata write denied");
   EXPECT_EQ(error.system_error, std::errc::permission_denied);
   EXPECT_TRUE(fs::is_directory(normal / "memos" / dir.id.to_string()));
-  EXPECT_FALSE(owned_catalog.find_directory(dir.id));
+  EXPECT_FALSE(owned_catalog.read_view().find_directory(dir.id));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
   EXPECT_TRUE(std::holds_alternative<storage::CoordinatorError>(coordinator.refresh_all()));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
@@ -909,7 +921,7 @@ TEST_F(NormalRepositoryCallbacksTest,
     auto log = log_snapshot();
     if (update) {
       // The failed create iteration already published this Entry.
-      ASSERT_TRUE(owned_catalog.find_record(log.id));
+      ASSERT_TRUE(owned_catalog.read_view().find_record(log.id));
       log.title = "Published update";
     }
     ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.shutdown_save()));
@@ -958,7 +970,8 @@ TEST_F(NormalRepositoryCallbacksTest, MoveDestinationPublicationFailureKeepsSour
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.create_memo(memo, coordinator.memo_creation_callback())));
   const auto old_path =
-      std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).relative_path;
+      std::get<storage::MemoMetadata>(*owned_catalog.read_view().find_record(memo.id))
+          .relative_path;
   ScopedRepositoryHooks hooks;
   failing_sync = 3;
   storage::internal::repository_test_hooks.write = injected_write;
@@ -968,7 +981,8 @@ TEST_F(NormalRepositoryCallbacksTest, MoveDestinationPublicationFailureKeepsSour
   EXPECT_TRUE(diagnostic(std::get<storage::RepositoryMutationError>(result)).replacement_completed);
   EXPECT_TRUE(fs::exists(normal / old_path));
   EXPECT_TRUE(fs::exists(normal / "memos" / dir.id.to_string() / old_path.filename()));
-  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).relative_path,
+  EXPECT_EQ(std::get<storage::MemoMetadata>(*owned_catalog.read_view().find_record(memo.id))
+                .relative_path,
             old_path);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
 }
@@ -1018,7 +1032,8 @@ TEST_F(NormalRepositoryCallbacksTest, PartialMovesPreserveErrorAndInvalidateCata
       repository.create_memo(memo, coordinator.memo_creation_callback())));
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.shutdown_save()));
   const auto old_path =
-      std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).relative_path;
+      std::get<storage::MemoMetadata>(*owned_catalog.read_view().find_record(memo.id))
+          .relative_path;
   ScopedRepositoryHooks hooks;
   storage::internal::repository_test_hooks.remove_source = [](const fs::path&,
                                                               std::error_code& ec) {
@@ -1050,7 +1065,8 @@ TEST_F(NormalRepositoryCallbacksTest, RemovedSourceSyncFailureCanBeReconciledExp
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.create_todo(todo, coordinator.todo_creation_callback())));
   const auto old_path =
-      std::get<storage::TodoMetadata>(*owned_catalog.find_record(todo.id)).relative_path;
+      std::get<storage::TodoMetadata>(*owned_catalog.read_view().find_record(todo.id))
+          .relative_path;
   ScopedRepositoryHooks hooks;
   storage::internal::repository_test_hooks.sync_source = [](int) {
     errno = EIO;
@@ -1065,9 +1081,9 @@ TEST_F(NormalRepositoryCallbacksTest, RemovedSourceSyncFailureCanBeReconciledExp
   ASSERT_TRUE(
       std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
-  EXPECT_EQ(
-      std::get<storage::TodoMetadata>(*owned_catalog.find_record(todo.id)).metadata.directory_id,
-      dir.id);
+  EXPECT_EQ(std::get<storage::TodoMetadata>(*owned_catalog.read_view().find_record(todo.id))
+                .metadata.directory_id,
+            dir.id);
   EXPECT_TRUE(owned_catalog.unpersisted());
 }
 #endif
@@ -1089,7 +1105,7 @@ TEST_F(NormalRepositoryCallbacksTest, ManagedCreationUsesCatalogDespiteUnrelated
       memo_snapshot(), coordinator.memo_creation_callback(), check_creation)));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_todo(
       todo_snapshot(), coordinator.todo_creation_callback(), check_creation)));
-  EXPECT_EQ(owned_catalog.query().size(), 3u);
+  EXPECT_EQ(owned_catalog.read_view().query().size(), 3u);
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_EQ(bytes(index), prior_index);
@@ -1100,7 +1116,7 @@ TEST_F(NormalRepositoryCallbacksTest, ManagedCreationUsesCatalogDespiteUnrelated
   EXPECT_TRUE(std::holds_alternative<storage::StorageError>(
       repository.locate_record(storage::RecordType::Memo, memo_snapshot().id)));
   EXPECT_TRUE(std::holds_alternative<storage::CoordinatorError>(coordinator.refresh_all()));
-  EXPECT_EQ(owned_catalog.query().size(), 3u);
+  EXPECT_EQ(owned_catalog.read_view().query().size(), 3u);
   EXPECT_EQ(bytes(index), prior_index);
 }
 
@@ -1184,11 +1200,12 @@ TEST_F(NormalRepositoryCallbacksTest, TargetedOperationsIgnoreUnrelatedMalformed
       md.kind, md, coordinator.directory_creation_callback(), check_creation)));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_directory(
       td.kind, td, coordinator.directory_creation_callback(), check_creation)));
-  const auto lp = std::get<storage::LogMetadata>(*owned_catalog.find_record(log.id)).relative_path;
-  const auto mp =
-      std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id)).relative_path;
-  const auto tp =
-      std::get<storage::TodoMetadata>(*owned_catalog.find_record(todo.id)).relative_path;
+  const auto lp =
+      std::get<storage::LogMetadata>(*owned_catalog.read_view().find_record(log.id)).relative_path;
+  const auto mp = std::get<storage::MemoMetadata>(*owned_catalog.read_view().find_record(memo.id))
+                      .relative_path;
+  const auto tp = std::get<storage::TodoMetadata>(*owned_catalog.read_view().find_record(todo.id))
+                      .relative_path;
   // Explicit UUID discovery remains available before the unrelated corruption.
   EXPECT_EQ(std::get<fs::path>(repository.locate_record(storage::RecordType::Memo, memo.id)), mp);
   write_bytes(normal / "logs" / "unrelated.md", "invalid authoritative file");
@@ -1213,8 +1230,10 @@ TEST_F(NormalRepositoryCallbacksTest, TargetedOperationsIgnoreUnrelatedMalformed
       repository.move_memo(memo.id, md.id, modified(), coordinator.memo_update_callback(), mp)));
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.move_todo(todo.id, td.id, modified(), coordinator.todo_update_callback(), tp)));
-  const auto moved_memo = std::get<storage::MemoMetadata>(*owned_catalog.find_record(memo.id));
-  const auto moved_todo = std::get<storage::TodoMetadata>(*owned_catalog.find_record(todo.id));
+  const auto moved_memo =
+      std::get<storage::MemoMetadata>(*owned_catalog.read_view().find_record(memo.id));
+  const auto moved_todo =
+      std::get<storage::TodoMetadata>(*owned_catalog.read_view().find_record(todo.id));
   EXPECT_EQ(moved_memo.relative_path.filename(), mp.filename());
   EXPECT_EQ(moved_todo.relative_path.filename(), tp.filename());
   EXPECT_EQ(moved_memo.metadata.directory_id, md.id);
@@ -1233,7 +1252,7 @@ TEST_F(NormalRepositoryCallbacksTest, TargetedOperationsIgnoreUnrelatedMalformed
                                    coordinator.todo_update_callback(), moved_todo.relative_path),
               storage::StorageErrorCode::StaleLocator);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
-  EXPECT_EQ(owned_catalog.query().size(), 3u);
+  EXPECT_EQ(owned_catalog.read_view().query().size(), 3u);
   EXPECT_EQ(bytes(index), prior_index);
 }
 
@@ -1250,7 +1269,7 @@ TEST_F(NormalRepositoryCallbacksTest, ManagedCreationStillRejectsOccupiedDestina
   EXPECT_EQ(std::get<storage::RepositoryMutationError>(result).stage,
             storage::MutationFailureStage::BeforeAuthoritativeChange);
   EXPECT_EQ(bytes(normal / path), original);
-  EXPECT_TRUE(owned_catalog.query().empty());
+  EXPECT_TRUE(owned_catalog.read_view().query().empty());
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
 }
 
@@ -1263,7 +1282,8 @@ TEST_F(NormalRepositoryCallbacksTest, KnownLocatorPartialMoveStillInvalidatesCat
   ASSERT_TRUE(std::holds_alternative<std::monostate>(
       repository.create_todo(todo, coordinator.todo_creation_callback(), check_creation)));
   const auto source =
-      std::get<storage::TodoMetadata>(*owned_catalog.find_record(todo.id)).relative_path;
+      std::get<storage::TodoMetadata>(*owned_catalog.read_view().find_record(todo.id))
+          .relative_path;
   const auto prior_index = bytes(index);
   ScopedRepositoryHooks hooks;
   storage::internal::repository_test_hooks.remove_source = [](const fs::path&,

@@ -8,7 +8,9 @@ Platform implementation is not a claim of native runtime verification.
 
 ## Dependencies
 
-FTXUI, GoogleTest, stduuid, libsodium, toml++, msgpack-cxx, CLI11, and spdlog are Git submodules under `thirdparty/`. The project-owned libsodium CMake recipe is in `thirdparty/libsodium-cmake/`. Libsodium supplies UUIDv4 randomness now and is reserved for later cryptographic work; encryption is not implemented. Do not modify vendored sources during normal development or update submodules unless the task calls for it. Keep the recipe aligned with the pinned libsodium version. Justify new dependencies and keep test-only dependencies out of production targets.
+FTXUI, GoogleTest, stduuid, libsodium, toml++, msgpack-cxx, CLI11, spdlog, and Immer are Git submodules under `thirdparty/`. The project-owned libsodium CMake recipe is in `thirdparty/libsodium-cmake/`. Libsodium supplies UUIDv4 randomness now and is reserved for later cryptographic work; encryption is not implemented. Do not modify vendored sources during normal development or update submodules unless the task calls for it. Keep the recipe aligned with the pinned libsodium version. Justify new dependencies and keep test-only dependencies out of production targets.
+
+Immer v0.9.1 (`160f0d7025321e5dc1fc3f0b7742ca7621d43981`, Boost Software License 1.0) supplies Backend-private persistent containers for the planned Catalog refactor. It is header-only; its examples, tests, docs and extras are disabled. Catalog uses its persistent maps/sets and boxed metadata values.
 
 Initialize the pinned dependencies in an existing checkout:
 

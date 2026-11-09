@@ -1,11 +1,25 @@
 #include "storage/metadata_catalog.hpp"
 
+#include <immer/map.hpp>
+#include <immer/set.hpp>
+#include <immer/box.hpp>
 #include <algorithm>
 #include <cstdint>
 #include <type_traits>
 #include <utility>
 
 namespace folio::core::storage {
+struct MetadataCatalog::State {
+  immer::map<std::string, immer::box<LogMetadata>> logs_;
+  immer::map<std::string, immer::box<MemoMetadata>> memos_;
+  immer::map<std::string, immer::box<TodoMetadata>> todos_;
+  immer::map<std::string, immer::box<DirectoryMetadata>> directories_;
+  immer::set<std::string> log_roots_, memo_roots_, todo_roots_;
+  immer::map<std::string, immer::set<std::string>> directory_members_;
+};
+
+MetadataCatalog::MetadataCatalog() : state_(std::make_shared<const State>()) {}
+
 namespace {
 ::folio::core::Result<std::monostate, StorageError>
 failure(StorageErrorCode code, const std::filesystem::path& path, std::string message) {
@@ -137,6 +151,15 @@ std::optional<Id> entry_directory(const RecordMetadata& e) {
       },
       e);
 }
+template <class T> void sort_metadata_ids(std::vector<T>& values) {
+  std::sort(values.begin(), values.end(), [](const auto& a, const auto& b) {
+    if constexpr (std::is_same_v<T, RecordMetadata>)
+      return entry_id(a).to_string() < entry_id(b).to_string();
+    else
+      return a.metadata.id.to_string() < b.metadata.id.to_string();
+  });
+}
+
 Privacy entry_privacy(const RecordMetadata& e) {
   return std::visit([](const auto& value) { return value.metadata.privacy; }, e);
 }
@@ -367,11 +390,74 @@ core::Result<std::monostate, StorageError> validate_metadata(const DirectoryMeta
   return std::monostate{};
 }
 
+MetadataCatalogView MetadataCatalog::read_view() const {
+  return MetadataCatalogView{state_};
+}
+
+MetadataCatalogView::MetadataCatalogView(std::shared_ptr<const MetadataCatalog::State> state)
+    : state_(std::move(state)) {}
+
+template <class Change>
+core::Result<std::monostate, StorageError> MetadataCatalog::change(Change&& apply) {
+  auto next = std::make_shared<State>(*state_);
+  MetadataCatalog candidate = *this;
+  candidate.state_ = next;
+  candidate.unpersisted_ = false;
+  auto result = apply(candidate, *next);
+  if (std::holds_alternative<std::monostate>(result) && candidate.unpersisted_) {
+    state_ = std::move(next);
+    unpersisted_ = true;
+  }
+  return result;
+}
+
+core::Result<std::monostate, StorageError> MetadataCatalog::insert_record(RecordMetadata metadata) {
+  return change([&](MetadataCatalog& candidate, State& next) {
+    return candidate.insert_record_candidate(next, std::move(metadata));
+  });
+}
+
+core::Result<std::monostate, StorageError> MetadataCatalog::update_record(RecordMetadata metadata) {
+  return change([&](MetadataCatalog& candidate, State& next) {
+    return candidate.update_record_candidate(next, std::move(metadata));
+  });
+}
+
+core::Result<std::monostate, StorageError> MetadataCatalog::remove_record(const Id& id) {
+  return change([&](MetadataCatalog& candidate, State& next) {
+    return candidate.remove_record_candidate(next, id);
+  });
+}
+
+core::Result<std::monostate, StorageError>
+MetadataCatalog::insert_directory(DirectoryMetadata metadata) {
+  return change([&](MetadataCatalog& candidate, State& next) {
+    return candidate.insert_directory_candidate(next, std::move(metadata));
+  });
+}
+
+core::Result<std::monostate, StorageError>
+MetadataCatalog::update_directory(DirectoryMetadata metadata) {
+  return change([&](MetadataCatalog& candidate, State& next) {
+    return candidate.update_directory_candidate(next, std::move(metadata));
+  });
+}
+
+core::Result<std::monostate, StorageError> MetadataCatalog::remove_directory(const Id& id) {
+  return change([&](MetadataCatalog& candidate, State& next) {
+    return candidate.remove_directory_candidate(next, id);
+  });
+}
+
 bool MetadataCatalog::record_path_occupied(const std::filesystem::path& path,
                                            std::optional<Id> except) const {
+  const auto& logs_ = state().logs_;
+  const auto& memos_ = state().memos_;
+  const auto& todos_ = state().todos_;
+
   auto occupied = [&](const auto& collection) {
     return std::any_of(collection.begin(), collection.end(), [&](const auto& pair) {
-      const auto& e = pair.second;
+      const auto& e = *pair.second;
       return e.relative_path == path && (!except || e.metadata.id != *except);
     });
   };
@@ -379,75 +465,86 @@ bool MetadataCatalog::record_path_occupied(const std::filesystem::path& path,
 }
 
 bool MetadataCatalog::directory_referenced(const DirectoryMetadata& directory) const {
+  const auto& directory_members_ = state().directory_members_;
+
   const auto it = directory_members_.find(directory.metadata.id.to_string());
-  return it != directory_members_.end() && !it->second.empty();
+  return it && !it->empty();
 }
 
-std::set<std::string>& MetadataCatalog::members_for(RecordType type,
-                                                    std::optional<Id> directory_id) {
-  if (directory_id) return directory_members_.at(directory_id->to_string());
-  switch (type) {
-  case RecordType::Log:
-    return log_roots_;
-  case RecordType::Memo:
-    return memo_roots_;
-  case RecordType::Todo:
-    return todo_roots_;
+void MetadataCatalog::change_members(State& next, RecordType type, std::optional<Id> directory_id,
+                                     const std::string& key, bool insert) {
+  auto change = [&](const auto& members) {
+    return insert ? members.insert(key) : members.erase(key);
+  };
+  if (directory_id) {
+    const auto id = directory_id->to_string();
+    next.directory_members_ =
+        next.directory_members_.set(id, change(next.directory_members_.at(id)));
+  } else {
+    auto& members = type == RecordType::Log    ? next.log_roots_
+                    : type == RecordType::Memo ? next.memo_roots_
+                                               : next.todo_roots_;
+    members = change(members);
   }
-  return log_roots_;
 }
 
 ::folio::core::Result<std::monostate, StorageError>
-MetadataCatalog::insert_record(RecordMetadata m) {
+MetadataCatalog::insert_record_candidate(State& next, RecordMetadata m) {
+  auto& logs_ = next.logs_;
+  auto& memos_ = next.memos_;
+  auto& todos_ = next.todos_;
+  auto& directories_ = next.directories_;
+
   if (auto checked = validate_metadata(m); std::holds_alternative<StorageError>(checked))
     return checked;
   const Id id = entry_id(m);
   const auto key = id.to_string();
-  if (directories_.contains(key) || find_record(id))
+  if (directories_.count(key) || read_view().find_record(id))
     return failure(StorageErrorCode::DuplicateId, entry_path(m), "Entry UUID already exists");
   if (record_path_occupied(entry_path(m)))
     return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Locator already occupied");
   for (const auto& [directory_key, d] : directories_)
-    if (d.relative_path == entry_path(m))
+    if (d->relative_path == entry_path(m))
       return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Locator already occupied");
   const auto type = record_type(m);
   const auto directory_id = entry_directory(m);
   if (directory_id) {
-    const auto found = find_directory(*directory_id);
+    const auto found = read_view().find_directory(*directory_id);
     const auto kind = type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo;
     if (!found || found->metadata.kind != kind)
       return failure(StorageErrorCode::InvalidMetadata, entry_path(m),
                      "Missing or wrong-kind Directory");
   }
-  auto& members = members_for(type, directory_id);
-  members.insert(key);
-  try {
+  change_members(next, type, directory_id, key, true);
+  {
     std::visit(
         [&](auto&& value) {
           using T = std::decay_t<decltype(value)>;
           if constexpr (std::is_same_v<T, LogMetadata>)
-            logs_.emplace(key, std::move(value));
+            logs_ = logs_.set(key, immer::box<T>{std::move(value)});
           else if constexpr (std::is_same_v<T, MemoMetadata>)
-            memos_.emplace(key, std::move(value));
+            memos_ = memos_.set(key, immer::box<T>{std::move(value)});
           else
-            todos_.emplace(key, std::move(value));
+            todos_ = todos_.set(key, immer::box<T>{std::move(value)});
         },
         std::move(m));
-  } catch (...) {
-    members.erase(key);
-    throw;
   }
   unpersisted_ = true;
   return std::monostate{};
 }
 
 ::folio::core::Result<std::monostate, StorageError>
-MetadataCatalog::update_record(RecordMetadata m) {
+MetadataCatalog::update_record_candidate(State& next, RecordMetadata m) {
+  auto& logs_ = next.logs_;
+  auto& memos_ = next.memos_;
+  auto& todos_ = next.todos_;
+  auto& directories_ = next.directories_;
+
   if (auto checked = validate_metadata(m); std::holds_alternative<StorageError>(checked))
     return checked;
   const Id id = entry_id(m);
   const auto key = id.to_string();
-  const auto existing = find_record(id);
+  const auto existing = read_view().find_record(id);
   if (!existing)
     return failure(StorageErrorCode::MetadataNotFound, entry_path(m), "Entry UUID not found");
   const auto type = record_type(m);
@@ -456,58 +553,57 @@ MetadataCatalog::update_record(RecordMetadata m) {
   if (record_path_occupied(entry_path(m), id))
     return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Locator already occupied");
   for (const auto& [directory_key, d] : directories_)
-    if (d.relative_path == entry_path(m))
+    if (d->relative_path == entry_path(m))
       return failure(StorageErrorCode::InvalidMetadata, entry_path(m), "Locator already occupied");
   const auto old_directory = entry_directory(*existing);
   const auto new_directory = entry_directory(m);
   if (new_directory) {
-    const auto found = find_directory(*new_directory);
+    const auto found = read_view().find_directory(*new_directory);
     const auto kind = type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo;
     if (!found || found->metadata.kind != kind)
       return failure(StorageErrorCode::InvalidMetadata, entry_path(m),
                      "Missing or wrong-kind Directory");
   }
   if (equal(*existing, m)) return std::monostate{};
-  std::set<std::string>* old_members = nullptr;
   if (new_directory != old_directory) {
-    old_members = &members_for(type, old_directory);
-    members_for(type, new_directory).insert(key);
+    change_members(next, type, old_directory, key, false);
+    change_members(next, type, new_directory, key, true);
   }
   std::visit(
       [&](auto&& value) {
         using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_same_v<T, LogMetadata>) {
-          static_assert(std::is_nothrow_swappable_v<T>);
-          std::swap(logs_.at(key), value);
-        } else if constexpr (std::is_same_v<T, MemoMetadata>) {
-          static_assert(std::is_nothrow_swappable_v<T>);
-          std::swap(memos_.at(key), value);
-        } else {
-          static_assert(std::is_nothrow_swappable_v<T>);
-          std::swap(todos_.at(key), value);
-        }
+        if constexpr (std::is_same_v<T, LogMetadata>)
+          logs_ = logs_.set(key, immer::box<T>{std::move(value)});
+        else if constexpr (std::is_same_v<T, MemoMetadata>)
+          memos_ = memos_.set(key, immer::box<T>{std::move(value)});
+        else
+          todos_ = todos_.set(key, immer::box<T>{std::move(value)});
       },
       m);
-  if (old_members) old_members->erase(key);
   unpersisted_ = true;
   return std::monostate{};
 }
 
-::folio::core::Result<std::monostate, StorageError> MetadataCatalog::remove_record(const Id& id) {
+::folio::core::Result<std::monostate, StorageError>
+MetadataCatalog::remove_record_candidate(State& next, const Id& id) {
+  auto& logs_ = next.logs_;
+  auto& memos_ = next.memos_;
+  auto& todos_ = next.todos_;
+
   const auto key = id.to_string();
-  const auto existing = find_record(id);
+  const auto existing = read_view().find_record(id);
   if (!existing) return failure(StorageErrorCode::MetadataNotFound, {}, "Entry UUID not found");
   const auto type = record_type(*existing);
-  members_for(type, entry_directory(*existing)).erase(key);
+  change_members(next, type, entry_directory(*existing), key, false);
   switch (type) {
   case RecordType::Log:
-    logs_.erase(key);
+    logs_ = logs_.erase(key);
     break;
   case RecordType::Memo:
-    memos_.erase(key);
+    memos_ = memos_.erase(key);
     break;
   case RecordType::Todo:
-    todos_.erase(key);
+    todos_ = todos_.erase(key);
     break;
   }
   unpersisted_ = true;
@@ -515,64 +611,65 @@ MetadataCatalog::update_record(RecordMetadata m) {
 }
 
 ::folio::core::Result<std::monostate, StorageError>
-MetadataCatalog::insert_directory(DirectoryMetadata m) {
+MetadataCatalog::insert_directory_candidate(State& next, DirectoryMetadata m) {
+  auto& directories_ = next.directories_;
+  auto& directory_members_ = next.directory_members_;
+
   if (auto checked = validate_metadata(m); std::holds_alternative<StorageError>(checked))
     return checked;
   const auto key = m.metadata.id.to_string();
-  if (directories_.contains(key) || find_record(m.metadata.id))
+  if (directories_.count(key) || read_view().find_record(m.metadata.id))
     return failure(StorageErrorCode::DuplicateId, m.relative_path, "Entry UUID already exists");
   for (const auto& [directory_key, d] : directories_)
-    if (d.relative_path == m.relative_path)
+    if (d->relative_path == m.relative_path)
       return failure(StorageErrorCode::InvalidMetadata, m.relative_path,
                      "Locator already occupied");
   if (record_path_occupied(m.relative_path))
     return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Locator already occupied");
-  directory_members_.try_emplace(key);
-  try {
-    directories_.emplace(key, std::move(m));
-  } catch (...) {
-    directory_members_.erase(key);
-    throw;
-  }
+  directory_members_ = directory_members_.set(key, {});
+  directories_ = directories_.set(key, immer::box<DirectoryMetadata>{std::move(m)});
   unpersisted_ = true;
   return std::monostate{};
 }
 
 ::folio::core::Result<std::monostate, StorageError>
-MetadataCatalog::update_directory(DirectoryMetadata m) {
+MetadataCatalog::update_directory_candidate(State& next, DirectoryMetadata m) {
+  auto& directories_ = next.directories_;
+
   if (auto checked = validate_metadata(m); std::holds_alternative<StorageError>(checked))
     return checked;
   const auto key = m.metadata.id.to_string();
   auto it = directories_.find(key);
-  if (it == directories_.end())
+  if (!it)
     return failure(StorageErrorCode::MetadataNotFound, m.relative_path, "Directory UUID not found");
-  if (it->second.metadata.kind != m.metadata.kind && directory_referenced(it->second))
+  if ((**it).metadata.kind != m.metadata.kind && directory_referenced(**it))
     return failure(StorageErrorCode::ReferencedDirectory, m.relative_path,
                    "Directory is referenced by entries");
   for (const auto& [directory_key, d] : directories_)
-    if (directory_key != key && d.relative_path == m.relative_path)
+    if (directory_key != key && d->relative_path == m.relative_path)
       return failure(StorageErrorCode::InvalidMetadata, m.relative_path,
                      "Locator already occupied");
   if (record_path_occupied(m.relative_path))
     return failure(StorageErrorCode::InvalidMetadata, m.relative_path, "Locator already occupied");
-  if (equal(it->second, m)) return std::monostate{};
-  static_assert(std::is_nothrow_swappable_v<DirectoryMetadata>);
-  std::swap(it->second, m);
+  if (equal(**it, m)) return std::monostate{};
+  directories_ = directories_.set(key, immer::box<DirectoryMetadata>{std::move(m)});
   unpersisted_ = true;
   return std::monostate{};
 }
 
 ::folio::core::Result<std::monostate, StorageError>
-MetadataCatalog::remove_directory(const Id& id) {
+MetadataCatalog::remove_directory_candidate(State& next, const Id& id) {
+  auto& directories_ = next.directories_;
+  auto& directory_members_ = next.directory_members_;
+
   const auto key = id.to_string();
   auto it = directories_.find(key);
-  if (it == directories_.end())
-    return failure(StorageErrorCode::MetadataNotFound, {}, "Directory UUID not found");
-  if (directory_referenced(it->second))
-    return failure(StorageErrorCode::ReferencedDirectory, it->second.relative_path,
+  if (!it) return failure(StorageErrorCode::MetadataNotFound, {}, "Directory UUID not found");
+  if (directory_referenced(**it))
+    return failure(StorageErrorCode::ReferencedDirectory, (**it).relative_path,
                    "Directory is referenced by entries");
-  directory_members_.erase(key);
-  directories_.erase(it);
+  directory_members_ = directory_members_.erase(key);
+  directories_ = directories_.erase(key);
   unpersisted_ = true;
   return std::monostate{};
 }
@@ -605,47 +702,71 @@ MetadataCatalog::rebuild(std::vector<LogMetadata> logs, std::vector<MemoMetadata
   return std::monostate{};
 }
 
-bool MetadataCatalog::contains_entry(const Id& id) const {
+bool MetadataCatalogView::contains_entry(const Id& id) const {
+  const auto& logs_ = state_->logs_;
+  const auto& memos_ = state_->memos_;
+  const auto& todos_ = state_->todos_;
+  const auto& directories_ = state_->directories_;
+
   const auto key = id.to_string();
-  return logs_.contains(key) || memos_.contains(key) || todos_.contains(key) ||
-         directories_.contains(key);
+  return logs_.count(key) || memos_.count(key) || todos_.count(key) || directories_.count(key);
 }
 
-std::optional<RecordMetadata> MetadataCatalog::find_record(const Id& id) const {
+std::optional<RecordMetadata> MetadataCatalogView::find_record(const Id& id) const {
+  const auto& logs_ = state_->logs_;
+  const auto& memos_ = state_->memos_;
+  const auto& todos_ = state_->todos_;
+
   const auto key = id.to_string();
-  if (const auto it = logs_.find(key); it != logs_.end()) return RecordMetadata{it->second};
-  if (const auto it = memos_.find(key); it != memos_.end()) return RecordMetadata{it->second};
-  if (const auto it = todos_.find(key); it != todos_.end()) return RecordMetadata{it->second};
+  if (const auto* it = logs_.find(key)) return RecordMetadata{**it};
+  if (const auto* it = memos_.find(key)) return RecordMetadata{**it};
+  if (const auto* it = todos_.find(key)) return RecordMetadata{**it};
   return std::nullopt;
 }
-std::optional<DirectoryMetadata> MetadataCatalog::find_directory(const Id& id) const {
+std::optional<DirectoryMetadata> MetadataCatalogView::find_directory(const Id& id) const {
+  const auto& directories_ = state_->directories_;
+
   const auto it = directories_.find(id.to_string());
-  return it == directories_.end() ? std::nullopt : std::optional<DirectoryMetadata>{it->second};
+  return !it ? std::nullopt : std::optional<DirectoryMetadata>{**it};
 }
-RootListing MetadataCatalog::list_root(RecordType module) const {
+RootListing MetadataCatalogView::list_root(RecordType module) const {
+  const auto& logs_ = state_->logs_;
+  const auto& memos_ = state_->memos_;
+  const auto& todos_ = state_->todos_;
+  const auto& directories_ = state_->directories_;
+  const auto& log_roots_ = state_->log_roots_;
+  const auto& memo_roots_ = state_->memo_roots_;
+  const auto& todo_roots_ = state_->todo_roots_;
+
   RootListing out;
   switch (module) {
   case RecordType::Log:
     for (const auto& key : log_roots_)
-      out.records.emplace_back(logs_.at(key));
+      out.records.emplace_back(*logs_.at(key));
     break;
   case RecordType::Memo:
     for (const auto& key : memo_roots_)
-      out.records.emplace_back(memos_.at(key));
+      out.records.emplace_back(*memos_.at(key));
     break;
   case RecordType::Todo:
     for (const auto& key : todo_roots_)
-      out.records.emplace_back(todos_.at(key));
+      out.records.emplace_back(*todos_.at(key));
     break;
   }
   for (const auto& [key, d] : directories_)
-    if ((module == RecordType::Memo && d.metadata.kind == DirectoryKind::Memo) ||
-        (module == RecordType::Todo && d.metadata.kind == DirectoryKind::Todo))
-      out.directories.push_back(d);
+    if ((module == RecordType::Memo && d->metadata.kind == DirectoryKind::Memo) ||
+        (module == RecordType::Todo && d->metadata.kind == DirectoryKind::Todo))
+      out.directories.push_back(*d);
+  sort_metadata_ids(out.records);
+  sort_metadata_ids(out.directories);
   return out;
 }
 ::folio::core::Result<std::vector<RecordMetadata>, StorageError>
-MetadataCatalog::list_directory(DirectoryKind kind, const Id& id) const {
+MetadataCatalogView::list_directory(DirectoryKind kind, const Id& id) const {
+  const auto& memos_ = state_->memos_;
+  const auto& todos_ = state_->todos_;
+  const auto& directory_members_ = state_->directory_members_;
+
   const auto dir = find_directory(id);
   if (!dir || dir->metadata.kind != kind)
     return StorageError{
@@ -654,27 +775,39 @@ MetadataCatalog::list_directory(DirectoryKind kind, const Id& id) const {
   const auto& members = directory_members_.at(id.to_string());
   if (kind == DirectoryKind::Memo) {
     for (const auto& key : members)
-      out.emplace_back(memos_.at(key));
+      out.emplace_back(*memos_.at(key));
   } else if (kind == DirectoryKind::Todo) {
     for (const auto& key : members)
-      out.emplace_back(todos_.at(key));
+      out.emplace_back(*todos_.at(key));
   }
+  sort_metadata_ids(out);
   return out;
 }
-std::vector<DirectoryMetadata> MetadataCatalog::list_directories(DirectoryKind kind) const {
+std::vector<DirectoryMetadata> MetadataCatalogView::list_directories(DirectoryKind kind) const {
+  const auto& directories_ = state_->directories_;
+
   std::vector<DirectoryMetadata> out;
   for (const auto& [key, d] : directories_)
-    if (d.metadata.kind == kind) out.push_back(d);
+    if (d->metadata.kind == kind) out.push_back(*d);
+  sort_metadata_ids(out);
   return out;
 }
-std::vector<RecordMetadata> MetadataCatalog::query(const RecordQuery& q) const {
+std::vector<RecordMetadata> MetadataCatalogView::query(const RecordQuery& q) const {
+  const auto& logs_ = state_->logs_;
+  const auto& memos_ = state_->memos_;
+  const auto& todos_ = state_->todos_;
+  const auto& log_roots_ = state_->log_roots_;
+  const auto& memo_roots_ = state_->memo_roots_;
+  const auto& todo_roots_ = state_->todo_roots_;
+  const auto& directory_members_ = state_->directory_members_;
+
   std::vector<RecordMetadata> out;
   auto append_matching = [&](const auto& collection) {
     for (const auto& [key, e] : collection)
-      if (matches(e, q)) out.emplace_back(e);
+      if (matches(*e, q)) out.emplace_back(*e);
   };
   if (q.directory) {
-    const std::set<std::string>* members = nullptr;
+    const immer::set<std::string>* members = nullptr;
     std::optional<RecordType> constrained_type;
     if (*q.directory) {
       const auto d = find_directory(**q.directory);
@@ -685,7 +818,7 @@ std::vector<RecordMetadata> MetadataCatalog::query(const RecordQuery& q) const {
     }
     if (!constrained_type && (!q.type || *q.type == RecordType::Log)) {
       for (const auto& key : log_roots_) {
-        const auto& e = logs_.at(key);
+        const auto& e = *logs_.at(key);
         if (matches(e, q)) out.emplace_back(e);
       }
     }
@@ -693,7 +826,7 @@ std::vector<RecordMetadata> MetadataCatalog::query(const RecordQuery& q) const {
         (!q.type || *q.type == RecordType::Memo)) {
       const auto& ids = members ? *members : memo_roots_;
       for (const auto& key : ids) {
-        const auto& e = memos_.at(key);
+        const auto& e = *memos_.at(key);
         if (matches(e, q)) out.emplace_back(e);
       }
     }
@@ -701,7 +834,7 @@ std::vector<RecordMetadata> MetadataCatalog::query(const RecordQuery& q) const {
         (!q.type || *q.type == RecordType::Todo)) {
       const auto& ids = members ? *members : todo_roots_;
       for (const auto& key : ids) {
-        const auto& e = todos_.at(key);
+        const auto& e = *todos_.at(key);
         if (matches(e, q)) out.emplace_back(e);
       }
     }
