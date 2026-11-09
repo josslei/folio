@@ -63,7 +63,7 @@ Status distinguishes implemented contracts from agreed future direction. This re
 - **Motivation:** Preserve Repo/Catalog consistency without global class thread safety.
 - **Alternatives considered:** Independent simultaneous mutation of Storage objects.
 - **Consequences:** CreationCheck is availability only, not reservation.
-- **Open/Deferred:** Concurrent Read execution and cancellation; all current Access and Mutation execution is sequential.
+- **Open/Deferred:** [Concurrent Access/Catalog view refactor](../development/plans/catalog-concurrency.md) has an agreed architecture awaiting staged implementation review; cancellation remains open. All current Access and Mutation execution is sequential.
 
 ## D08 — Exclusive interactive Entry editing
 
@@ -72,7 +72,7 @@ Status distinguishes implemented contracts from agreed future direction. This re
 - **Motivation:** Prevent competing interactive edits.
 - **Alternatives considered:** Frontend-only lock state or making every mutation require edit locks.
 - **Consequences:** Accepted actions retain connection ownership after disconnect. Full Update requires an owned lock; immediate Move/Rename/status rejects another owner but needs no temporary lock when unlocked. See the [lock contract](../contracts/mutations.md#edit-lock-ownership--implemented).
-- **Open/Deferred:** Revision protection and future mutation-specific concurrency rules; current lock protocol is implemented.
+- **Open/Deferred:** [Split acquisition/Load](../development/plans/catalog-concurrency.md#filesystem-execution-and-edit-locks) is approved future direction, not implemented. Revision protection and future mutation-specific concurrency rules remain open; current combined lock protocol is implemented.
 
 ## D09 — Push events
 
@@ -154,3 +154,25 @@ Status distinguishes implemented contracts from agreed future direction. This re
 - **Alternatives considered:** Treating all indexes identically or paths as identities.
 - **Consequences:** Indexes remain rebuildable; Vault Directory data needs independent authority.
 - **Open/Deferred:** Semantic conflicts, encrypted index coherence and history compaction.
+
+## D18 — Immutable Catalog views and concurrent Access
+
+- **Status:** Agreed architecture; not implemented; staged implementation review pending.
+- **Decision:** Use structurally shared immutable Catalog states, stable query views
+  and complete-state publication; borrow stable-reader architecture from search
+  engines without adopting their engines or building custom MVCC.
+- **Motivation:** Long metadata queries should coexist with Catalog updates without
+  full-Catalog copying, iterator repair or query-long writer blocking.
+- **Alternatives considered:** Whole-state deep copies, per-Entry/batched
+  reader–writer traversal, custom pipeline forwarding and replacing Catalog with
+  Tantivy/Xapian. No new dependency is selected yet.
+- **Consequences:** Supersedes proposed per-Entry query locking, not filesystem
+  conflict coordination; current runtime remains sequential. The
+  [design plan](../development/plans/catalog-concurrency.md) owns details, open
+  decisions and staged review gates. Only its focused refactor baseline precedes
+  4.3b; Push, Frontend integration and deferred optimizations keep their later
+  placement.
+- **Implementation review:** Container/metadata evaluation, runtime integration,
+  status/notification ordering, resource bounds and measured/platform verification.
+- **Open/Deferred:** Load forwarding/cache optimizations and future parallel
+  Mutations; ordinary conflicting Loads wait under the agreed scheduling rules.

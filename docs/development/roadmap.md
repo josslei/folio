@@ -12,9 +12,19 @@ Documentation and harness cleanup precedes the next feature subphase. Normal
 Mutations and Edit Locks are implemented in 4.3a; do not schedule locks again as
 unimplemented 4.3b work.
 
+The focused baseline of the
+[Catalog/concurrent Access refactor](plans/catalog-concurrency.md#implementation-timing)
+precedes remaining 4.3b. The plan also records later features; completing the entire
+document is not a gate for 4.3b. Push delivery remains in 4.4a and Frontend
+integration in 4.4b; optimizations and other deferred features keep their own
+follow-ups. Follow the [agreed implementation/review sequence](plans/catalog-concurrency.md#agreed-implementation-sequence),
+allowing corrections between rounds. No new subphase number is assigned. Recording
+the design does not authorize code changes, new dependencies or Git operations.
+
 | Stage | Remaining responsibility |
 | --- | --- |
 | Cleanup | Documentation structure/instructions, harness tooling, code documentation and navigation/enforcement checks |
+| Pre-4.3b refactor — agreed design, not implemented | Immutable structurally shared Catalog views, concurrent Access scheduling and split Edit Lock acquisition; agree increments, implement/review in rounds |
 | Remaining 4.3b | Explicit authoritative Full Refresh and Directory Count Consistency Checks; settle remaining revision/concurrency questions |
 | 4.4a | Backend Push Events, ordering and recipient rules; keep Mutation final results separate |
 | 4.4b | Functional Frontend integration, UI/IPC worker, bounded reconnection, buffers and outcome presentation; not the full editor/Recovery |

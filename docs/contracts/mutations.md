@@ -138,6 +138,11 @@ explicit error. No Full Refresh or automatic reconciliation is performed.
 
 ## Edit-lock ownership — Implemented
 
+The [Catalog/concurrent Access plan](../development/plans/catalog-concurrency.md#filesystem-execution-and-edit-locks)
+approves splitting ownership acquisition from authoritative Load in a future
+reviewed refactor. The combined behavior below remains implemented until then;
+no public API or wire contract has changed merely by recording that direction.
+
 `acquire_edit(id)` obtains the current authoritative Snapshot and installs the
 connection's exclusive ownership in one executor action. It returns a typed
 EditSnapshot variant, including Directory. Failed loads install no new lock.

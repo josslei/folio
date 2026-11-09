@@ -77,6 +77,11 @@ The shared sequential executor performs Access and Mutation operations; IPC work
 
 ## Deferred
 
+The [Catalog/concurrent Access plan](../development/plans/catalog-concurrency.md)
+records approved immutable-view and scheduling direction; this is not current
+runtime behavior. Query extraction is deferred separately in that plan's linked
+Application TODO.
+
 Vault, locked placeholders and Directory visibility, persistent Recovery, revision
 checking, Push Events and full-text search are not implemented. Normal Mutation
 outcomes and Edit Locks are implemented separately from read access.

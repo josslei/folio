@@ -2,8 +2,15 @@
 
 **Status:** living capability/limitation summary after Phase 4.3a. Update when
 capabilities or verification change; milestone reports do not override this page.
-The current authorized work is documentation/harness cleanup, not the next feature
-subphase. Follow the [cleanup sequence](documentation-harness-plan.md).
+The [Catalog/concurrent Access design](plans/catalog-concurrency.md) is agreed and
+documented, not implemented. The
+[implementation increments and review checkpoints](plans/catalog-concurrency.md#agreed-implementation-sequence)
+are agreed; recording them does not authorize code changes. Complete
+the focused refactor baseline in rounds before returning to remaining 4.3b, not
+every later feature described in the plan. See its
+[implementation timing](plans/catalog-concurrency.md#implementation-timing).
+Push and Frontend integration retain their later roadmap placement. The
+[cleanup sequence](documentation-harness-plan.md) records preceding harness work.
 
 ## Capability snapshot
 
