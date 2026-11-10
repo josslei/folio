@@ -102,7 +102,7 @@ protected:
     return std::get<app::MutationFailure>(call(std::move(operation), owner).result);
   }
   void acquire(const core::Id& id, ipc::Session owner = {}) {
-    EXPECT_TRUE(std::holds_alternative<app::EditSnapshot>(
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(
         mutations.handle(ipc::AcquireEditRequest{id}, owner ? owner : first)));
   }
 };
@@ -161,7 +161,7 @@ TEST_F(MutationOrchestrator, LocksCoverRecordsAndDirectoriesAndExpireWithSession
   auto record = memo();
   auto dir = directory();
   acquire(record.id);
-  acquire(record.id); // Same owner may obtain a fresh authoritative Snapshot.
+  acquire(record.id); // Same-owner acquisition is harmless and does not reload.
   EXPECT_EQ(
       failed(app::internal::MoveMemoRequest{record.id, dir.id, modified}, second).error.reason,
       app::ErrorReason::LockConflict);
@@ -220,7 +220,7 @@ TEST_F(MutationOrchestrator, ImmediateMutationsDoNotRequireLongLivedLocksButCont
       app::ErrorReason::LockConflict);
 }
 
-TEST_F(MutationOrchestrator, PrerequisitesAndFailedAcquisitionDoNotPublishOrHoldLocks) {
+TEST_F(MutationOrchestrator, PrerequisitesRejectBeforeWritingAndAcquisitionDoesNotReadFiles) {
   auto record = memo();
   EXPECT_EQ(failed(app::internal::UpdateMemoRequest{
                        core::Id::generate(), {"title", "body", {}}, modified})
@@ -241,11 +241,44 @@ TEST_F(MutationOrchestrator, PrerequisitesAndFailedAcquisitionDoNotPublishOrHold
       std::get<storage::MemoMetadata>(*catalog.read_view().find_record(record.id)).relative_path;
   fs::remove(paths.normal_root / locator);
   auto acquired = mutations.handle(ipc::AcquireEditRequest{record.id}, first);
-  EXPECT_EQ(std::get<app::ApplicationError>(acquired).reason, app::ErrorReason::StaleLocation);
-  auto stale = failed(app::internal::MoveMemoRequest{record.id, {}, modified}, second);
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(acquired));
+  auto loaded = ipc::AccessOrchestrator{catalog, repository, coordinator}.handle(
+      ipc::LoadMemoRequest{record.id});
+  EXPECT_EQ(std::get<app::ApplicationError>(loaded).reason, app::ErrorReason::StaleLocation);
+  EXPECT_EQ(
+      std::get<app::ApplicationError>(mutations.handle(ipc::AcquireEditRequest{record.id}, second))
+          .reason,
+      app::ErrorReason::LockConflict);
+  auto stale = failed(app::internal::MoveMemoRequest{record.id, {}, modified});
   EXPECT_EQ(stale.error.reason, app::ErrorReason::StaleLocation);
   EXPECT_EQ(stale.status, app::AuthoritativeChangeStatus::NotApplied);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+}
+
+TEST_F(MutationOrchestrator, AcquisitionChecksCatalogAndOwnershipWithoutAuthoritativeAccess) {
+  auto missing = mutations.handle(ipc::AcquireEditRequest{core::Id::generate()}, first);
+  ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(missing));
+  EXPECT_EQ(std::get<app::ApplicationError>(missing).reason, app::ErrorReason::NotFound);
+  auto dir = directory();
+  fs::remove_all(paths.normal_root / "memos" / dir.id.to_string());
+  acquire(dir.id);
+  acquire(dir.id);
+  EXPECT_EQ(
+      std::get<app::ApplicationError>(mutations.handle(ipc::AcquireEditRequest{dir.id}, second))
+          .reason,
+      app::ErrorReason::LockConflict);
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(
+      mutations.handle(ipc::ReleaseEditRequest{dir.id}, first)));
+  acquire(dir.id, second);
+
+  ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.finish_session()));
+  auto unavailable = mutations.handle(ipc::AcquireEditRequest{dir.id}, second);
+  ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(unavailable));
+  EXPECT_EQ(std::get<app::ApplicationError>(unavailable).reason,
+            app::ErrorReason::MetadataUnavailable);
+  // Release remains available even if Catalog readiness was lost.
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(
+      mutations.handle(ipc::ReleaseEditRequest{dir.id}, second)));
 }
 
 TEST_F(MutationOrchestrator, BeforePublicationAndPublishedUncertainFailuresRemainDistinct) {
@@ -515,7 +548,7 @@ TEST_F(MutationOrchestrator, IpcDisconnectPreservesQueuedOwnerUpdateAndExcludesC
   auto owner = connect(), blocker = connect(), competitor = connect();
   send(owner, ipc::AcquireEditRequest{record.id});
   EXPECT_EQ(receive(owner).kind, ipc::MessageKind::Accepted);
-  EXPECT_TRUE(std::holds_alternative<app::EditSnapshot>(std::get<ipc::OperationResponse>(
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(std::get<ipc::OperationResponse>(
       ipc::codec::decode<ipc::OperationResponse>(ipc::payload_text(receive(owner).payload)))));
   send(blocker, ipc::LoadMemoRequest{blocked_id});
   EXPECT_EQ(receive(blocker).kind, ipc::MessageKind::Accepted);
@@ -544,7 +577,7 @@ TEST_F(MutationOrchestrator, IpcDisconnectPreservesQueuedOwnerUpdateAndExcludesC
   EXPECT_EQ(loaded.content, "after disconnect");
   send(competitor, ipc::AcquireEditRequest{record.id});
   EXPECT_EQ(receive(competitor).kind, ipc::MessageKind::Accepted);
-  EXPECT_TRUE(std::holds_alternative<app::EditSnapshot>(std::get<ipc::OperationResponse>(
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(std::get<ipc::OperationResponse>(
       ipc::codec::decode<ipc::OperationResponse>(ipc::payload_text(receive(competitor).payload)))));
 }
 

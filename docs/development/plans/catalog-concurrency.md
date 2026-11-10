@@ -1,8 +1,8 @@
 # Catalog views and concurrent Access execution
 
 **Status:** partially implemented: Immer-backed immutable Catalog states and retained
-read views are implemented with sequential execution. Concurrent scheduling, split
-Edit Lock APIs and Push integration remain future increments. Concrete implementation choices
+read views and ownership-only Edit Lock acquisition are implemented with sequential
+execution. Concurrent scheduling and Push integration remain future increments. Concrete implementation choices
 remain subject to inspection, measurement and review; they are not a reason to
 reopen settled responsibilities without an actual conflict. This plan owns the agreed future
 design; existing [Access](../../contracts/access.md),
@@ -32,7 +32,7 @@ to implement subsequent work without the user's instruction.
 | 1. Evaluate persistent containers | Verify C++/platform fit, structural sharing, memory and performance; select the dependency and metadata representation |
 | 2. Refactor Catalog storage | Introduce immutable states, retained views and complete-state publication; preserve validation, membership, ordering and no-op behavior; keep runtime sequential |
 | 3. Integrate consumers | One view per Browse/Query; adapt Coordinator, rebuild, Index encode/decode and persistence bookkeeping; preserve formats and failure semantics |
-| 4. Split Edit Lock acquisition from Load | Update public API, IPC and handlers for ownership-only acquisition; preserve accepted-request ownership/disconnect cleanup; retain sequential execution during this review |
+| 4. Split Edit Lock acquisition from Load — implemented | Public API, IPC and handlers return ownership-only success; accepted-request ownership/disconnect cleanup preserved; execution remains sequential |
 | 5. Concurrent Access execution | Separate short in-memory coordination, query execution and filesystem workers; retain one Mutation executor; implement conflict scheduling, queued Loads, configurable bounded filesystem concurrency, resource accounting and safe draining |
 | 6. Integrated baseline review | Verify queries/updates, Load/Move ordering, locks, failures and shutdown; measure retained memory/responsiveness and resolve findings before returning to the roadmap |
 | 7. Remaining 4.3b | Public explicit Full Refresh and Directory-count checks integrated with immutable publication/execution coordination; revisit remaining concurrency/version questions where required |
@@ -254,9 +254,9 @@ remove authoritative filesystem coordination or scheduling fairness rules.
 
 ## Filesystem execution and Edit Locks
 
-Split editing APIs into ownership-only acquisition/release and separate existing
-Loads. This intentionally revises the currently implemented combined
-`acquire_edit()` plus authoritative Snapshot behavior. Frontends compose workflows:
+Editing APIs now provide ownership-only acquisition/release and separate existing
+Loads. This replaces the earlier combined `acquire_edit()` plus authoritative
+Snapshot behavior. Frontends compose workflows:
 acquire then load, or view first and acquire later. Acquiring ownership does not
 certify that previously displayed content is current; reloading under ownership
 is the safe editing workflow. Load failure does not implicitly release ownership;
@@ -277,7 +277,9 @@ The revised ownership-only contract is:
   without adding leases or persistent locks. Read-only Loads do not own editing
   rights and do not prevent acquisition.
 
-Exact C++ signatures and wire adaptation are implementation work for review.
+`BackendConnectionHandle::acquire_edit(id)` returns
+`ApplicationResult<std::monostate>` through the shared IPC protocol. This split is
+implemented; the concurrent coordination described below remains Step 5 work.
 
 Concurrent Loads may proceed. A conflicting Move/Mutation and Load must be ordered
 across current-locator lookup and authoritative access; a retained old Catalog

@@ -59,9 +59,6 @@ struct TodoEditableFields {
   std::vector<core::Subtask> subtasks;
 };
 
-using EditSnapshot = std::variant<core::Log::Snapshot, core::Memo::Snapshot, core::Todo::Snapshot,
-                                  core::Directory::Snapshot>;
-
 // Mutation outcomes and evidence
 
 // Describes the intended authoritative change, independently of failure cause.

@@ -28,6 +28,8 @@ public:
 private:
   std::optional<ApplicationError> check_lock(const core::Id& id, const Session& session,
                                              bool required);
+  /// Ownership-only, in-memory acquisition; never validates/loads the file.
+  /// Same-owner reacquisition succeeds; Load failure does not release ownership.
   OperationResponse acquire_edit(const core::Id& id, const Session& session);
   OperationResponse release_edit(const core::Id& id, const Session& session);
   NormalMutationResponse mutate(const MutationRequest& request, const Session& session);

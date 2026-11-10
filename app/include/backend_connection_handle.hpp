@@ -47,10 +47,12 @@ public:
   ApplicationResult<core::Log::Snapshot> load_log(const core::Id& id);
   ApplicationResult<core::Memo::Snapshot> load_memo(const core::Id& id);
   ApplicationResult<core::Todo::Snapshot> load_todo(const core::Id& id);
-  /// Acquires ownership and loads authoritative state in one executor action.
-  /// Another connection's ownership returns LockConflict. Accepted work retains
-  /// the session token, so disconnection cannot revoke its permissions early.
-  ApplicationResult<EditSnapshot> acquire_edit(const core::Id& id);
+  /// Acquires editing ownership using only in-memory Catalog/ownership state.
+  /// Same-owner reacquisition succeeds; another owner returns LockConflict.
+  /// Load separately after acquisition to obtain current authoritative content.
+  /// A failed Load retains ownership until release or connection cleanup.
+  /// Accepted work retains the session token through disconnection.
+  ApplicationResult<std::monostate> acquire_edit(const core::Id& id);
   /// Releases this connection's editing ownership; cannot release another owner's.
   ApplicationResult<std::monostate> release_edit(const core::Id& id);
   /// Create overloads generate Entry UUIDs in the Backend. The Frontend supplies

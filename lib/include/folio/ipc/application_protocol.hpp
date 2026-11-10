@@ -124,6 +124,6 @@ using OperationResponse =
                  ApplicationResponse<std::vector<core::RecordMetadata>>,
                  ApplicationResponse<std::vector<core::DirectoryMetadata>>, core::Log::Snapshot,
                  core::Memo::Snapshot, core::Todo::Snapshot, ApplicationError,
-                 NormalMutationResponse, EditSnapshot, std::monostate>;
+                 NormalMutationResponse, std::monostate>;
 
 } // namespace folio::application::internal

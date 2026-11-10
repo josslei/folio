@@ -68,6 +68,8 @@ BackendActionOutcome Serve(BackendContext& context) {
                                                         *context.coordinator);
   context.mutations = std::make_unique<MutationOrchestrator>(context.catalog, *context.repository,
                                                              *context.coordinator);
+  // Lifecycle/main thread: one server owns all session connections and starts
+  // its shared scheduler's executor. The callback below runs on that executor.
   context.runtime = std::make_unique<IpcServer>(
       *context.ownership, [&](const OperationRequest& request, const Session& session) {
         if (std::holds_alternative<MutationRequest>(request) ||

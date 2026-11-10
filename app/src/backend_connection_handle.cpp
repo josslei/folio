@@ -268,8 +268,8 @@ ApplicationResult<core::Todo::Snapshot> BackendConnectionHandle::load_todo(const
   return invoke_operation<core::Todo::Snapshot>(stream_, LoadTodoRequest{id});
 }
 
-ApplicationResult<EditSnapshot> BackendConnectionHandle::acquire_edit(const core::Id& id) {
-  return invoke_operation<EditSnapshot>(stream_, AcquireEditRequest{id});
+ApplicationResult<std::monostate> BackendConnectionHandle::acquire_edit(const core::Id& id) {
+  return invoke_operation<std::monostate>(stream_, AcquireEditRequest{id});
 }
 ApplicationResult<std::monostate> BackendConnectionHandle::release_edit(const core::Id& id) {
   return invoke_operation<std::monostate>(stream_, ReleaseEditRequest{id});

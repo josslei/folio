@@ -2,6 +2,7 @@
 #include <folio/ipc/application_codec.hpp>
 #include <gtest/gtest.h>
 #include "operations/mutation_orchestrator.hpp"
+#include "operations/access_orchestrator.hpp"
 
 namespace {
 namespace ipc = folio::application::internal;
@@ -29,7 +30,7 @@ TEST(IpcResourceLimits, LogicalCodecRejectsOversizedInputAndOutput) {
 }
 } // namespace
 
-TEST(IpcResourceLimits, OversizedEditSnapshotDoesNotInstallAnUndisclosedLock) {
+TEST(IpcResourceLimits, OwnershipAcquisitionIsIndependentOfOversizedLoad) {
   namespace core = folio::core;
   namespace app = folio::application;
   namespace storage = core::storage;
@@ -60,8 +61,15 @@ TEST(IpcResourceLimits, OversizedEditSnapshotDoesNotInstallAnUndisclosedLock) {
   auto first = std::make_shared<ipc::ConnectionSession>();
   auto second = std::make_shared<ipc::ConnectionSession>();
   auto acquired = mutations.handle(ipc::AcquireEditRequest{record.id()}, first);
-  ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(acquired));
-  EXPECT_EQ(std::get<app::ApplicationError>(acquired).reason, app::ErrorReason::ResourceLimit);
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(acquired));
+  auto loaded = ipc::AccessOrchestrator{catalog, repository, coordinator}.handle(
+      ipc::LoadMemoRequest{record.id()});
+  ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(loaded));
+  EXPECT_TRUE(std::holds_alternative<ipc::IpcError>(ipc::codec::encode(loaded)));
+  EXPECT_EQ(std::get<app::ApplicationError>(
+                mutations.handle(ipc::AcquireEditRequest{record.id()}, second))
+                .reason,
+            app::ErrorReason::LockConflict);
   auto update =
       mutations.handle(ipc::MutationRequest{app::MutationId::generate(),
                                             app::internal::UpdateMemoRequest{
@@ -69,6 +77,10 @@ TEST(IpcResourceLimits, OversizedEditSnapshotDoesNotInstallAnUndisclosedLock) {
                        second);
   const auto& failure =
       std::get<app::MutationFailure>(std::get<ipc::NormalMutationResponse>(update).result);
-  EXPECT_EQ(failure.error.reason, app::ErrorReason::EditLockRequired);
+  EXPECT_EQ(failure.error.reason, app::ErrorReason::LockConflict);
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(
+      mutations.handle(ipc::ReleaseEditRequest{record.id()}, first)));
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(
+      mutations.handle(ipc::AcquireEditRequest{record.id()}, second)));
   EXPECT_EQ(failure.status, app::AuthoritativeChangeStatus::NotApplied);
 }

@@ -4,8 +4,8 @@
 capabilities or verification change; milestone reports do not override this page.
 The [Catalog/concurrent Access design](plans/catalog-concurrency.md) is agreed and
 partially implemented: immutable Catalog states and retained read views now use Immer;
-execution remains sequential. Split Edit Lock APIs and concurrent scheduling are
-not implemented. The
+ownership-only Edit Lock acquisition is separate from authoritative Load.
+Execution remains sequential; concurrent scheduling is not implemented. The
 [implementation increments and review checkpoints](plans/catalog-concurrency.md#agreed-implementation-sequence)
 are agreed; recording them does not authorize code changes. Complete
 the focused refactor baseline in rounds before returning to remaining 4.3b, not

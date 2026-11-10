@@ -31,8 +31,10 @@ do for protocol failures. Normal Mutations now have end-to-end exchanges. NoMuta
 and SubmissionState are local Frontend observations and have no wire codec.
 MutationRequest contains MutationId plus a concrete, tagged payload. Confirmed
 results contain canonical Core metadata or structured MutationFailure. AcquireEdit
-and ReleaseEdit use the same admission/queue and return EditSnapshot or an empty
-success. The Backend-private connection token is never encoded or supplied by a
+and ReleaseEdit use the same admission/queue and return empty success
+(`std::monostate`) or ApplicationError. Acquisition performs no authoritative Load;
+existing typed Load requests remain separate. The obsolete EditSnapshot response
+alternative has been removed under Protocol Version 1's pre-release policy. The Backend-private connection token is never encoded or supplied by a
 Frontend. No opaque payload, new RequestId or parallel transport is introduced.
 
 ## Complete messages and bounded transfers
@@ -111,11 +113,61 @@ or incremental editing needs explicit operation semantics.
 
 ## Scheduling and lifecycle
 
+### Current thread and request flow
+
+The Backend session owns one `IpcServer`, which owns every connection worker and
+one shared `RequestScheduler`. Workers capture the server's `this` pointer; they
+access its scheduler without copying it. The constructor starts the executor;
+there is no separate scheduling/coordinator thread in the current implementation.
+
 ```text
-Frontend connections -> bounded IPC workers -> admission -> one shared FIFO
-                                                        -> one executor
-                         originating connection <- final result/error
+BACKEND MAIN THREAD            CONNECTION WORKER (A, B, ...)              SINGLE EXECUTOR THREAD
+---------------------------    ----------------------------------------   ------------------------------
+Serve()
+  Construct IpcServer
+    Construct scheduler        --------------------------------------->   Start execute(); wait for work
+  Call run() [blocks]
+    Accept connection ------>  Start worker
+                               Handshake -> Ready
+                               Receive complete request
+                               Decode / validate
+                               scheduler_.admit(action)
+                                 Reject -> send Rejected; receive next
+                                 Accept -> append to shared queue
+                                                   wake executor ----->   Dequeue next action
+                               Send Accepted                              Execute action / Backend handler
+                               Wait for ticket completion                   Example: acquire_edit(id)
+                                 (also detect disconnection)                  Check Catalog and ownership
+                                                                              Install lock; return result
+                                                                          Encode response
+                               <---------------- completion signal -----   Publish ticket result; wake worker
+                               Read ticket; send final response           Wait for next queued action
+                               Receive next request
+
+    Accept more connections    Each has its own stream/worker;
+                               all submit to the SAME scheduler.
 ```
+
+After enqueueing, execution and sending Accepted can proceed independently.
+The connection worker always sends Accepted before the final response, even if
+the executor has already completed. Rejection sends no action to the executor.
+Disconnecting cannot retract an accepted action; only final delivery is lost.
+
+Implementation entry points:
+[Serve](../../server/src/runtime/backend_states.cpp),
+[IpcServer connection/accept handling](../../server/src/ipc/ipc_server.cpp),
+[RequestScheduler admission/execution](../../server/src/operations/request_scheduler.cpp).
+The [mutex declarations](../../server/include/ipc/ipc_server.hpp) document protected
+server state; [scheduler/ticket mutexes](../../server/include/operations/request_scheduler.hpp)
+protect queue accounting and individual completion records. Admission acquires
+server state before the scheduler queue lock; handlers execute without either
+lock held by the executor. Edit Lock ownership remains in
+[MutationOrchestrator](../../server/src/operations/mutation_orchestrator.cpp).
+
+This diagram describes sequential execution now. The
+[concurrent Access plan](../development/plans/catalog-concurrency.md#responsibility-overview)
+records the separate Step 5 coordination/worker design; it is not implemented here.
+
 
 The complete request is decoded/validated before queue admission. A single
 `RequestScheduler` owns execution, with capacity 32 including its active job;

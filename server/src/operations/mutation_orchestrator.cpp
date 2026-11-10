@@ -1,6 +1,4 @@
 #include "operations/mutation_orchestrator.hpp"
-#include "operations/access_orchestrator.hpp"
-#include <folio/ipc/messagepack_codec.hpp>
 #include <folio/logging/logging.hpp>
 
 #include <algorithm>
@@ -161,63 +159,13 @@ OperationResponse MutationOrchestrator::acquire_edit(const core::Id& id, const S
     return problem(ErrorReason::MetadataUnavailable, "Editing requires a Ready Catalog",
                    ErrorCategory::ApplicationUnavailable);
   if (auto error = check_lock(id, session, false)) return *error;
-  std::optional<EditSnapshot> snapshot;
   const auto view = catalog_.read_view();
-  if (const auto directory = view.find_directory(id)) {
-    if (directory->relative_path != directory_path(directory->metadata))
-      return problem(ErrorReason::StaleLocation, "Directory location disagrees with Catalog",
-                     ErrorCategory::AuthoritativeDataProblem);
-    auto loaded = repository_.load_directory(directory->metadata.kind, id);
-    if (auto* error = std::get_if<storage::StorageError>(&loaded))
-      return repository_problem(*error);
-    if (auto* error = std::get_if<io::FileError>(&loaded)) return repository_problem(*error);
-    auto value = std::get<core::Directory::Snapshot>(std::move(loaded));
-    if (value.name != directory->metadata.name)
-      return problem(ErrorReason::InvalidData, "Authoritative Directory disagrees with Catalog",
-                     ErrorCategory::AuthoritativeDataProblem);
-    snapshot = std::move(value);
-  } else {
-    const auto metadata = view.find_record(id);
-    if (!metadata)
-      return problem(ErrorReason::NotFound, "Entry not found", ErrorCategory::TargetUnavailable);
-    OperationRequest request = LoadLogRequest{id};
-    switch (storage::record_type(*metadata)) {
-    case core::RecordType::Log:
-      request = LoadLogRequest{id};
-      break;
-    case core::RecordType::Memo:
-      request = LoadMemoRequest{id};
-      break;
-    case core::RecordType::Todo:
-      request = LoadTodoRequest{id};
-      break;
-    }
-    auto loaded = AccessOrchestrator{catalog_, repository_, coordinator_}.handle(request);
-    if (auto* error = std::get_if<ApplicationError>(&loaded)) return *error;
-    bool matches = false;
-    std::visit(
-        [&](auto&& value) {
-          using T = std::decay_t<decltype(value)>;
-          if constexpr (std::is_same_v<T, core::Log::Snapshot> ||
-                        std::is_same_v<T, core::Memo::Snapshot> ||
-                        std::is_same_v<T, core::Todo::Snapshot>) {
-            const auto locator =
-                std::visit([](const auto& item) { return item.relative_path; }, *metadata);
-            matches = storage::metadata_matches(storage::metadata_from(value, locator), *metadata);
-            snapshot = std::move(value);
-          }
-        },
-        std::move(loaded));
-    if (!matches)
-      return problem(ErrorReason::InvalidData, "Authoritative metadata disagrees with Catalog",
-                     ErrorCategory::AuthoritativeDataProblem);
-  }
-  OperationResponse response = std::move(*snapshot);
-  if (!codec::fits_message(response))
-    return problem(ErrorReason::ResourceLimit, "Entry exceeds the edit Snapshot response limit",
-                   ErrorCategory::ApplicationUnavailable);
+  if (!view.contains_entry(id))
+    return problem(ErrorReason::NotFound, "Entry not found", ErrorCategory::TargetUnavailable);
+  // Ownership is independent of authoritative access. A later Load may fail;
+  // the caller must explicitly release ownership when abandoning editing.
   locks_.insert_or_assign(id.to_string(), session);
-  return response;
+  return std::monostate{};
 }
 
 OperationResponse MutationOrchestrator::release_edit(const core::Id& id, const Session& session) {

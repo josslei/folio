@@ -72,7 +72,8 @@ Status distinguishes implemented contracts from agreed future direction. This re
 - **Motivation:** Prevent competing interactive edits.
 - **Alternatives considered:** Frontend-only lock state or making every mutation require edit locks.
 - **Consequences:** Accepted actions retain connection ownership after disconnect. Full Update requires an owned lock; immediate Move/Rename/status rejects another owner but needs no temporary lock when unlocked. See the [lock contract](../contracts/mutations.md#edit-lock-ownership--implemented).
-- **Open/Deferred:** [Split acquisition/Load](../development/plans/catalog-concurrency.md#filesystem-execution-and-edit-locks) is approved future direction, not implemented. Revision protection and future mutation-specific concurrency rules remain open; current combined lock protocol is implemented.
+- **Implemented:** [Ownership-only acquisition and separate Load](../contracts/mutations.md#edit-lock-ownership--implemented) replace combined lock/Snapshot acquisition; execution remains sequential.
+- **Open/Deferred:** Concurrent scheduling, revision protection and future mutation-specific concurrency rules remain under the [Catalog/concurrent Access plan](../development/plans/catalog-concurrency.md#filesystem-execution-and-edit-locks).
 
 ## D09 — Push events
 

@@ -10,6 +10,7 @@ RequestScheduler::~RequestScheduler() {
 }
 
 std::shared_ptr<RequestScheduler::Ticket> RequestScheduler::admit(Action action) {
+  // Called by connection workers: admission only, never execute the action here.
   auto ticket = std::make_shared<Ticket>();
   {
     std::lock_guard lock(mutex_);
@@ -35,6 +36,7 @@ void RequestScheduler::drain() {
 }
 
 void RequestScheduler::execute() {
+  // Single executor thread: wait/dequeue, execute, then publish completion.
   for (;;) {
     Work work;
     {
@@ -50,6 +52,8 @@ void RequestScheduler::execute() {
     }
     Result result;
     std::exception_ptr exception;
+    // Release queue/ticket locks before invoking handlers: they may report a
+    // failure to IpcServer, whose admission path acquires server then queue locks.
     try {
       result = work.action();
     } catch (...) {

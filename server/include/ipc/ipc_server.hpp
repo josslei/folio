@@ -17,8 +17,10 @@ struct RuntimeLimits {
   std::size_t buffered_requests = 4;
 };
 
-// Independent connection scheduling around one Backend-owned executor. Storage
-// is accessed only through the executor handler, never by a connection worker.
+// The Backend session owns one IpcServer for all Frontend connections and one
+// shared RequestScheduler. Connection workers admit/deliver; its executor runs
+// handlers. Storage is accessed only through the executor handler, never by a
+// connection worker.
 // No additional lifecycle state machine: Serve runs this resource; Stopping and
 // Report preserves usable connections; Finish closes them before Catalog finalization.
 class IpcServer {
@@ -55,7 +57,10 @@ private:
     bool done = false;
     bool busy = false;
   };
+  /// Runs on this connection's worker: handshake, receive/validate, admit,
+  /// acknowledge acceptance, await completion and deliver the final response.
   void connection(Connection& connection, IpcStream& stream, std::stop_token stop);
+  /// Caller holds connection_state_mutex_; wakes the lifecycle-thread accept loop.
   void notify();
   void failure(Failure error);
   bool send_rejection(IpcStream& stream, ApplicationError error, std::stop_token stop);
@@ -71,9 +76,16 @@ private:
   const std::string startup_failure_;
   const RuntimeLimits limits_;
   RequestScheduler scheduler_;
-  // Worker completion, registration and admission share this lock. The final
-  // disconnect's stop-admission decision cannot race a successful registration.
-  std::mutex mutex_;
+  /// Protects connection done/busy flags, active_/served_/stopping_, changed_ and
+  /// failures_. Registration, last-disconnect detection and admission closure
+  /// form one invariant: splitting their locks would permit shutdown races.
+  /// The lifecycle thread alone changes the connections_ vector structure.
+  /// Lock order: connection_state_mutex_ -> scheduler's queue mutex. Scheduler
+  /// actions run without its queue mutex and may then report failures here.
+  /// Never execute handlers, perform blocking stream reads/writes, drain or join
+  /// with this lock held.
+  /// Condition-variable waits release it while sleeping.
+  std::mutex connection_state_mutex_;
   std::condition_variable workers_changed_;
   std::stop_source changed_;
   std::stop_source admission_closed_;

@@ -24,7 +24,7 @@ the design does not authorize code changes, new dependencies or Git operations.
 | Stage | Remaining responsibility |
 | --- | --- |
 | Cleanup | Documentation structure/instructions, harness tooling, code documentation and navigation/enforcement checks |
-| Pre-4.3b refactor — agreed design, not implemented | Immutable structurally shared Catalog views, concurrent Access scheduling and split Edit Lock acquisition; agree increments, implement/review in rounds |
+| Pre-4.3b refactor — partially implemented | Immutable structurally shared Catalog views and ownership-only Edit Lock acquisition implemented; concurrent Access scheduling remains next, with incremental review |
 | Remaining 4.3b | Explicit authoritative Full Refresh and Directory Count Consistency Checks; settle remaining revision/concurrency questions |
 | 4.4a | Backend Push Events, ordering and recipient rules; keep Mutation final results separate |
 | 4.4b | Functional Frontend integration, UI/IPC worker, bounded reconnection, buffers and outcome presentation; not the full editor/Recovery |

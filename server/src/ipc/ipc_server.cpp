@@ -34,7 +34,7 @@ void IpcServer::notify() {
 }
 
 void IpcServer::failure(Failure error) {
-  std::lock_guard lock(mutex_);
+  std::lock_guard lock(connection_state_mutex_);
   failures_.push_back(std::move(error));
   notify();
 }
@@ -64,6 +64,8 @@ bool IpcServer::send_rejection(IpcStream& stream, ApplicationError error, std::s
 }
 
 void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_token stop) {
+  // Connection worker: handshake and session registration begin here. This worker
+  // owns the stream; Application handlers execute on the scheduler's thread.
   std::stop_source reception;
   std::stop_callback closing(stop, [&] { reception.request_stop(); });
   std::stop_callback admission(admission_closed_.get_token(), [&] { reception.request_stop(); });
@@ -75,7 +77,7 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     IpcServer& runtime;
     bool& registered;
     ~Registration() {
-      std::lock_guard lock(runtime.mutex_);
+      std::lock_guard lock(runtime.connection_state_mutex_);
       if (registered) --runtime.active_;
       runtime.notify();
     }
@@ -109,21 +111,22 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     return;
   }
   {
-    std::lock_guard lock(mutex_);
+    std::lock_guard lock(connection_state_mutex_);
     if (stopping_) return;
     ++active_;
     registered = true;
   }
   if (!send(MessageKind::Ready)) return;
   {
-    std::lock_guard lock(mutex_);
+    std::lock_guard lock(connection_state_mutex_);
     served_ = true;
     notify();
   }
 
+  // Connection worker: each iteration receives at most one outstanding request.
   while (!stop.stop_requested()) {
     {
-      std::lock_guard lock(mutex_);
+      std::lock_guard lock(connection_state_mutex_);
       if (stopping_) return;
     }
     std::shared_ptr<BufferReservation> reservation;
@@ -155,6 +158,7 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
       reject_protocol("Expected one Application request");
       return;
     }
+    // Connection worker: complete-message decoding/validation precedes admission.
     auto request = codec::decode<OperationRequest>(payload_text(request_message.payload));
     // Malformed complete Application requests are rejected before acceptance;
     // their connection is still usable, as with prior Application errors.
@@ -171,12 +175,16 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     // Free the wire buffer before keeping the decoded request in the queue.
     request_message.payload.clear();
     request_message.payload.shrink_to_fit();
+    // Connection worker: admission atomically checks server stopping state and
+    // enqueues into the shared scheduler. The lambda is stored, not run inline.
     std::shared_ptr<RequestScheduler::Ticket> ticket;
     {
-      std::lock_guard lock(mutex_);
+      std::lock_guard lock(connection_state_mutex_);
       if (!stopping_) {
         ticket = scheduler_.admit([this, request = std::get<OperationRequest>(std::move(request)),
                                    reservation, session]() -> RequestScheduler::Result {
+          // Executor thread: execute and encode the final result. Neither the
+          // server-state lock nor scheduler queue lock is held on this thread.
           try {
             auto result = handler_(request, session);
             auto encoded = codec::encode<OperationResponse>(result);
@@ -224,6 +232,7 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
         // Logging must not change scheduling or the retained operation result.
       }
     };
+    // Connection worker: Accepted acknowledges admission, not execution success.
     // Failure to deliver Accepted never retracts accepted work.
     if (!send(MessageKind::Accepted)) {
       delivery_failure("admission acknowledgment");
@@ -256,6 +265,7 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     if (!result) return;
     if (std::holds_alternative<IpcError>(*result))
       return; // Execution failures were retained at their execution boundary.
+    // Connection worker: deliver the executor's final response after Accepted.
     auto final = std::get<Message>(std::move(*result));
     if (!std::holds_alternative<std::monostate>(
             send_message(stream, final, Clock::now() + 30s, stop))) {
@@ -263,7 +273,7 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
       return;
     }
     {
-      std::lock_guard lock(mutex_);
+      std::lock_guard lock(connection_state_mutex_);
       connection.busy = false;
       workers_changed_.notify_all();
     }
@@ -271,12 +281,14 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
 }
 
 core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) {
+  // Backend lifecycle/main thread: accept connections and start their workers.
+  // The shared scheduler's executor was already started during construction.
   struct StopAdmission {
     IpcServer& server;
     ~StopAdmission() { server.stop_admission(); }
   } stop_admission_on_exit{*this};
   std::stop_callback interrupt(shutdown, [&] {
-    std::lock_guard lock(mutex_);
+    std::lock_guard lock(connection_state_mutex_);
     notify();
   });
   const auto initial_deadline = Clock::now() + (startup_failure_.empty() ? 10s : 2s);
@@ -285,7 +297,7 @@ core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) 
     std::stop_token changed;
     Clock::time_point deadline;
     {
-      std::lock_guard lock(mutex_);
+      std::lock_guard lock(connection_state_mutex_);
       // Install a fresh signal before testing predicates under the same lock
       // used by registration/disconnection, avoiding lost wakeups.
       changed_ = std::stop_source{};
@@ -328,7 +340,7 @@ core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) 
               // Preserve a usable stream through Report. Finish wakes this wait;
               // no new requests are received after admission closes.
               {
-                std::unique_lock lock(mutex_);
+                std::unique_lock lock(connection_state_mutex_);
                 pointer->busy = false;
                 workers_changed_.notify_all();
                 if (stopping_ && stream.connected()) {
@@ -336,7 +348,7 @@ core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) 
                   closed.wait(lock, stop, [] { return false; });
                 }
               }
-              std::lock_guard lock(mutex_);
+              std::lock_guard lock(connection_state_mutex_);
               pointer->done = true;
               notify();
             });
@@ -363,7 +375,7 @@ core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) 
 }
 
 std::vector<IpcServer::Failure> IpcServer::take_failures() {
-  std::lock_guard lock(mutex_);
+  std::lock_guard lock(connection_state_mutex_);
   std::vector<Failure> result;
   result.swap(failures_);
   return result;
@@ -371,7 +383,7 @@ std::vector<IpcServer::Failure> IpcServer::take_failures() {
 
 void IpcServer::stop_admission() {
   {
-    std::lock_guard lock(mutex_);
+    std::lock_guard lock(connection_state_mutex_);
     stopping_ = true;
     scheduler_.stop_admission();
     notify();
@@ -381,11 +393,13 @@ void IpcServer::stop_admission() {
 }
 
 void IpcServer::drain_requests() {
+  // Lifecycle thread (Stopping/Report): close admission, then join execution
+  // outside the connection-state lock so actions can still publish failures.
   stop_admission();
   scheduler_.drain();
   // Let bounded final-response delivery settle before Finish closes streams.
   {
-    std::unique_lock lock(mutex_);
+    std::unique_lock lock(connection_state_mutex_);
     workers_changed_.wait(lock, [&] {
       for (const auto& connection : connections_)
         if (connection->busy) return false;
@@ -396,7 +410,7 @@ void IpcServer::drain_requests() {
   for (auto it = connections_.begin(); it != connections_.end();) {
     bool done;
     {
-      std::lock_guard lock(mutex_);
+      std::lock_guard lock(connection_state_mutex_);
       done = (*it)->done;
     }
     if (done) {
@@ -408,6 +422,8 @@ void IpcServer::drain_requests() {
 }
 
 void IpcServer::close_connections() {
+  // Lifecycle thread (Finish, after draining): wake/join connection workers
+  // without holding the state lock their exit paths require.
   for (auto& connection : connections_)
     connection->worker.request_stop();
   for (auto& connection : connections_)

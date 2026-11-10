@@ -23,6 +23,9 @@ public:
   struct Ticket {
     // A signal, not cancellation: publishing a final result wakes its connection.
     std::stop_source completed;
+    /// Protects this ticket's stage, result and exception across the executor
+    /// and connection worker. Release before executing actions or signaling
+    /// completion; do not nest with the scheduler queue mutex.
     std::mutex mutex;
     ExecutionStage stage = ExecutionStage::Queued;
     std::optional<Result> result;
@@ -54,6 +57,9 @@ private:
   };
   void execute();
   const std::size_t capacity_;
+  /// Protects queue_, outstanding_ and accepting_. IpcServer may enter admission
+  /// while holding its connection-state lock; never call actions or IpcServer
+  /// while holding this mutex. Ticket locks are acquired separately, not nested.
   std::mutex mutex_;
   std::condition_variable changed_;
   std::deque<Work> queue_;

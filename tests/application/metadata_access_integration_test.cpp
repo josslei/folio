@@ -334,9 +334,10 @@ TEST_F(MetadataAccessIntegration,
     const auto record = std::get<core::MemoMetadata>(response.result);
     EXPECT_NE(record.id, memo.id());
     auto editing = first.acquire_edit(record.id);
-    ASSERT_TRUE(std::holds_alternative<app::EditSnapshot>(editing));
-    EXPECT_EQ(std::get<core::Memo::Snapshot>(std::get<app::EditSnapshot>(editing)).content,
-              "original body");
+    ASSERT_TRUE(std::holds_alternative<std::monostate>(editing));
+    auto editable = first.load_memo(record.id);
+    ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(editable));
+    EXPECT_EQ(std::get<core::Memo::Snapshot>(editable).content, "original body");
     auto denied = second.move(app::MutationId::generate(), record.id, directory.id, time);
     ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::RecordMetadata>>(denied));
     auto rejected = std::get<app::MutationFailure>(
@@ -369,9 +370,9 @@ TEST_F(MetadataAccessIntegration,
     EXPECT_EQ(state.created.timestamp, time.timestamp);
     EXPECT_EQ(state.modified.timezone, changed.timezone);
     EXPECT_TRUE(std::holds_alternative<std::monostate>(first.release_edit(record.id)));
-    EXPECT_TRUE(std::holds_alternative<app::EditSnapshot>(second.acquire_edit(record.id)));
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(second.acquire_edit(record.id)));
     // Directory rename uses the same ownership rules, without locking members.
-    EXPECT_TRUE(std::holds_alternative<app::EditSnapshot>(first.acquire_edit(directory.id)));
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(first.acquire_edit(directory.id)));
     auto blocked = second.rename_directory(app::MutationId::generate(), directory.id, "Denied");
     EXPECT_EQ(std::get<app::MutationFailure>(
                   std::get<app::MutationResponse<core::DirectoryMetadata>>(blocked).result)

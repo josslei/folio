@@ -138,18 +138,23 @@ explicit error. No Full Refresh or automatic reconciliation is performed.
 
 ## Edit-lock ownership — Implemented
 
-The [Catalog/concurrent Access plan](../development/plans/catalog-concurrency.md#filesystem-execution-and-edit-locks)
-approves splitting ownership acquisition from authoritative Load in a future
-reviewed refactor. The combined behavior below remains implemented until then;
-no public API or wire contract has changed merely by recording that direction.
+`acquire_edit(id)` checks Catalog readiness, Entry existence and connection-owned
+editing rights entirely in memory. It returns empty success (`std::monostate`),
+not a Snapshot; it does not read or verify the authoritative file. Same-owner
+reacquisition succeeds without reloading. Another owner's lock returns
+LockConflict. `release_edit(id)` is harmless if unlocked and explicitly rejects
+another owner's lock.
 
-`acquire_edit(id)` obtains the current authoritative Snapshot and installs the
-connection's exclusive ownership in one executor action. It returns a typed
-EditSnapshot variant, including Directory. Failed loads install no new lock.
-The shared codec counts the complete response size before committing a new lock,
-without allocating an encoded body. An oversized Snapshot fails without installing
-an undisclosed new lock. Same-owner reacquisition returns fresh state. `release_edit(id)` is harmless if
-unlocked and explicitly rejects another owner's lock.
+Frontend workflows compose acquisition and existing typed Loads. Acquire then
+Load is the safe editing workflow: acquiring ownership alone does not certify
+that previously displayed content is current. A failed Load does not release the
+lock; the Frontend explicitly releases ownership when abandoning editing, with
+connection cleanup as fallback. Directories use the same ownership-only operation;
+Directory metadata remains available through Browse/Directory Listing.
+
+Acquisition and Load remain separate sequential executor requests. The
+[concurrent Access plan](../development/plans/catalog-concurrency.md#filesystem-execution-and-edit-locks)
+defines later scheduling changes; this split does not enable concurrent execution.
 
 Full content Update requires an existing owned lock. Immediate operations (Move,
 Directory Rename and Todo status change) check and execute adjacently on the
@@ -282,5 +287,5 @@ access_orchestrator.hpp. These names do not change variant tags or wire data.
 
 Access and Mutation orchestration are concrete peer classes. AccessOrchestrator
 borrows Catalog, Repository and Coordinator without owning Storage or connection
-state. Lock acquisition reuses the same AccessOrchestrator read implementation
-before installing ownership; no Vault behavior is implemented by this refactor.
+state. Ownership-only lock acquisition stays in MutationOrchestrator; separate
+Record Loads use AccessOrchestrator. No Vault behavior is implemented.
