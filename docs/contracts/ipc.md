@@ -113,6 +113,10 @@ or incremental editing needs explicit operation semantics.
 
 ## Scheduling and lifecycle
 
+For the approved but unimplemented Phase 4.3b extension, see
+[Consistency Check/Refresh coordination and dispatch precedence](../development/plans/catalog-refresh.md).
+It does not change the implemented execution guarantees described below.
+
 ### Current thread and request flow
 
 One IpcServer owns all connection workers and one RequestCoordinator. Connection

@@ -56,6 +56,8 @@ for cross-directory tasks; automatic discovery is not assumed verified.
 - [Documentation/harness plan](development/documentation-harness-plan.md): agreed
   audiences, knowledge ownership, sequence and pending cleanup work.
 - Active plans: [Application integration](development/plans/application.md),
+  [Consistency Checking & Catalog Refresh](development/plans/catalog-refresh.md)
+  (approved 4.3b contracts; implementation and listed design details remain open),
   [Catalog views and concurrent Access](development/plans/catalog-concurrency.md)
   (implemented concurrent baseline; later Push integration remains deferred),
   [Recovery](development/plans/recovery.md), [Vault](development/plans/vault.md),

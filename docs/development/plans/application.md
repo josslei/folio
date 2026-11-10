@@ -24,7 +24,12 @@ recipient rules. No temporary notification protocol is authorized.
 
 ## Navigation and verification
 
-Catalog queries remain memory-only. Application directory entry may count immediate formal items against Catalog expectations. Count equality is practical confidence, not a guarantee against edits or one-for-one replacement. Count units for module roots including Directory Entries, mismatch responses, and targeted reconciliation API need design. Do not implement automatic global scans from ordinary queries/navigation.
+Catalog queries remain memory-only. The approved
+[4.3b navigation and Consistency Check contract](catalog-refresh.md#consistency-check-and-navigation)
+separates Browse/display from a navigation-triggered Check and user-authorized
+Refresh. Its generic Backend Check initially counts all direct entries without
+classifying files. That plan owns scope, count overhead and mismatch behavior;
+do not add automatic scans to Browse or repeat the contract here.
 
 ## Query responsibility follow-up
 
@@ -44,7 +49,7 @@ need the same evaluation engine.
 
 Before implementing the corresponding feature, settle its open contracts: event
 recipients/order, UI worker ownership/reconnection, revision checking and Recovery
-reconciliation, or navigation count-check units and mismatch handling. Existing
+reconciliation and the remaining [4.3b implementation decisions](catalog-refresh.md#traceable-follow-ups). Existing
 ownership, protocol-v1 and lock contracts are not reopened merely by moving this
 plan. Native platform behavior still needs platform-specific verification.
 

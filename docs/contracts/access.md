@@ -48,8 +48,11 @@ AuthoritativeDataProblem. Unavailable Catalog state is ApplicationUnavailable.
 A usable Inconsistent Catalog still supplies metadata with a warning; Index
 publication remains blocked by Coordinator. No query performs verification I/O.
 
-TODO: explicit public Full Refresh and immediate Directory count checks. Neither
-is silently performed. Refresh/Recovery actions are not advertised as currently
+**Approved, not implemented:** a separate generic Consistency Check after navigation
+Browse/display, and explicit unified Scoped/Full Refresh. Browse stays Catalog-only;
+ordinary requery/sort does not itself trigger a Check. See the authoritative
+[4.3b design](../development/plans/catalog-refresh.md#consistency-check-and-navigation).
+Neither Check-triggered Refresh nor replay is automatic. Refresh/Recovery actions are not advertised as currently
 executable until their public capabilities exist. ErrorAction describes a user
 choice; it never triggers a retry or filesystem modification itself.
 

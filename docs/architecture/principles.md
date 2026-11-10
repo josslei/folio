@@ -16,6 +16,16 @@ or a proof against every failure.
 | Peer Access/Mutation orchestrators borrow Storage; Repository plus matching Coordinator callbacks owns persistence/synchronization sequencing. Implemented. | [Orchestration boundary](../contracts/mutations.md#application-orchestration-boundary--reviewed) | [Orchestrators](../../server/include/operations), [mutation tests](../../tests/application/mutation_orchestrator_test.cpp) |
 | Ordinary access uses current known locators, not implicit discovery/Full Refresh. Missing Catalog identity differs from stale authoritative location; usable inconsistent metadata may carry a warning. Implemented. | [Access errors](../contracts/access.md#errors-and-consistency) | [AccessOrchestrator](../../server/src/operations/access_orchestrator.cpp), [integration tests](../../tests/application/metadata_access_integration_test.cpp) |
 
+## Consistency Checking and Refresh — approved, not implemented
+
+The [4.3b plan](../development/plans/catalog-refresh.md) owns the detailed contract:
+Browse remains Catalog-only; navigation requests a separate low-cost Check; anomalies
+offer explicit Refresh rather than implicit repair. Scoped/Full Refresh reconciles
+only scanned scope using a validated candidate. Refresh excludes Mutations while
+Access continues; coordination never waits synchronously for operations. Check
+reservations and the two special dispatch cases are tracked together there.
+Refresh is projection reconstruction, not Draft/uncertain-Mutation Recovery.
+
 ## Lifecycle and failure containment
 
 | Principle / status | Contract owner | Implementation and verification |

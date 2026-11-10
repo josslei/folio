@@ -131,7 +131,13 @@ Persistent indexes are low-priority, rebuildable caches, rather than authoritati
 
 External editing, renaming, replacement, or deletion of Entry files is allowed, but is an exceptional workflow rather than ordinary Folio usage. These low-probability external changes and abnormal termination may leave the Index or Catalog stale. Folio deliberately avoids routine overhead to detect every such change: a successfully decoded Index is accepted without additional full filesystem validation, and ordinary Catalog queries perform no filesystem I/O. Explicit full Refresh provides authoritative reconstruction when needed; known-locator reads still validate the requested Entry identity and report stale locators for explicit caller-directed discovery.
 
-Future directory navigation will use a lightweight count check of immediate formal Entry files against Catalog membership. Matching counts are accepted as a practical, high-confidence indication of consistency, without parsing every Entry. They are not proof: external content edits and one-for-one replacements may remain undetected. A mismatch will support explicit reconciliation. Count checking remains deferred; no watchers or periodic scans are introduced. Abandoned-session detection uses the implemented Session Marker.
+**Approved, not implemented:** navigation triggers a separate generic Consistency
+Check after Browse/display. Normal counts direct filesystem entries without
+classifying formal Entry files; Root overhead is 0 and user Directory overhead is
+1 for `.folio-dir.toml`. The [4.3b plan](../development/plans/catalog-refresh.md)
+owns count formulas, heuristic limitations, reservations, explicit Refresh and
+scoped reconciliation. No watchers or periodic scans are introduced. Abandoned-session
+detection uses the implemented Session Marker.
 
 The Normal index is deliberately local-only: placing it under application.cache rather than normal_root keeps this rebuildable cache out of the data tree synchronized to the Git remote. Its metadata is complete plaintext. Entry locators inside the index remain relative to the associated repository's data root, not to the index file's location.
 
@@ -289,7 +295,7 @@ Explicit full Refresh request
        failure -> preserve existing state and unpersisted flag
 ```
 
-This path performs no Index I/O. Opening an Entry at a known locator remains a direct Repository operation; identity validation and `StaleLocator` handling follow the repository contract above. **TODO:** add targeted correction/verification and lightweight immediate-file count checks on entering a physical Directory. Equal counts cannot detect content edits or one-for-one replacements; these checks must not promise full verification or constant-time enumeration.
+This path performs no Index I/O. Opening an Entry at a known locator remains a direct Repository operation; identity validation and `StaleLocator` handling follow the repository contract above. Public Consistency Check and unified Scoped/Full Refresh remain unimplemented; see [4.3b design and follow-ups](../development/plans/catalog-refresh.md#traceable-follow-ups). Checks do not promise full verification or constant-time enumeration.
 
 ## Write Safety, Transactions, and Trash
 
@@ -389,7 +395,7 @@ Snapshot-to-metadata coverage guards in [metadata tests](../../tests/storage/met
 
 **Implemented:** ordinary supplied-locator operations avoid global discovery; queries are memory-only; full scan detects malformed formal data and duplicate UUIDs across all four types. Tests cover these contracts in [Storage tests](../../tests/storage). Atomic writes can leave partial multi-file operations requiring reconciliation.
 
-**Decided/Planned:** full scans are reserved for startup fallback, previous Session Marker recovery, and explicit Full Refresh. Explicit targeted discovery and standalone creation discovery remain deliberate API choices. Navigation may enumerate/count immediate formal objects without parsing them; equal counts are a practical indicator, never proof. No watchers, hashes, or periodic verification are required for uncommon external edits.
+**Decided/Planned:** full scans are reserved for startup fallback, previous Session Marker recovery, and explicit Full Refresh. Explicit targeted discovery and standalone creation discovery remain deliberate API choices. Approved navigation-triggered Checks count direct entries without classifying them; equal counts are a heuristic, never proof. See the [4.3b design](../development/plans/catalog-refresh.md#consistency-check-and-navigation). No watchers, hashes, or periodic verification are required for uncommon external edits.
 
 **Implemented:** Backend owns Catalog, Coordinator and Repository instances; Frontends use the public connection API over IPC. Storage stays private. Cache relocation, Session Marker, ownership and Backend lifecycle integration are implemented. Fuller CLI/TUI integration remains deferred. Follow the [roadmap](../development/roadmap.md), not speculative APIs.
 ## Effective storage paths — Implemented
