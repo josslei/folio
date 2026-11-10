@@ -4,11 +4,13 @@
 #include "storage/catalog_coordinator.hpp"
 #include <folio/ipc/application_protocol.hpp>
 #include <map>
+#include <mutex>
+#include <functional>
 
 namespace folio::application::internal {
 
-// Executor-owned mutation orchestration and edit-lock state. Access operations
-// are routed separately by the executor callback.
+// One mutation worker owns authoritative orchestration; the request coordination
+// thread handles editing control through the synchronized ownership registry.
 // Borrows Storage components; Repository owns persistence sequencing and invokes
 // Coordinator callbacks for Catalog synchronization. This handler does not own
 // worker threads, scheduling or Backend lifecycle. Only Normal storage exists
@@ -20,12 +22,17 @@ public:
   MutationOrchestrator(core::storage::MetadataCatalog& catalog,
                        core::storage::NormalRepository& repository,
                        core::storage::CatalogCoordinator& coordinator);
-  /// Executor-only dispatch. The retained session identifies lock ownership;
-  /// workers must neither call this directly nor mutate the lock registry.
-  /// Checks current Catalog state and prerequisites before Repository persistence.
+  /// Mutation worker dispatch, or in-memory editing control on the coordination thread. The
+  /// retained session identifies lock ownership; IPC workers must neither call this directly nor
+  /// mutate the lock registry. Checks current Catalog state and prerequisites before Repository
+  /// persistence.
   OperationResponse handle(const OperationRequest& request, const Session& session);
+  /// Briefly installs immediate-mutation protection before dispatch, without I/O.
+  /// The returned action retains protection/session through execution, including exceptions.
+  std::function<OperationResponse()> prepare(OperationRequest request, Session session);
 
 private:
+  /// Caller holds ownership_mutex_; required means a long-lived Edit Lock is needed.
   std::optional<ApplicationError> check_lock(const core::Id& id, const Session& session,
                                              bool required);
   /// Ownership-only, in-memory acquisition; never validates/loads the file.
@@ -36,6 +43,11 @@ private:
   core::storage::MetadataCatalog& catalog_;
   core::storage::NormalRepository& repository_;
   core::storage::CatalogCoordinator& coordinator_;
+  /// Protects locks_ and active_mutations_ across coordination and mutation execution.
+  /// Never held during filesystem work. May acquire Coordinator's publication mutex;
+  /// publication callbacks never acquire this mutex. Scheduler queue locks are not held.
+  std::mutex ownership_mutex_;
+  std::map<std::string, std::weak_ptr<ConnectionSession>> active_mutations_;
   // Weak ownership avoids keeping disconnected sessions alive. Accepted actions
   // hold strong session references; expired owners are pruned on later requests.
   std::map<std::string, std::weak_ptr<ConnectionSession>> locks_;

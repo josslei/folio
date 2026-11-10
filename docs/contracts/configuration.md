@@ -32,6 +32,9 @@ use_default_location = true
 
 [diagnostics]
 log_level = "warn"
+
+[performance]
+access_workers = 4
 ```
 
 Default locations resolve to `<application.data>/normal` and
@@ -40,6 +43,13 @@ A custom location requires `use_default_location = false` and an absolute string
 `path`. Providing `path` with the flag true is rejected. `diagnostics.log_level` accepts lowercase `trace`, `debug`, `info`, `warn`,
 `error`, or `critical`. Its typed effective value is applied after loading,
 without replacing the process logger. Missing diagnostics inherit the template.
+`performance.access_workers` sets the shared Backend Access pool size
+(default 4, positive integer worker count). Catalog queries and authoritative Loads share it;
+There is no application-imposed upper cap; the integer must fit the platform worker-count type.
+Resource availability determines whether threads can be created at startup.
+Mutations remain sequential. Omission uses the template default without write-back.
+The earlier draft `performance.load_workers` key is replaced, not aliased; rename
+it in any existing draft configuration that explicitly specified it.
 Unknown settings, wrong
 types, and schema versions other than integer 1 are rejected. Omitted settings
 are filled from the template in memory; existing files are not rewritten.

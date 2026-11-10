@@ -344,5 +344,31 @@ TEST_F(Configuration, InvalidApplicationPathsAndRelativeConfigFileAreRejected) {
       folio::config::load_configuration(application, "folio_config.toml")));
 }
 
+TEST_F(Configuration, AccessWorkerSettingUsesTemplateDefaultsAndRejectsInvalidValues) {
+  auto defaults = folio::config::configuration_defaults(application);
+  ASSERT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(defaults));
+  EXPECT_EQ(std::get<folio::config::EffectiveConfig>(defaults).access_workers, 4u);
+  write("");
+  auto missing = folio::config::load_configuration(application, file);
+  ASSERT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(missing));
+  EXPECT_EQ(std::get<folio::config::EffectiveConfig>(missing).access_workers, 4u);
+  for (int workers : {1, 4, 17, 1024}) {
+    write("[performance]\naccess_workers = " + std::to_string(workers));
+    auto config = folio::config::load_configuration(application, file);
+    ASSERT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(config));
+    EXPECT_EQ(std::get<folio::config::EffectiveConfig>(config).access_workers, workers);
+  }
+  for (auto text : {"[performance]\naccess_workers = 0", "[performance]\naccess_workers = -1",
+                    "[performance]\naccess_workers = 1.5", "[performance]\naccess_workers = true",
+                    "[performance]\naccess_workers = '2'", "[performance]\nworkers = 2",
+                    "performance = false"}) {
+    write(text);
+    auto config = folio::config::load_configuration(application, file);
+    ASSERT_TRUE(std::holds_alternative<folio::config::ConfigurationError>(config)) << text;
+    EXPECT_EQ(std::get<folio::config::ConfigurationError>(config).code,
+              folio::config::ConfigurationErrorCode::InvalidValue);
+  }
+}
+
 } // namespace
 } // namespace folio::application::internal

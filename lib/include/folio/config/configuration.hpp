@@ -2,6 +2,7 @@
 
 #include <folio/core/result.hpp>
 #include <filesystem>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -34,6 +35,8 @@ enum class LogLevel { Trace, Debug, Info, Warn, Error, Critical };
 struct EffectiveConfig {
   StoragePaths paths;
   LogLevel log_level;
+  // Bounded Access concurrency; defaults come from the factory template.
+  std::size_t access_workers = 0;
 };
 
 enum class ConfigurationErrorCode { SyntaxError, InvalidValue, InvalidPath, IoError };

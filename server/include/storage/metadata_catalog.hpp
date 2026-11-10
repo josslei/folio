@@ -101,8 +101,9 @@ validate_metadata(const DirectoryMetadata& metadata);
 class MetadataCatalogView;
 
 /// In-memory metadata only. All four Entry types share one UUID identity namespace.
-/// Capture, mutation and Index bookkeeping remain executor-only. Retained views
-/// hold immutable state independently of subsequent publication.
+/// One mutation writer owns changes and Index bookkeeping. Concurrent capture
+/// must use CatalogCoordinator::read_state(), synchronized with managed callbacks.
+/// Retained views hold immutable state independently of subsequent publication.
 // Locators are lexically safe relative paths; physical layout belongs to the
 // repository. Lookups return copies, so callers cannot mutate catalog state
 // indirectly. UUID lookup and Directory membership listing use ordered IDs.
@@ -165,7 +166,7 @@ private:
 
 /// Backend-private read capability. No mutators or Index bookkeeping are exposed.
 // Views own their roots, so they can outlive the originating Catalog. Capture and
-// publication remain executor-only until runtime synchronization is introduced.
+// publication use the Coordinator boundary; retained views need no query-long lock.
 class MetadataCatalogView {
 public:
   // UUID membership across all four Entry types, without copying metadata.

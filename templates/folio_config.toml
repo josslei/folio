@@ -13,3 +13,7 @@ use_default_location = true
 
 [diagnostics]
 log_level = "warn"
+
+[performance]
+# Concurrent Catalog queries and authoritative reads; mutations remain sequential. Must be a positive integer.
+access_workers = 4

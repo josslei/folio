@@ -115,93 +115,123 @@ or incremental editing needs explicit operation semantics.
 
 ### Current thread and request flow
 
-The Backend session owns one `IpcServer`, which owns every connection worker and
-one shared `RequestCoordinator`. Workers capture the server's `this` pointer; they
-access its request coordinator without copying it. The constructor starts the executor;
-there is no separate request coordination thread in the current implementation.
+One IpcServer owns all connection workers and one RequestCoordinator. Connection
+workers only receive/decode, admit, acknowledge and deliver. Admission remains a
+short synchronized call on the connection worker; it does not access business
+state. One request coordination thread handles eligibility/reservations/completions,
+with one shared Access pool (default 4, positive worker count), and one
+Mutation worker. No periodic progress polling or per-connection execution queue
+is introduced. Blocking Public APIs and one outstanding request per connection
+are unchanged.
 
 ```text
-BACKEND MAIN THREAD            CONNECTION WORKER (A, B, ...)              SINGLE EXECUTOR THREAD
----------------------------    ----------------------------------------   ------------------------------
-Serve()
-  Construct IpcServer
-    Construct coordinator      --------------------------------------->   Start execute(); wait for work
-  Call run() [blocks]
-    Accept connection ------>  Start worker
-                               Handshake -> Ready
-                               Receive complete request
-                               Decode / validate
-                               request_coordinator_.admit(action)
-                                 Reject -> send Rejected; receive next
-                                 Accept -> append to shared queue
-                                                   wake executor ----->   Dequeue next action
-                               Send Accepted                              Execute action / Backend handler
-                               Wait for ticket completion                   Example: acquire_edit(id)
-                                 (also detect disconnection)                  Check Catalog and ownership
-                                                                              Install lock; return result
-                                                                          Encode response
-                               <---------------- completion signal -----   Publish ticket result; wake worker
-                               Read ticket; send final response           Wait for next queued action
-                               Receive next request
-
-    Accept more connections    Each has its own stream/worker;
-                               all submit to the SAME request coordinator.
+CONNECTION WORKER        REQUEST COORD. THREAD          SHARED ACCESS WORKERS          MUTATION WORKER
+----------------------   ---------------------------   ----------------------------   -----------------------
+Receive / decode
+admit(plan, prepare) ---> Shared bounded queue
+Send Accepted            Select eligible work
+Wait / disconnect        |
+                         +-- Editing control: check / acquire / release in memory
+                         |
+                         +-- Catalog query ----------> Capture status + immutable view
+                         |                             Filter / sort / build result
+                         |                             Encode response
+                         |
+                         +-- Load: reserve Entry ----> Capture status + current locator
+                         |                             Read / validate authoritative file
+                         |                             Encode response
+                         |
+                         +-- Mutation: reserve Entry
+                              Prepare protection ------------------------------------> Check / persist / synchronize
+                                                                                       Encode response
+                         <---------------------------- Report completion <------------- Completion
+                         Release capacity/reservations
+Read ticket <----------- Signal completion
+Send final response
 ```
 
-After enqueueing, execution and sending Accepted can proceed independently.
-The connection worker always sends Accepted before the final response, even if
-the executor has already completed. Rejection sends no action to the executor.
-Disconnecting cannot retract an accepted action; only final delivery is lost.
+The rows are alternative paths, not steps of every request. Preparation/action
+callbacks run without queue or ticket mutexes. Access preparation runs on the same
+Access worker as execution; Catalog capture and locator interpretation belong to
+AccessOrchestrator, not scheduling. Only editing control and immediate Mutation
+protection are prepared on coordination. Large result construction and
+encoding run on execution workers; editing-control results remain small. Workers
+publish ticket results and bounded completion records; coordination releases
+reservations/capacity before signaling delivery. It need not route result bodies
+through another queue. Accepted is always sent before the final response, even
+if execution finishes before the acknowledgment is delivered.
 
-Implementation entry points:
-[Serve](../../server/src/runtime/backend_states.cpp),
-[IpcServer connection/accept handling](../../server/src/ipc/ipc_server.cpp),
-[RequestCoordinator admission/execution](../../server/src/execution/request_coordinator.cpp).
-The [mutex declarations](../../server/include/ipc/ipc_server.hpp) document protected
-server state; [request-coordinator/ticket mutexes](../../server/include/execution/request_coordinator.hpp)
-protect queue accounting and individual completion records. Admission acquires
-server state before the request coordinator queue lock; handlers execute without either
-lock held by the executor. Edit Lock ownership remains in
-[MutationOrchestrator](../../server/src/operations/mutation_orchestrator.cpp).
+### Execution safety and bounds
 
-This diagram describes sequential execution now. The
-[concurrent Access plan](../development/plans/catalog-concurrency.md#responsibility-overview)
-records the combined Steps 5–6 design; its
-[proposed thread diagrams](../development/plans/catalog-concurrency.md#proposed-thread-and-request-flows)
-use RequestCoordinator and its proposed request coordination thread.
-CatalogCoordinator remains a separate Storage component.
-That concurrent execution is not implemented here.
+RequestCoordinator retains one shared bounded pending queue; capacity 32 includes
+queued, preparing and executing requests across all groups. Existing exchange
+reservations (default 4) remain held from reception through delivery/execution,
+bounding large request/result exchanges; messages remain limited to 64 MiB.
+ExecutionPool contains no scheduling/business policy: coordination dispatches at
+most its worker count. Query and Load requests share this capacity: if all Access
+workers are occupied, accepted Access work remains pending. Filesystem saturation
+can delay queries; no reserved query capacity or priority scheme is introduced. Completion storage is reserved to request capacity. Queries
+retain views only while preparing/running; Loads retain a resolved locator rather
+than a whole Catalog version. Result construction may allocate owned metadata;
+these bounds are concurrency limits, not a hard total-RSS guarantee for arbitrary
+Catalog or Entry sizes.
 
-The complete request is decoded/validated before queue admission. A single
-`RequestCoordinator` owns execution, with capacity 32 including its active job;
-the stricter exchange-buffer reservations may reject earlier. Both current Queries
-and Mutations use this scheduling boundary. No connection worker accesses
-the Catalog. All operation execution is sequential for now; idle workers and the
-executor block on OS events or condition variables, independently of each other.
-A slow operation cannot prevent another connection's handshake, admission or Ping.
+Loads of the same Entry may run together. A Mutation waits for active Loads of
+its target UUID and excludes later conflicting Loads through persistence, Catalog
+synchronization/failure handling and completion. A Load queued behind a Mutation
+captures its locator only after that reservation is released, without consuming a
+filesystem worker while waiting. Later conflicting Loads cannot overtake an earlier
+waiting Mutation. Mutation FIFO and exactly one executing Mutation are preserved;
+unrelated Loads, Catalog queries and editing control can progress independently.
+No Busy, implicit scan, forwarding, retry or cancellation is added.
 
-Admission atomically refuses or enqueues work. Accepted is sent before the final
-response, even if execution finishes immediately. It promises responsibility only
-within this session, not durable queuing, execution after a crash, or delivery.
-The blocking Public API consumes this stage internally; no UI callback is added.
-The Backend records Queued/Executing/Finished facts for delivery diagnostics;
-these are historical scheduling facts, not authoritative persistence evidence.
+Current Directory Rename rewrites the UUID folder's metadata without moving member
+files. Loads do not depend on that name, so Rename does not reserve every member.
+Directory creation, target membership validation and Record moves remain serialized
+with other Mutations. New Delete/Refresh/Batch operations must define additional
+conflict scope before dispatch; a UUID reservation is not a universal future rule.
 
-A connection that disconnects after acceptance loses delivery, not its queued
-work. Last-Frontend disconnection stops admission. Explicit shutdown/failure also
-stops admission; every accepted job drains before Catalog finalization. Idle reception wakes on admission closure; usable connections remain available
-through Report. Busy workers attempt final delivery with bounded deadlines.
-Finish cooperatively closes connections and joins remaining workers. No worker outlives Storage resources.
-The existing Bootstrap -> Serve -> Stopping -> Report -> Finish state machine
-remains the sole lifecycle controller. Report drains if a failure bypassed Stopping; Finish retains an exceptional
-drain fallback if earlier cleanup failed. See the detailed
-[Backend lifecycle call flow](backend-lifecycle.md#backend-lifecycle-call-flow--implemented). Only then may `finish_session()` run, under RepositoryOwnership.
-No Marker/Index algorithm or finalization eligibility rule changes.
+CatalogCoordinator::read_state() captures readiness and immutable roots under the
+same publication mutex used by managed Repository callbacks. No filesystem work or
+query evaluation holds that mutex. MutationOrchestrator separately synchronizes
+long-lived ownership and immediate-mutation protection. Other Frontends cannot
+acquire editing rights during a protected mutation; existing ownership still
+wins. Query results describe one coherent captured state, not every publication
+before delivery. Push coverage during/after queries is still deferred to 4.4a.
 
-Scheduling is in-memory session execution, **not Recovery**. Future Batch
-operations must durably prepare required Recovery information during execution,
-before their first dependent authoritative change; it need not precede Accepted.
-Frontend Draft Persistence is independent. No Recovery mechanism is implemented.
+Generic internal IpcServer handlers without a preparer retain serialized execution;
+normal Backend Serve supplies the prepared concurrent path. This compatibility
+seam does not make arbitrary handlers thread-safe.
+
+### Disconnection and lifecycle
+
+Accepted is session-only responsibility, not durable queuing, execution success or
+a crash/liveness guarantee. A connection loss cancels delivery, not accepted work.
+Accepted captures retain the originating session until execution/protection cleanup,
+so Edit Locks cannot expire ahead of accepted work. Error routing remains specific
+to the initiating connection.
+
+Last disconnection or explicit shutdown/failure closes admission. Draining attempts
+all accepted work across every execution group; operation errors/exceptions are
+retained and do not abandon subsequent requests. RequestCoordinator joins its
+coordination thread and drains/joins all pools before Catalog finalization. Usable
+connections survive draining for Report; Finish closes/joins remaining workers.
+A hung action may still prevent draining. No forced thread termination or new
+completion deadline is introduced.
+
+See the [Backend lifecycle flow](backend-lifecycle.md#backend-lifecycle-call-flow--implemented).
+Scheduling is in-memory session execution, **not Recovery**. Future Batch operations
+must durably prepare required Recovery information before their first dependent
+authoritative change during execution, not before Accepted. Frontend Draft
+Persistence remains independent and unimplemented.
+
+Implementation: [RequestCoordinator](../../server/include/execution/request_coordinator.hpp),
+[execution workers](../../server/include/execution/execution_pool.hpp),
+[IpcServer](../../server/src/ipc/ipc_server.cpp),
+[Access preparation](../../server/src/operations/access_orchestrator.cpp),
+[editing/Mutation preparation](../../server/src/operations/mutation_orchestrator.cpp).
+The [combined Steps 5–6 plan](../development/plans/catalog-concurrency.md)
+records design rationale and later work.
 
 ## Results and errors
 
@@ -234,7 +264,7 @@ transport; its replacement belongs to Frontend UI/IPC Worker integration below.
 | IPC-03 | Deferred Implementation | Edit Locks are implemented in 4.3a; Push/lifecycle notifications in 4.4a and Frontend handling in 4.4b. Define recipients explicitly: request errors go to their originating Frontend; shared availability changes may notify affected Frontends without disclosing another Frontend's operation details. Scheduling does not implement these notification protocols. |
 | IPC-04 | Deferred Implementation | Frontend UI/IPC Worker ownership and completion events, connection monitor replacement, bounded reconnection and ordinary state initialization on a new connection: 4.4b. Blocking methods must run off the UI thread; no extra manual Refresh is required solely by reconnecting. |
 | IPC-05 | Deferred Implementation | Durable Batch Recovery preparation before protected authoritative changes; revisit Batch/Recovery design. Acceptance does not require persistence. Frontend Draft Persistence remains separate in Recovery phases. |
-| IPC-06 | Agreed design / Deferred Implementation | [Catalog views and concurrent Access](../development/plans/catalog-concurrency.md) owns the state/scheduling design and pre-4.3b review gates. Current execution remains sequential; next agree implementation increments, then review worker/resource integration and gap-free notification handoff against the settled rules. |
+| IPC-06 | Implemented baseline; Push handoff deferred | Concurrent Catalog queries and bounded authoritative Loads use RequestCoordinator with one sequential Mutation worker; ownership, conflict reservations and draining are integrated. [Design and review](../development/plans/catalog-concurrency.md) records the boundary. Gap-free notification handoff belongs to 4.4a, not this refactor. |
 | IPC-07 | Open Design Decision | Request cancellation semantics need operation-specific safety rules. Ceasing to wait or disconnecting does not cancel accepted work. |
 | IPC-08 | Deferred Verification | Linux/Windows runtime, access controls, overlapped I/O cancellation and shutdown need native verification before claiming support for that platform is verified. Linux testing awaits an environment; Windows may be deferred to release preparation and omitted from the first release if not verified. |
 

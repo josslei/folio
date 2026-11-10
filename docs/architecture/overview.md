@@ -19,8 +19,9 @@ broaden the review before implementation.
 - BackendContext owns resources. AccessOrchestrator and MutationOrchestrator
   borrow Storage; Repository persistence invokes matching Coordinator callbacks.
   Do not add a second Catalog synchronization path or implicit repair scan.
-- IPC workers admit and deliver; one bounded shared queue and one executor run
-  Application operations. Workers must not access live Catalog/Repository state.
+- IPC workers admit and deliver. RequestCoordinator dispatches bounded queries/Loads
+  and one sequential Mutation worker from one shared queue. Preparation captures
+  synchronized state/reservations; connection workers never access live Storage.
 - Accepted is session-only responsibility, not execution success or durability.
   Disconnecting does not cancel accepted work. No automatic Mutation replay.
 - BackendStateMachine enforces Bootstrap → Serve → Stopping → Report → Finish.
@@ -47,8 +48,9 @@ broaden the review before implementation.
 Normal Access operations, Normal Mutations, Entry Edit Locks, Configuration,
 Logging and event-driven Backend IPC are implemented. The welcome TUI is not a
 complete editor. Push notifications, Full Refresh/count-check public integration,
-Recovery, Vault and Git Sync remain deferred. Concurrent execution, cancellation,
-revision checking and mutation receipts require further decisions.
+Recovery, Vault and Git Sync remain deferred. Concurrent Access execution is
+implemented; parallel Mutations, cancellation, revision checking and mutation
+receipts remain open/deferred.
 
 No bounded operation completion or orderly shutdown is guaranteed for arbitrary
 hangs. Do not forcibly terminate operation threads or finalize Storage beneath

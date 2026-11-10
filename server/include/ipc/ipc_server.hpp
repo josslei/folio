@@ -15,30 +15,35 @@ struct RuntimeLimits {
   // Reserve one maximum-sized exchange before buffering each Request. Holding
   // this reservation through delivery also bounds queued requests and results.
   std::size_t buffered_requests = 4;
+  std::size_t access_workers = 4;
 };
 
 // The Backend session owns one IpcServer for all Frontend connections and one
-// shared RequestCoordinator. Connection workers admit/deliver; its executor runs
-// handlers. Storage is accessed only through the executor handler, never by a
-// connection worker.
+// shared RequestCoordinator. Connection workers admit/deliver; coordinated workers
+// run prepared handlers. Storage is never accessed by a connection worker. Generic
+// handlers without a preparer remain serialized.
 // No additional lifecycle state machine: Serve runs this resource; Stopping and
 // Report preserves usable connections; Finish closes them before Catalog finalization.
 class IpcServer {
 public:
   using Failure = std::variant<IpcError, std::exception_ptr>;
   using Handler = std::function<OperationResponse(const OperationRequest&, const Session&)>;
+  using PreparedAction = std::function<OperationResponse()>;
+  using Preparer = std::function<PreparedAction(OperationRequest, Session)>;
+  /// A supplied preparer enables coordinated concurrent execution. Without one,
+  /// generic handlers remain serialized; they must not be assumed thread-safe.
   IpcServer(RepositoryOwnership& ownership, Handler handler, std::string startup_failure = {},
-            RuntimeLimits limits = {});
+            RuntimeLimits limits = {}, Preparer prepare = {});
   ~IpcServer();
   IpcServer(const IpcServer&) = delete;
   /// Blocks the lifecycle thread while accepting connections; workers handle IPC
-  /// and the constructor-started RequestCoordinator executes handlers independently.
+  /// and RequestCoordinator dispatches prepared work independently.
   /// Returning stops admission, but does not certify draining or join all workers.
   /// Stopping/Report drain; Finish closes connections before Storage finalization.
   core::Result<std::monostate, IpcError> run(std::stop_token shutdown = {});
   // Stop new connections/requests without closing established connections.
   void stop_admission();
-  // Attempt every accepted action and join the executor. Idempotent; retains
+  // Attempt every accepted action and join coordination and execution workers. Idempotent; retains
   // usable connections for Report. Operation errors/exceptions remain collected
   // outcomes; they do not escape drain or abandon the queue. This is not a
   // guarantee against broken synchronization infrastructure or a hung action.
@@ -63,6 +68,7 @@ private:
   /// Caller holds connection_state_mutex_; wakes the lifecycle-thread accept loop.
   void notify();
   void failure(Failure error);
+  RequestCoordinator::Result encode_response(OperationResponse response, bool mutation);
   bool send_rejection(IpcStream& stream, ApplicationError error, std::stop_token stop);
   struct BufferReservation {
     explicit BufferReservation(std::atomic<std::size_t>& count) : count(count) {}
@@ -73,6 +79,7 @@ private:
 
   RepositoryOwnership& ownership_;
   Handler handler_;
+  Preparer prepare_;
   const std::string startup_failure_;
   const RuntimeLimits limits_;
   RequestCoordinator request_coordinator_;
@@ -80,7 +87,7 @@ private:
   /// failures_. Registration, last-disconnect detection and admission closure
   /// form one invariant: splitting their locks would permit shutdown races.
   /// The lifecycle thread alone changes the connections_ vector structure.
-  /// Lock order: connection_state_mutex_ -> coordinator's queue mutex. RequestCoordinator
+  /// Lock order: connection_state_mutex_ -> RequestCoordinator's queue mutex. Its
   /// actions run without its queue mutex and may then report failures here.
   /// Never execute handlers, perform blocking stream reads/writes, drain or join
   /// with this lock held.

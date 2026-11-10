@@ -8,6 +8,8 @@
 #include "storage/normal_repository.hpp"
 
 #include <filesystem>
+#include <atomic>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <variant>
@@ -55,8 +57,9 @@ enum class SaveOutcome { Saved, SkippedPersisted };
 /// outlive this coordinator and its callbacks. Startup load is a single attempt;
 /// saving once at shutdown is caller policy and failed saves may be retried.
 /// Failed startup cannot be turned into save permission by editing the Catalog.
-/// Calls and callbacks are serialized by the Backend executor; lifecycle I/O must
-/// wait for accepted work to drain. Index persistence is not Record persistence.
+/// One mutation worker serializes callbacks; read_state() captures roots/status
+/// under a short mutex. Lifecycle I/O must wait for accepted work to drain. Index persistence is
+/// not Record persistence.
 class CatalogCoordinator {
 public:
   CatalogCoordinator(StoragePaths paths, MetadataCatalog& catalog);
@@ -81,6 +84,13 @@ public:
   // No authoritative mutations may follow successful finalization.
   [[nodiscard]] ::folio::core::Result<SaveOutcome, CoordinatorError> finish_session();
   [[nodiscard]] CatalogStatus status() const noexcept;
+  struct ReadState {
+    CatalogStatus status;
+    MetadataCatalogView view;
+  };
+  /// Capture status and immutable roots under the same short publication boundary.
+  /// Safe during managed mutations. Startup/Refresh/finalization require drained work.
+  [[nodiscard]] ReadState read_state() const;
   // Created once by the constructor. Accessors borrow the stored callbacks;
   // use them by const reference and keep this coordinator alive during use.
   // Creation inserts explicitly; update also covers moves and Directory rename.
@@ -125,6 +135,7 @@ private:
   MutationResultCallback<Metadata> wrap_catalog_update(Update update) {
     return [this, update = std::move(update)](const MutationNotification<Metadata>& notification)
                -> ::folio::core::Result<std::monostate, StorageError> {
+      std::lock_guard lock(publication_mutex_);
       if (const auto* failure =
               std::get_if<std::reference_wrapper<const RepositoryMutationError>>(&notification)) {
         if (failure->get().stage != MutationFailureStage::BeforeAuthoritativeChange)
@@ -158,7 +169,11 @@ private:
   [[nodiscard]] ::folio::core::Result<std::monostate, CoordinatorError> establish_marker();
   StoragePaths paths_;
   MetadataCatalog& catalog_;
-  CatalogStatus status_ = CatalogStatus::Unloaded;
+  /// Protects managed Catalog publication and read_state capture; never held for
+  /// Repository I/O. Single writer owns lifecycle fields; startup/Refresh/finalization
+  /// run only with execution drained. Status is atomic for independent availability checks.
+  mutable std::mutex publication_mutex_;
+  std::atomic<CatalogStatus> status_{CatalogStatus::Unloaded};
   bool load_attempted_ = false;
   bool session_active_ = false;
   bool marker_cleanup_pending_ = false;

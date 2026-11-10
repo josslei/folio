@@ -57,7 +57,7 @@ for cross-directory tasks; automatic discovery is not assumed verified.
   audiences, knowledge ownership, sequence and pending cleanup work.
 - Active plans: [Application integration](development/plans/application.md),
   [Catalog views and concurrent Access](development/plans/catalog-concurrency.md)
-  (agreed architecture; implementation review pending; not implemented),
+  (implemented concurrent baseline; later Push integration remains deferred),
   [Recovery](development/plans/recovery.md), [Vault](development/plans/vault.md),
   [Git Sync](development/plans/git-sync.md). Accepted direction is distinguished
   from open decisions; these are not implemented capabilities.

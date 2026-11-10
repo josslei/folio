@@ -47,6 +47,7 @@ struct BackendContext {
   std::unique_ptr<IpcServer> runtime;
   // Historical obligation: startup_load succeeded. Current consistency remains
   // Coordinator-owned; finish_session itself rejects unsafe Catalog states.
+  std::size_t access_workers = 4;
   bool initialized = false;
   int exit_code = 0;
   std::vector<BackendDiagnostic> diagnostics;
@@ -56,7 +57,8 @@ void retain_backend_notification_failures(BackendContext& context,
                                           const BackendStateMachine& machine);
 /// Initializes configuration, ownership and Storage before admitting operations.
 BackendActionOutcome Bootstrap(BackendContext& context);
-/// Runs IPC acceptance on the lifecycle thread; handlers execute on RequestCoordinator's executor.
+/// Runs IPC acceptance on the lifecycle thread; prepared handlers run on coordinated execution
+/// workers.
 BackendActionOutcome Serve(BackendContext& context);
 /// Normal-stop path: closes admission and drains accepted work, retaining streams.
 BackendActionOutcome Stopping(BackendContext& context);

@@ -3,9 +3,9 @@
 **Status:** living capability/limitation summary after Phase 4.3a. Update when
 capabilities or verification change; milestone reports do not override this page.
 The [Catalog/concurrent Access design](plans/catalog-concurrency.md) is agreed and
-partially implemented: immutable Catalog states and retained read views now use Immer;
-ownership-only Edit Lock acquisition is separate from authoritative Load.
-Execution remains sequential; concurrent scheduling is not implemented. The
+implemented for the pre-4.3b baseline: immutable Catalog views use Immer;
+ownership-only acquisition is separate from Load; RequestCoordinator dispatches
+concurrent queries/Loads and one sequential Mutation worker. The
 [implementation increments and review checkpoints](plans/catalog-concurrency.md#agreed-implementation-sequence)
 are agreed; recording them does not authorize code changes. Complete
 the focused refactor baseline in rounds before returning to remaining 4.3b, not
@@ -19,7 +19,7 @@ Push and Frontend integration retain their later roadmap placement. The
 | Area | Current state |
 | --- | --- |
 | Core and Normal Storage | Implemented independent models, authoritative files, Catalog/Index and durable Session Marker |
-| Runtime | One Backend, multiple Frontends, ownership, event-driven IPC, shared bounded queue and sequential executor |
+| Runtime | One Backend, multiple Frontends, ownership, event-driven IPC, shared bounded admission, short coordination, concurrent Access and sequential Mutations |
 | Public Access | Browse, scoped metadata query, Directory listing, typed Record loading |
 | Normal Mutations | Create/Update/Move, Directory Create/Rename and immediate Todo status changes |
 | Editing control | Connection-owned Entry Edit Locks with accepted-work lifetime retention |
@@ -28,6 +28,12 @@ Push and Frontend integration retain their later roadmap placement. The
 | Not implemented | Public Full Refresh/count checks, Push, persistent Draft/compound Recovery, Delete/Trash, Vault and Git Sync |
 
 ## Verification evidence
+
+The [Steps 5–6 verification record](reports/concurrent-access-verification.md)
+reports the initial 416-test baseline and shared-pool follow-up (418 regular
+tests passing on macOS), with resource-limit checks, repeated
+concurrency checks and scoped Catalog-retention measurements. Linux/Windows and
+ThreadSanitizer verification are not claimed.
 
 Prior implementation sessions reported 400 regular and 7 opt-in resource-limit
 tests passing on macOS after the AccessOrchestrator refactor. This is a prior

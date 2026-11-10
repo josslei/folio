@@ -20,10 +20,10 @@ ApplicationError capacity_error() {
 } // namespace
 
 IpcServer::IpcServer(RepositoryOwnership& ownership, Handler handler, std::string startup_failure,
-                     RuntimeLimits limits)
-    : ownership_(ownership), handler_(std::move(handler)),
+                     RuntimeLimits limits, Preparer prepare)
+    : ownership_(ownership), handler_(std::move(handler)), prepare_(std::move(prepare)),
       startup_failure_(std::move(startup_failure)), limits_(limits),
-      request_coordinator_(limits.requests) {}
+      request_coordinator_(limits.requests, limits.access_workers) {}
 
 IpcServer::~IpcServer() {
   drain_requests();
@@ -182,37 +182,30 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     {
       std::lock_guard lock(connection_state_mutex_);
       if (!stopping_) {
+        auto value = std::get<OperationRequest>(std::move(request));
+        const bool mutation = std::holds_alternative<MutationRequest>(value);
+        const auto plan = prepare_ ? RequestCoordinator::plan(value) : RequestCoordinator::Plan{};
         ticket = request_coordinator_.admit(
-            [this, request = std::get<OperationRequest>(std::move(request)), reservation,
-             session]() -> RequestCoordinator::Result {
-              // Executor thread: execute and encode the final result. Neither the
-              // server-state lock nor coordinator queue lock is held on this thread.
+            plan,
+            [this, value = std::move(value), session, reservation,
+             mutation]() mutable -> RequestCoordinator::Action {
+              // Access worker: prepare business state. Mutation/control preparation
+              // instead runs briefly on request coordination.
               try {
-                auto result = handler_(request, session);
-                auto encoded = codec::encode<OperationResponse>(result);
-                if (std::holds_alternative<IpcError>(encoded)) {
-                  // Never replace an executed mutation with an uncorrelated error
-                  // or claim NotApplied. Delivery is unconfirmed; service continues.
-                  if (std::holds_alternative<MutationRequest>(request)) {
-                    try {
-                      SPDLOG_ERROR(
-                          "Mutation final response exceeded protocol limits; confirmation lost");
-                    } catch (...) {
-                    }
-                    return std::get<IpcError>(encoded);
+                auto action = prepare_ ? prepare_(std::move(value), session)
+                                       : PreparedAction{[this, value = std::move(value), session] {
+                                           return handler_(value, session);
+                                         }};
+                return [this, action = std::move(action), reservation, mutation]() {
+                  // Execution worker (or brief editing control): produce and encode
+                  // the final result without server/queue locks held.
+                  try {
+                    return encode_response(action(), mutation);
+                  } catch (...) {
+                    failure(std::current_exception());
+                    throw;
                   }
-                  encoded = codec::encode<OperationResponse>(
-                      ApplicationError{ErrorCategory::ApplicationUnavailable,
-                                       ErrorReason::ResourceLimit,
-                                       "The Application response exceeds the resource limit.",
-                                       {ErrorAction::Dismiss}});
-                }
-                if (auto* error = std::get_if<IpcError>(&encoded)) {
-                  failure(*error);
-                  return *error;
-                }
-                return Message{MessageKind::Response,
-                               payload_bytes(std::get<std::string>(encoded))};
+                };
               } catch (...) {
                 failure(std::current_exception());
                 throw;
@@ -281,6 +274,29 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
       workers_changed_.notify_all();
     }
   }
+}
+
+RequestCoordinator::Result IpcServer::encode_response(OperationResponse response, bool mutation) {
+  auto encoded = codec::encode<OperationResponse>(response);
+  if (std::holds_alternative<IpcError>(encoded)) {
+    if (mutation) {
+      try {
+        SPDLOG_ERROR("Mutation final response exceeded protocol limits; confirmation lost");
+      } catch (...) {
+      }
+      return std::get<IpcError>(encoded);
+    }
+    encoded = codec::encode<OperationResponse>(
+        ApplicationError{ErrorCategory::ApplicationUnavailable,
+                         ErrorReason::ResourceLimit,
+                         "The Application response exceeds the resource limit.",
+                         {ErrorAction::Dismiss}});
+  }
+  if (auto* error = std::get_if<IpcError>(&encoded)) {
+    failure(*error);
+    return *error;
+  }
+  return Message{MessageKind::Response, payload_bytes(std::get<std::string>(encoded))};
 }
 
 core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) {

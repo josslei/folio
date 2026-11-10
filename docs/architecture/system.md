@@ -87,7 +87,7 @@ The historical `binary_io_test.cpp` filename does not denote a production module
 
 **Implemented.** This tree groups responsibilities, not runtime order,
 ownership or strict dependency layers. Parentheses identify classes/structs;
-brackets identify logical modules. The executor callback routes Access requests
+brackets identify logical modules. Prepared operation dispatch routes Access requests
 to AccessOrchestrator::handle() and mutation/editing requests to MutationOrchestrator.
 
 ```text
@@ -106,7 +106,8 @@ to AccessOrchestrator::handle() and mutation/editing requests to MutationOrchest
 |   +-- Connection identity and lifetime (ConnectionSession)
 |
 +-- [Execution]
-|   +-- Shared bounded queue and sequential executor (RequestCoordinator)
+|   +-- Shared bounded admission, scheduling and completion (RequestCoordinator)
+|   +-- Shared bounded Access workers and one Mutation worker (ExecutionPool)
 |
 +-- [Operation handling]
 |   +-- [Operation dispatch]
@@ -151,7 +152,7 @@ scheduling are execution policy; they do not define new domain operation types.
 | --- | --- |
 | `runtime/` | Backend lifecycle, resource assembly and lifetime, Repo ownership and safe finalization; not a container for all threaded code |
 | `ipc/` | Connections, protocol handling, admission acknowledgments and response delivery |
-| `execution/` | RequestCoordinator, scheduling eligibility, execution capacity and worker/completion coordination; currently one shared queue and sequential executor |
+| `execution/` | RequestCoordinator, scheduling eligibility, execution capacity and worker/completion coordination; one shared queue, short coordination and bounded execution workers |
 | `operations/` | Application business rules and orchestration through AccessOrchestrator and MutationOrchestrator: prerequisites, lower-level call sequencing and public result interpretation |
 | `storage/` | Authoritative persistence, Catalog projections and Coordinator consistency mechanisms |
 
@@ -174,8 +175,8 @@ runtime/       Assembles components; owns startup, draining and finalization
 The arrows summarize responsibilities, not mandatory class dependencies. IpcServer
 currently owns RequestCoordinator; this file move does not change object ownership.
 The [combined Steps 5–6 plan](../development/plans/catalog-concurrency.md#execution-modules-and-combined-steps-56)
-separates short coordination from costly execution. Concurrent worker groups are
-planned, not implemented by the directory split.
+separates short coordination from costly execution. Concurrent worker groups are implemented; business categories and execution
+resources remain separate dimensions.
 
 ## Ownership and boundaries
 
@@ -186,7 +187,7 @@ Backend (one active owner for this user's configuration)
     ├── MetadataCatalog
     ├── CatalogCoordinator (borrows that Catalog)
     ├── NormalRepository / future VaultRepository
-    ├── shared request queue / one sequential executor
+    ├── shared request queue / concurrent Access / sequential Mutations
     └── connection-owned Entry Edit Lock registry
 ```
 

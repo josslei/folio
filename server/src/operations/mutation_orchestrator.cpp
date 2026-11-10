@@ -141,6 +141,10 @@ MutationOrchestrator::MutationOrchestrator(storage::MetadataCatalog& catalog,
 
 std::optional<ApplicationError>
 MutationOrchestrator::check_lock(const core::Id& id, const Session& session, bool required) {
+  const auto active = active_mutations_.find(id.to_string());
+  if (active != active_mutations_.end() && active->second.lock() != session)
+    return problem(ErrorReason::LockConflict, "Entry is being mutated by another Frontend",
+                   ErrorCategory::TargetUnavailable);
   const auto found = locks_.find(id.to_string());
   if (found != locks_.end()) {
     if (found->second.lock() != session)
@@ -155,12 +159,13 @@ MutationOrchestrator::check_lock(const core::Id& id, const Session& session, boo
 }
 
 OperationResponse MutationOrchestrator::acquire_edit(const core::Id& id, const Session& session) {
-  if (coordinator_.status() != storage::CatalogStatus::Ready)
+  std::lock_guard lock(ownership_mutex_);
+  const auto state = coordinator_.read_state();
+  if (state.status != storage::CatalogStatus::Ready)
     return problem(ErrorReason::MetadataUnavailable, "Editing requires a Ready Catalog",
                    ErrorCategory::ApplicationUnavailable);
   if (auto error = check_lock(id, session, false)) return *error;
-  const auto view = catalog_.read_view();
-  if (!view.contains_entry(id))
+  if (!state.view.contains_entry(id))
     return problem(ErrorReason::NotFound, "Entry not found", ErrorCategory::TargetUnavailable);
   // Ownership is independent of authoritative access. A later Load may fail;
   // the caller must explicitly release ownership when abandoning editing.
@@ -169,6 +174,7 @@ OperationResponse MutationOrchestrator::acquire_edit(const core::Id& id, const S
 }
 
 OperationResponse MutationOrchestrator::release_edit(const core::Id& id, const Session& session) {
+  std::lock_guard lock(ownership_mutex_);
   if (auto error = check_lock(id, session, false)) return *error;
   locks_.erase(id.to_string());
   return std::monostate{};
@@ -177,7 +183,10 @@ OperationResponse MutationOrchestrator::release_edit(const core::Id& id, const S
 OperationResponse MutationOrchestrator::handle(const OperationRequest& request,
                                                const Session& session) {
   // Weak ownership expires only after the worker AND all accepted actions leave.
-  std::erase_if(locks_, [](const auto& item) { return item.second.expired(); });
+  {
+    std::lock_guard lock(ownership_mutex_);
+    std::erase_if(locks_, [](const auto& item) { return item.second.expired(); });
+  }
   if (!session)
     return problem(ErrorReason::UnexpectedFailure, "Missing connection session",
                    ErrorCategory::InternalFailure);
@@ -189,6 +198,43 @@ OperationResponse MutationOrchestrator::handle(const OperationRequest& request,
     return release_edit(release->id, session);
   return problem(ErrorReason::UnexpectedFailure, "Access request routed to mutation orchestration",
                  ErrorCategory::InternalFailure);
+}
+
+std::function<OperationResponse()> MutationOrchestrator::prepare(OperationRequest request,
+                                                                 Session session) {
+  const auto* mutation = std::get_if<MutationRequest>(&request);
+  if (!mutation)
+    return [this, request = std::move(request), session = std::move(session)] {
+      return handle(request, session);
+    };
+  const auto id = std::visit(
+      [](const auto& value) -> std::optional<core::Id> {
+        if constexpr (requires { value.id; })
+          return value.id;
+        else
+          return {};
+      },
+      mutation->payload);
+  // Distinct from long-lived editing rights: this only brackets one execution.
+  // Copyable prepared actions share cleanup until their last execution capture ends.
+  // Construct cleanup before insertion so allocation failure cannot strand protection.
+  const auto key = id ? std::optional<std::string>{id->to_string()} : std::nullopt;
+  auto protection = std::shared_ptr<void>(nullptr, [this, key](void*) {
+    if (key) {
+      std::lock_guard lock(ownership_mutex_);
+      active_mutations_.erase(*key);
+    }
+  });
+  if (id) {
+    std::lock_guard lock(ownership_mutex_);
+    std::erase_if(locks_, [](const auto& item) { return item.second.expired(); });
+    // An existing owner's rights dominate; the worker will return the precise
+    // business rejection. No new owner may slip into an unlocked executing mutation.
+    if (!check_lock(*id, session, false))
+      active_mutations_.insert_or_assign(id->to_string(), session);
+  }
+  return [this, request = std::move(request), session = std::move(session),
+          protection = std::move(protection)] { return handle(request, session); };
 }
 
 NormalMutationResponse MutationOrchestrator::mutate(const MutationRequest& request,
@@ -299,6 +345,7 @@ NormalMutationResponse MutationOrchestrator::mutate(const MutationRequest& reque
             }
           }
           if constexpr (!create) {
+            std::lock_guard lock(ownership_mutex_);
             if (auto error = check_lock(id, session, update)) return reject(*error);
           }
           if constexpr (create_memo || create_todo || move) {

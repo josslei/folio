@@ -73,14 +73,17 @@ protocol chunks. A message body is bounded to 64 MiB (including version/kind),
 with collections limited to 100,000 elements. Exceeding limits returns an explicit
 error rather than partial results. No public pagination is introduced. See the
 [unified IPC protocol](ipc.md) for limits and transfer handling.
-The shared sequential executor performs Access and Mutation operations; IPC workers do not access live Catalog state.
+RequestCoordinator dispatches queries and Loads to the same bounded Access pool.
+AccessOrchestrator on the worker captures the query view or resolves a current
+locator; Load reservations are established before dispatch and cover the read. Mutations remain sequential; conflicting Loads wait in scheduling,
+not in filesystem workers. IPC workers do not access live Storage. See
+[execution safety](ipc.md#execution-safety-and-bounds).
 
 ## Deferred
 
 The [Catalog/concurrent Access plan](../development/plans/catalog-concurrency.md)
-records approved immutable-view and scheduling direction; this is not current
-runtime behavior. Query extraction is deferred separately in that plan's linked
-Application TODO.
+records the implemented concurrent baseline and later Push handoff design.
+Query extraction is deferred separately in that plan's linked Application TODO.
 
 Vault, locked placeholders and Directory visibility, persistent Recovery, revision
 checking, Push Events and full-text search are not implemented. Normal Mutation

@@ -177,6 +177,7 @@ CatalogCoordinator::CatalogCoordinator(StoragePaths paths, MetadataCatalog& cata
     : paths_(std::move(paths)), catalog_(catalog),
       creation_check_(
           [this](const core::Id& id) -> ::folio::core::Result<std::monostate, StorageError> {
+            std::lock_guard lock(publication_mutex_);
             if (status_ != CatalogStatus::Ready)
               return StorageError{StorageErrorCode::CatalogUnavailable,
                                   paths_.normal_root,
@@ -390,7 +391,11 @@ CatalogCoordinator::refresh_all() {
 }
 
 CatalogStatus CatalogCoordinator::status() const noexcept {
-  return status_;
+  return status_.load();
+}
+CatalogCoordinator::ReadState CatalogCoordinator::read_state() const {
+  std::lock_guard lock(publication_mutex_);
+  return {status_.load(), catalog_.read_view()};
 }
 void CatalogCoordinator::mark_needs_refresh() noexcept {
   if (status_ == CatalogStatus::Ready) status_ = CatalogStatus::Inconsistent;

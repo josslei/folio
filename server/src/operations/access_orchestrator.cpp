@@ -210,37 +210,41 @@ ApplicationError map_load_error(const io::FileError& failure) {
 }
 
 template <class Request>
-OperationResponse load_record(const Request& request, const storage::MetadataCatalogView& catalog,
-                              storage::NormalRepository& repository) {
+std::function<OperationResponse()> prepare_load(const Request& request,
+                                                const storage::MetadataCatalogView& catalog,
+                                                storage::NormalRepository& repository) {
   constexpr auto type = std::is_same_v<Request, LoadLogRequest>    ? core::RecordType::Log
                         : std::is_same_v<Request, LoadMemoRequest> ? core::RecordType::Memo
                                                                    : core::RecordType::Todo;
   const auto metadata = catalog.find_record(request.id);
   if (!metadata) {
-    if (catalog.contains_entry(request.id)) return wrong_type();
-    return missing_target("Requested Record not found");
+    if (catalog.contains_entry(request.id)) return [] { return OperationResponse{wrong_type()}; };
+    return [] { return OperationResponse{missing_target("Requested Record not found")}; };
   }
-  if (storage::record_type(*metadata) != type) return wrong_type();
+  if (storage::record_type(*metadata) != type)
+    return [] { return OperationResponse{wrong_type()}; };
   const auto locator = std::visit([](const auto& value) { return value.relative_path; }, *metadata);
-  auto loaded = [&] {
-    if constexpr (std::is_same_v<Request, LoadLogRequest>)
-      return repository.load_log(request.id, locator);
-    else if constexpr (std::is_same_v<Request, LoadMemoRequest>)
-      return repository.load_memo(request.id, locator);
-    else
-      return repository.load_todo(request.id, locator);
-  }();
-  return std::visit(
-      [](auto&& value) -> OperationResponse {
-        using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_same_v<T, storage::StorageError> ||
-                      std::is_same_v<T, io::FileError>) {
-          return map_load_error(value);
-        } else {
-          return std::move(value);
-        }
-      },
-      std::move(loaded));
+  return [id = request.id, locator, &repository]() -> OperationResponse {
+    auto loaded = [&] {
+      if constexpr (std::is_same_v<Request, LoadLogRequest>)
+        return repository.load_log(id, locator);
+      else if constexpr (std::is_same_v<Request, LoadMemoRequest>)
+        return repository.load_memo(id, locator);
+      else
+        return repository.load_todo(id, locator);
+    }();
+    return std::visit(
+        [](auto&& value) -> OperationResponse {
+          using T = std::decay_t<decltype(value)>;
+          if constexpr (std::is_same_v<T, storage::StorageError> ||
+                        std::is_same_v<T, io::FileError>) {
+            return map_load_error(value);
+          } else {
+            return std::move(value);
+          }
+        },
+        std::move(loaded));
+  };
 }
 
 OperationResponse browse(RecordQuery query, const storage::MetadataCatalogView& catalog,
@@ -259,10 +263,10 @@ OperationResponse browse(RecordQuery query, const storage::MetadataCatalogView& 
   return ApplicationResponse<BrowseResult>{std::move(result), warnings};
 }
 
-OperationResponse dispatch(const OperationRequest& request, storage::MetadataCatalog& source,
+OperationResponse dispatch(const OperationRequest& request,
+                           const storage::MetadataCatalogView& catalog,
                            storage::NormalRepository& repository,
                            const std::vector<ApplicationWarning>& warnings) {
-  const auto catalog = source.read_view();
   return std::visit(
       [&](const auto& value) -> OperationResponse {
         using R = std::decay_t<decltype(value)>;
@@ -287,7 +291,7 @@ OperationResponse dispatch(const OperationRequest& request, storage::MetadataCat
         } else if constexpr (std::is_same_v<R, LoadLogRequest> ||
                              std::is_same_v<R, LoadMemoRequest> ||
                              std::is_same_v<R, LoadTodoRequest>) {
-          return load_record(value, catalog, repository);
+          return prepare_load(value, catalog, repository)();
         } else {
           return ApplicationError{ErrorCategory::InvalidRequest,
                                   ErrorReason::NotImplemented,
@@ -305,33 +309,64 @@ AccessOrchestrator::AccessOrchestrator(storage::MetadataCatalog& catalog,
     : catalog_(catalog), repository_(repository), coordinator_(coordinator) {}
 
 OperationResponse AccessOrchestrator::handle(const OperationRequest& request) const {
+  return prepare(request)();
+}
+
+std::function<OperationResponse()> AccessOrchestrator::prepare(OperationRequest request) const {
   try {
-    if (coordinator_.status() != storage::CatalogStatus::Ready &&
-        coordinator_.status() != storage::CatalogStatus::Inconsistent) {
-      return ApplicationError{ErrorCategory::ApplicationUnavailable,
-                              ErrorReason::MetadataUnavailable,
-                              "Application metadata unavailable",
-                              {ErrorAction::Dismiss}};
+    const auto state = coordinator_.read_state();
+    if (state.status != storage::CatalogStatus::Ready &&
+        state.status != storage::CatalogStatus::Inconsistent) {
+      return []() -> OperationResponse {
+        return ApplicationError{ErrorCategory::ApplicationUnavailable,
+                                ErrorReason::MetadataUnavailable,
+                                "Application metadata unavailable",
+                                {ErrorAction::Dismiss}};
+      };
     }
     std::vector<ApplicationWarning> warnings;
-    if (coordinator_.status() == storage::CatalogStatus::Inconsistent) {
-      // TODO(Application): offer explicit Refresh only after that public capability exists.
+    if (state.status == storage::CatalogStatus::Inconsistent)
       warnings.push_back({WarningReason::CatalogInconsistent,
                           "Metadata may disagree with persisted Entries",
                           {ErrorAction::Dismiss}});
-    }
-    return dispatch(request, catalog_, repository_, warnings);
+    auto run = std::visit(
+        [&](const auto& value) -> std::function<OperationResponse()> {
+          using T = std::decay_t<decltype(value)>;
+          if constexpr (std::is_same_v<T, LoadLogRequest> || std::is_same_v<T, LoadMemoRequest> ||
+                        std::is_same_v<T, LoadTodoRequest>)
+            return prepare_load(value, state.view, repository_);
+          else
+            return {};
+        },
+        request);
+    if (!run)
+      run = [request = std::move(request), view = state.view, warnings = std::move(warnings),
+             this]() { return dispatch(request, view, repository_, warnings); };
+    return [run = std::move(run)]() -> OperationResponse {
+      try {
+        return run();
+      } catch (...) {
+        try {
+          SPDLOG_CRITICAL("Unexpected Normal read-access exception");
+        } catch (...) {
+        }
+        return ApplicationError{ErrorCategory::InternalFailure,
+                                ErrorReason::UnexpectedFailure,
+                                "Unexpected read-access failure",
+                                {ErrorAction::Dismiss}};
+      }
+    };
   } catch (...) {
-    // Catch at the request boundary so an unexpected read failure cannot unwind
-    // the Backend lifecycle. Never log arbitrary exception text or Entry content.
     try {
-      SPDLOG_CRITICAL("Unexpected Normal read-access exception");
+      SPDLOG_CRITICAL("Unexpected Normal read preparation exception");
     } catch (...) {
     }
-    return ApplicationError{ErrorCategory::InternalFailure,
-                            ErrorReason::UnexpectedFailure,
-                            "Unexpected read-access failure",
-                            {ErrorAction::Dismiss}};
+    return []() -> OperationResponse {
+      return ApplicationError{ErrorCategory::InternalFailure,
+                              ErrorReason::UnexpectedFailure,
+                              "Unexpected read-access failure",
+                              {ErrorAction::Dismiss}};
+    };
   }
 }
 } // namespace folio::application::internal

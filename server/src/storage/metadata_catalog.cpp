@@ -8,6 +8,10 @@
 #include <type_traits>
 #include <utility>
 
+#if defined(IMMER_NO_THREAD_SAFETY) && IMMER_NO_THREAD_SAFETY
+#error "Concurrent Catalog views require Immer's thread-safe memory policy"
+#endif
+
 namespace folio::core::storage {
 struct MetadataCatalog::State {
   immer::map<std::string, immer::box<LogMetadata>> logs_;

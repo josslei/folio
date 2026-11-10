@@ -6,7 +6,8 @@ immediate Todo status changes, and connection-owned Entry Edit Locks through
 `folio/application/mutation.hpp`; result/evidence contracts and
 `MutationId` retain their Phase 4.2b ownership. The Backend implementation is
 `server/src/operations/mutation_orchestrator.cpp`. Query APIs, protocol version 1, bounded
-complete-message transport, admission, and the one sequential executor remain.
+complete-message transport and admission remain. One Mutation worker preserves
+sequential writes while queries/Loads execute independently through RequestCoordinator.
 See the [unified IPC protocol](ipc.md).
 
 ## Principles and invariants
@@ -255,7 +256,7 @@ persistence/evidence rules remain in place. No typed Entry IDs are introduced.
 ## Application orchestration boundary — reviewed
 
 `MutationOrchestrator` borrows Repository, Catalog and Coordinator and owns the
-executor-only Edit Lock map. It checks readiness, ownership and membership,
+synchronized Edit Lock map. It checks readiness, ownership and membership,
 resolves current locators, prepares authoritative Snapshots and selects matching
 Coordinator callbacks. The executor callback routes Access requests directly to
 AccessOrchestrator::handle in server/src/operations/access_orchestrator.cpp, independently of
@@ -289,3 +290,24 @@ Access and Mutation orchestration are concrete peer classes. AccessOrchestrator
 borrows Catalog, Repository and Coordinator without owning Storage or connection
 state. Ownership-only lock acquisition stays in MutationOrchestrator; separate
 Record Loads use AccessOrchestrator. No Vault behavior is implemented.
+
+## Concurrent execution and editing control
+
+RequestCoordinator reserves authoritative access before Mutation preparation. A
+Load already using that Entry finishes first; later conflicting Loads wait without
+occupying filesystem workers and resolve the resulting current locator afterward.
+Mutations remain FIFO/sequential through Repository persistence and Coordinator
+callbacks. Catalog queries run on retained immutable views without blocking writes.
+
+MutationOrchestrator retains the sole editing-ownership registry. Its short mutex
+protects both long-lived locks and temporary active-mutation protection; it is never
+held during filesystem work. Coordination installs immediate-operation protection
+before worker dispatch and releases it after execution even on failure. An existing
+owner cannot be displaced, and another connection's acquisition returns LockConflict
+rather than Busy or a queued ownership request. Required Update ownership remains
+a long-lived Edit Lock, not merely this execution protection. Read-only Loads do
+not prevent acquisition. Accepted captures retain session ownership after disconnect.
+
+Control operations run briefly on the request coordination thread; mutation work
+runs on the single Mutation worker. Neither connection workers nor the scheduler's
+queue mutex own business validation. See [IPC execution safety](ipc.md#execution-safety-and-bounds).

@@ -152,7 +152,8 @@ parse_configuration(std::string_view text, const ApplicationPaths& application,
   try {
     auto table = toml::parse(text);
     for (const auto& [key, value] : table) {
-      if (key != "schema_version" && key != "general" && key != "diagnostics")
+      if (key != "schema_version" && key != "general" && key != "diagnostics" &&
+          key != "performance")
         return invalid_value("Unknown configuration key: " + std::string(key.str()));
     }
     if (table["schema_version"]) {
@@ -187,7 +188,20 @@ parse_configuration(std::string_view text, const ApplicationPaths& application,
     if (!log_level)
       return invalid_value(
           "diagnostics.log_level must be trace, debug, info, warn, error, or critical");
-    EffectiveConfig config{{{}, {}, application}, *log_level};
+    auto* performance = table["performance"].as_table();
+    if (table["performance"] && !performance) return invalid_value("performance must be a table");
+    if (performance) {
+      for (const auto& [key, value] : *performance)
+        if (key != "access_workers")
+          return invalid_value("Unknown performance setting: " + std::string(key.str()));
+    }
+    const auto* workers = performance ? performance->get("access_workers") : nullptr;
+    if (!workers && defaults) workers = (*defaults)["performance"]["access_workers"].node();
+    const auto count = workers && workers->is_integer() ? workers->value<int64_t>() : std::nullopt;
+    if (!count || *count < 1 || !std::in_range<std::size_t>(*count))
+      return invalid_value(
+          "performance.access_workers must be a positive integer representable as a worker count");
+    EffectiveConfig config{{{}, {}, application}, *log_level, static_cast<std::size_t>(*count)};
     for (auto name : {"normal_storage", "vault_storage"}) {
       const toml::node* node = general ? general->get(name) : nullptr;
       const auto* storage = node ? node->as_table() : nullptr;

@@ -1,13 +1,12 @@
 # Catalog views and concurrent Access execution
 
-**Status:** partially implemented: Immer-backed immutable Catalog states and retained
-read views and ownership-only Edit Lock acquisition are implemented with sequential
-execution. Concurrent scheduling and Push integration remain future increments. Concrete implementation choices
-remain subject to inspection, measurement and review; they are not a reason to
-reopen settled responsibilities without an actual conflict. This plan owns the agreed future
-design; existing [Access](../../contracts/access.md),
-[Mutation](../../contracts/mutations.md), [IPC](../../contracts/ipc.md) and
-[Storage](../../contracts/storage.md) contracts describe current behavior.
+**Status:** combined Steps 5–6 baseline implemented: structurally shared Catalog
+views, ownership-only Edit Lock acquisition, short request coordination, concurrent
+query/Load execution and one sequential Mutation worker. Current guarantees live in
+[IPC](../../contracts/ipc.md), [Access](../../contracts/access.md),
+[Mutations](../../contracts/mutations.md) and [Storage](../../contracts/storage.md).
+Push handoff, caching and other later directions below remain deferred; recording
+them does not authorize implementation.
 
 ## Work sequence and scope
 
@@ -34,8 +33,8 @@ to implement subsequent work without the user's instruction.
 | 2. Refactor Catalog storage | Introduce immutable states, retained views and complete-state publication; preserve validation, membership, ordering and no-op behavior; keep runtime sequential |
 | 3. Integrate consumers | One view per Browse/Query; adapt Coordinator, rebuild, Index encode/decode and persistence bookkeeping; preserve formats and failure semantics |
 | 4. Split Edit Lock acquisition from Load — implemented | Public API, IPC and handlers return ownership-only success; accepted-request ownership/disconnect cleanup preserved; execution remains sequential |
-| 5. Concurrent Access execution | Separate short in-memory coordination, query execution and filesystem workers; retain one Mutation executor; implement conflict scheduling, queued Loads, configurable bounded filesystem concurrency, resource accounting and safe draining |
-| 6. Integrated baseline review | Verify queries/updates, Load/Move ordering, locks, failures and shutdown; measure retained memory/responsiveness and resolve findings before returning to the roadmap |
+| 5. Concurrent Access execution — implemented | Separate short in-memory coordination from a shared query/Load Access pool; retain one Mutation executor; implement conflict scheduling, queued Loads, configurable bounded Access concurrency, resource accounting and safe draining |
+| 6. Integrated baseline review — combined with Step 5 | Verify queries/updates, Load/Move ordering, locks, failures and shutdown; measure retained memory/responsiveness and resolve findings before returning to the roadmap |
 | 7. Remaining 4.3b | Public explicit Full Refresh and Directory-count checks integrated with immutable publication/execution coordination; revisit remaining concurrency/version questions where required |
 | 8. 4.4a Push Notifications | Distribution, recipient rules, connection retention, result/event ordering, gap-free coverage, coalescing and bounded delivery state |
 | 9. 4.4b Frontend integration | UI/IPC worker, event-driven view updates/requery, bounded reconnection, buffers and outcome presentation; blocking public calls stay off the UI thread |
@@ -78,7 +77,7 @@ because the complete architecture spans later phases.
 
 ## Motivation and terminology
 
-The current shared sequential executor safely serializes all operations, but a
+The previous shared sequential executor safely serialized all operations, but a
 slow filesystem operation can delay unrelated browsing or starting an editor.
 Separate operation scheduling from the resources each operation accesses:
 
@@ -129,8 +128,9 @@ Existing IPC connection workers
 Shared Backend scheduling / in-memory coordination
   Ownership decisions, conflicts, bounded dispatch, completion accounting
              │
-             ├── Catalog-query execution ──► retained immutable Catalog view
-             ├── Authoritative Load workers ──► coordinated locator + file read
+             ├── Shared Access workers
+             │     ├── Query: capture immutable view → evaluate
+             │     └── Load: capture current locator → authoritative read
              └── Sequential Mutation executor
                        └── Repository → Coordinator → Catalog publication
 
@@ -170,17 +170,15 @@ and authoritative Loads are both Access operations but have different resource
 needs. A Mutation may read files, persist changes and synchronize in-memory state.
 Do not add a generic operation hierarchy or a class for each worker category.
 
-The combined stage will evolve the existing RequestCoordinator into one short in-memory
-coordination thread with separate bounded execution capacity for Catalog queries,
-authoritative Loads and one sequential Mutation stream. These are initial
+The combined stage evolves RequestCoordinator into one short in-memory
+coordination thread with shared bounded execution capacity for Catalog queries
+and authoritative Loads, plus one sequential Mutation stream. These are initial
 execution policies, not permanent business modules. The request coordination thread must not do
-filesystem work or long query evaluation. Exact worker support classes, counts
-and configuration are subject to the implementation discussion; this structural
-change does not select them or enable concurrency.
+filesystem work or long query evaluation. ExecutionPool provides private worker support: one shared Access pool (default 4 workers, positive worker count) and one sequential Mutation worker.
 
-Implementation must separate preparation from expensive work where needed:
-capture a consistent view for a query, or reserve authoritative read access and
-capture a current locator for a Load. Shared Catalog publication, Coordinator
+Coordination reserves access before dispatch. AccessOrchestrator on the Access
+worker then captures a consistent view for a query or resolves the current locator
+for a Load; both preparation and execution run on that same worker. Shared Catalog publication, Coordinator
 status and editing ownership require explicit synchronization before concurrent
 dispatch. Existing orchestrator methods must not simply be called concurrently.
 Business validation stays in operation handling; scheduling requirements and
@@ -196,145 +194,39 @@ Step 6 verification is part of each Step 5 increment, not a postponed final pass
 test concurrent views/publications, query responsiveness during slow filesystem
 work, Load/Move ordering, editing ownership and disconnect lifetime, resource
 limits, failures and shutdown. Measure retained memory and responsiveness before
-returning to the roadmap. This records the design; implementation follows a
-separate discussion and authorization.
+returning to the roadmap. See the current contracts for implemented boundaries and the verification report
+for actual platform coverage; later roadmap work still requires authorization.
 
-## Proposed thread and request flows
-
-**Status: agreed design for combined Steps 5–6, not implemented.** Current
-sequential execution remains documented in the
-[IPC contract](../../contracts/ipc.md#current-thread-and-request-flow) and
-[Backend lifecycle flow](../../contracts/backend-lifecycle.md#backend-lifecycle-call-flow--implemented).
+## Implemented thread and request flows
 
 ### Names and connection ownership
 
-Use **RequestCoordinator** for the component and **request coordination thread**
-for its proposed short in-memory thread. It owns admission, scheduling, execution
-capacity and completion/drain coordination. Scheduling is one responsibility, not
-another component. CatalogCoordinator remains the separate Storage consistency
-component; unqualified “Coordinator” is ambiguous. The rename is implemented,
-while the current component still uses one sequential executor. Its planned
-coordination-only thread and separate execution workers remain Steps 5–6 work.
+RequestCoordinator owns admission, scheduling and completion/drain coordination.
+One request coordination thread performs short preparation and dispatches execution
+workers. CatalogCoordinator remains the separate Storage consistency component.
+The generic internal handler seam stays sequential; Backend Serve supplies prepared
+concurrent operations.
 
 Keep one bounded connection worker per connection. It receives/decodes, submits,
-sends Accepted/Rejected, waits for completion or disconnection, and sends the
-final response. It owns no per-connection execution queue or conflict policy.
-Sleeping connection workers do not occupy execution capacity. Replacing them with
-a shared transport event loop is not part of this refactor; that would introduce
-explicit per-connection partial-I/O and wakeup state without a demonstrated need.
-Future Push integration must revisit outgoing delivery while a connection waits,
-without implying that Push is implemented now.
+sends Accepted/Rejected, waits for completion/disconnection and sends the final
+response. It owns no execution queue or conflict policy and does not occupy an
+execution worker while waiting. A shared transport event loop remains unnecessary
+for this baseline. Push outgoing delivery during waits is a 4.4a follow-up.
 
 ### Lifecycle and thread ownership
 
-Column groups identify threads; execution workers comprise the three groups in
-the next diagram. Worker counts and exact startup/join helpers await implementation.
-The lifecycle thread assembles IpcServer/RequestCoordinator and their workers. It
-retains the established normal versus failure paths; draining is not cancellation.
-
-```text
-BACKEND MAIN THREAD        CONNECTION WORKERS          REQUEST COORD. THREAD          EXECUTION WORKERS
-------------------------   ------------------------   ------------------------   --------------------------
-[Bootstrap]
-Initialize owned resources
-
-[Serve]
-Construct IpcServer
-  Construct coordinator ----------------------------> Start scheduling
-  Start execution workers ----------------------------------------------------> Wait for dispatched work
-Accept connection -------> Start connection worker
-                           Handshake -> Ready
-                           Submit requests ----------> Schedule work ----------> Execute
-                           Deliver responses <-------- Completion <-------------- Report completion
-Accept more connections    One worker per connection   One RequestCoordinator       Shared execution capacity
-Wait for stop condition    Blocking waits              No filesystem/long query   No connection handling
-
-[Stopping - normal]
-Stop admission
-Drain accepted work ---------------------------------> Dispatch remaining work -> Complete active work
-                           Attempt final delivery      Collect completions
-Join execution threads and request coordination thread after drain
-Collect retained failures
-
-[Report - also entered directly on Bootstrap/Serve failure]
-Ensure admission closed
-Ensure drained/joined      Usable connections remain;   Failure path drains all accepted work;
-Collect diagnostics        no new work admitted        normal path already drained
-Lifecycle IPC reporting remains deferred
-
-[Finish]
-Ensure drained [exceptional fallback]
-Close/join connections --> Wake, close streams, exit
-Finalize Catalog if eligible; no execution thread may outlive Storage
-Release RepositoryOwnership
-```
-
-Normal disconnection lets connection workers exit themselves. Usable connections
-are not forcibly closed merely to drain; Finish closes remaining workers after
-Report. Draining attempts accepted work even after operation failures and collects
-outcomes; it neither certifies success nor guarantees completion of arbitrary hangs.
+The authoritative current [thread/state flow](../../contracts/backend-lifecycle.md#backend-lifecycle-call-flow--implemented)
+shows construction, normal/failure draining, reporting and finalization. It replaces
+the earlier proposed diagram here. All execution ends before eligible Catalog
+finalization; usable connections remain available through Report.
 
 ### Request dispatch and completion
 
-These rows are alternative request paths, not stages every request follows.
-Preparation that touches shared state requires the explicit synchronization
-specified above. Editing ownership rules remain MutationOrchestrator's concern;
-RequestCoordinator does not introduce a competing registry or duplicate business rules.
-
-```text
-CONNECTION WORKER       REQUEST COORD. THREAD         QUERY WORKER            LOAD WORKERS            MUTATION WORKER
----------------------   ---------------------     ---------------------   ---------------------   ---------------------
-Receive / decode
-Submit ----------------> Admission
-Send Rejected <--------- If rejected: return rejection
-                        Accept: queue work
-Send Accepted <--------- Return acceptance
-Wait for final result   Select eligible work
-                        |
-                        +-- Edit Lock control
-                        |    Check ownership
-                        |    Acquire / release
-                        |    Complete in memory
-                        |
-                        +-- Catalog query
-                        |    Capture safe view -->Evaluate / sort
-                                                  Build result
-                        |    <------------------- Report completion
-                        |
-                        +-- Authoritative Load
-                        |    Wait for conflicts
-                        |    Reserve read access
-                        |    Capture locator ---------------------------->Read / validate file
-                        |    <------------------------------------------- Report completion
-                        |    Release reservation
-                        |
-                        +-- Mutation
-                             Wait for conflicts
-                             Establish exclusive
-                             execution protection ----------------------------------------------->Check prerequisites
-                                                                                                  Read / persist files
-                                                                                                  Synchronize Catalog
-                             <------------------------------------------------------------------- Report completion
-                             Release protection
-
-                        Complete request ticket
-Wake / read result <---- Signal completion
-Send final response
-Receive next request
-```
-
-Admission still runs on connection workers under shared synchronization; the
-Admission row denotes submission into RequestCoordinator, not a new round trip
-through the request coordination thread. It remains lightweight and bounded. Once enqueued,
-execution and Accepted delivery may progress independently; the connection worker
-must send Accepted before its final response. Rejection dispatches no operation.
-
-Completion reporting releases reservations/capacity and signals the originating
-ticket; it need not route result bodies through a second queue. Result encoding
-must not monopolize the request coordination thread. Accepted actions retain session
-ownership after disconnection, and only delivery is lost; they are not cancelled.
-Loads awaiting conflicts consume no filesystem worker, queries use immutable views,
-and authoritative Mutations remain sequential. No thread is forcibly terminated.
+The authoritative [request/thread diagram](../../contracts/ipc.md#current-thread-and-request-flow)
+shows connection admission, preparation, workers and completion. Its
+[execution safety rules](../../contracts/ipc.md#execution-safety-and-bounds) describe
+capacity, fairness and reservations. No per-connection executor, new public lock,
+Busy response, cancellation or second ownership registry was introduced.
 
 ## Immutable Catalog design
 
@@ -392,9 +284,8 @@ private candidate, then publish its complete state reference once. Validation or
 allocation failure before publication preserves the previous current state.
 Identical updates remain successful no-ops and preserve `unpersisted` behavior.
 
-Use short synchronized acquisition/publication of the current shared state
-reference; a small mutex is the baseline proposal, with atomic shared-pointer
-publication an implementation alternative. No query-long or per-Entry Catalog
+Use CatalogCoordinator::read_state() to capture status and roots under the same
+short publication mutex used by managed callbacks. One Mutation writer owns changes. No query-long or per-Entry Catalog
 read lock is required. Do not claim lock-free operation.
 
 Internal versions identify Catalog states, not Entry revisions, timestamps,
@@ -466,7 +357,7 @@ The revised ownership-only contract is:
 
 `BackendConnectionHandle::acquire_edit(id)` returns
 `ApplicationResult<std::monostate>` through the shared IPC protocol. This split is
-implemented; the concurrent coordination described below remains Step 5 work.
+implemented together with the concurrent coordination described below.
 
 Concurrent Loads may proceed. A conflicting Move/Mutation and Load must be ordered
 across current-locator lookup and authoritative access; a retained old Catalog
@@ -556,7 +447,7 @@ or an actual change to these agreed rules.
 | View/update interfaces | Implementation review: exact declarations, common-view callers, Catalog copy/move/adoption and failed-candidate tests |
 | Publication/status boundary | Refactor implementation review: coordinate view acquisition and readiness changes; preserve a future notification integration boundary |
 | Notification handoff | Later Push integration (4.4a/4.4b): registration and ordered delivery without gaps; not a pre-4.3b prerequisite |
-| Runtime execution | Implementation work under IPC-06: independent query/Load execution, short in-memory coordination, configurable bounded filesystem workers, shared scheduling and memory budgets |
+| Runtime execution | Implemented baseline under IPC-06: independent query/Load execution, short in-memory coordination, a configurable bounded Access pool, shared scheduling and memory budgets |
 | Filesystem conflicts | Apply agreed scheduling/ownership rules and queued Loads; verify handling after persistence failure without replacing it with generic Busy |
 | Directory interactions | Inspect existing operations for concrete conflicts; apply the same scheduling rules, raising only previously uncovered semantic cases |
 | View retention | Refactor implementation evaluation: concurrent query limits and retained-memory measurements |

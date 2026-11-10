@@ -233,101 +233,61 @@ attempts each accepted action and retains its actual result or exception. Module
 remain responsible for checking their own preconditions and consistency.
 
 ```text
-BACKEND MAIN THREAD                    CONNECTION WORKERS                 EXECUTOR THREAD
-───────────────────                    ──────────────────                 ───────────────
-
+BACKEND MAIN THREAD        CONNECTION WORKERS          REQUEST COORD. THREAD      EXECUTION WORKERS
+------------------------   ------------------------   ------------------------   --------------------------
 run_backend()
-  └─ BackendStateMachine::run()
-       │
-       ▼
 [Bootstrap]
-  Bootstrap(context)
-    ├─ Load configuration
-    ├─ Acquire RepositoryOwnership / listener
-    ├─ Initialize Repository / Catalog / Coordinator
-    └─ startup_load() → durable Session Marker
-       │
-       ├─ Failure ───────────────────────────────────────────────► [Report]
-       ▼ Success
+Load configuration
+Acquire Repo ownership
+Initialize Storage/Catalog
+Establish durable Marker
+  Failure -----------------------------------------------------> [Report]
+
 [Serve]
-  Serve(context)
-    ├─ Construct IpcServer; store operation dispatch callback
-    │    └─ Construct RequestCoordinator ──────────────────────────────────► Start executor
-    │                                                                      └─ Wait for work
-    └─ IpcServer::run() [blocks main thread]
-         ├─ ownership.wait() → OS readiness wait
-         ├─ ownership.accept()
-         ├─ Start connection worker ──► connection(...)
-         │                               ├─ Receive / validate Hello
-         │                               ├─ Register connection
-         │                               └─ Send Ready
-         │                               │
-         │                               ▼
-         │                             Request loop
-         │                               ├─ Wait / receive complete message
-         │                               ├─ Validate framing/version/bounds
-         │                               ├─ codec::decode<OperationRequest>()
-         │                               └─ coordinator.admit(action)
-         │                                    ├─ Reject → send Rejected
-         │                                    └─ Enqueue ───────────────► Wake executor
-         │                                         │                         ├─ Pop action
-         │                                    Send Accepted                  ├─ handler_(request)
-         │                                         │                         │   └─ access->handle(...)
-         │                                    Wait for result                │       └─ Catalog / Repository
-         │                                         │                         ├─ Encode response
-         │                                         │                         ├─ Retain result/exception
-         │                                         ◄─────────────────────────┤ Signal completion
-         │                                    Send final response            └─ Consume next action
-         │                                    Repeat request loop
-         │
-         │                             On disconnection:
-         │                               Unregister; wake main thread; exit
-         │                               Accepted work is NOT cancelled
-         │
-         └─ Detect stopping condition
-              Stop admission/listening; preserve established connections
-              ├─ Failure ──────────────────────────────────────► [Report]
-              └─ Normal return
-       │
-       ▼
-[Stopping] [normal path]
-  Stopping(context)
-    ├─ drain_requests() ─────────────────────────────────────────────────► Attempt accepted work
-    │                                                                      └─ Executor exits
-    ├─ Join executor and reap completed connection workers
-    └─ Collect retained failures
-       │ either outcome
-       ▼
-[Report] [also reached directly on Bootstrap / Serve failure]
-  Report(context)
-    ├─ drain_requests()
-    │    ├─ Normal path: already drained
-    │    └─ Failure path: attempt accepted work and join executor
-    ├─ Collect retained failures
-    │                                  Usable workers retain streams
-    │                                  without admitting new requests
-    ├─ Existing startup rejection where applicable
-    └─ Connected-Frontend lifecycle notification: DEFERRED; no implementation
-       │ regardless of outcome
-       ▼
+Construct IpcServer
+  Construct RequestCoordinator ----------------------> Start coordinate()
+    Construct ExecutionPools --------------------------------------------------> Shared Access / Mutation
+                                                                                workers wait for tasks
+run() [blocks]
+  Wait/accept -----------> Start connection worker
+                           Handshake -> Ready
+                           Receive/decode
+                           admit(plan, prepare) ------> Shared bounded queue
+                           Send Accepted               Select eligible request
+                           Wait for result             Reserve / dispatch -----> Prepare Access / execute / encode
+                           Deliver final result <------ Complete ticket <-------- Report completion
+                           Repeat
+  Accept more connections  Detect disconnection;
+                           accepted work is not cancelled
+  Stop condition
+  Close admission/listener
+  Failure -----------------------------------------------------> [Report]
+
+[Stopping - normal]
+drain_requests() ------------------------------------> Dispatch remaining work -> Complete accepted work
+                           Attempt final delivery      Collect completions
+                           Reap exited workers         Exit coordination
+Join coordination and all execution pools
+Collect retained failures
+
+[Report - also entered directly on Bootstrap/Serve failure]
+drain_requests()           Usable connections remain    Failure path drains/joins;
+                           without new admission        normal path already drained
+Collect retained failures
+Existing startup rejection where applicable
+Connected-Frontend lifecycle notification remains deferred
+
 [Finish]
-  Finish(context)
-    ├─ Ensure requests drained [exceptional fallback]
-    ├─ close_connections() ────────────► Wake workers; close streams; exit
-    │    └─ Join remaining workers
-    ├─ Collect retained failures
-    ├─ Finalize eligible Catalog session
-    │    ├─ Save Index when permitted / required
-    │    └─ Clear Marker only when safety is established
-    └─ Release RepositoryOwnership
-       │
-       ▼
-     Stopped
+Ensure drained [exceptional fallback]
+close_connections() -----> Wake / close streams / exit
+Join remaining connection workers
+Finalize eligible Catalog (save Index; clear Marker only when safe)
+Release RepositoryOwnership
 ```
 
-The [proposed Steps 5–6 thread flow](../development/plans/catalog-concurrency.md#lifecycle-and-thread-ownership)
-extends execution capacity while preserving these state responsibilities. The
-diagram above describes the current sequential implementation.
+The [Steps 5–6 plan](../development/plans/catalog-concurrency.md#lifecycle-and-thread-ownership)
+records the design rationale. The diagram above describes the implemented concurrent
+execution baseline; authoritative Mutations remain sequential.
 
 `drain_requests()` is idempotent and does not close usable connections. The
 repeated calls establish the prerequisite on both termination paths and provide

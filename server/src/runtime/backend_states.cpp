@@ -29,6 +29,7 @@ BackendActionOutcome Bootstrap(BackendContext& context) {
     }
     auto effective = std::get<config::EffectiveConfig>(std::move(resolved));
     logging::set_level(effective.log_level);
+    context.access_workers = effective.access_workers;
     context.paths.emplace(std::move(effective.paths));
   }
   auto acquired = RepositoryOwnership::acquire(*context.paths);
@@ -68,15 +69,18 @@ BackendActionOutcome Serve(BackendContext& context) {
                                                         *context.coordinator);
   context.mutations = std::make_unique<MutationOrchestrator>(context.catalog, *context.repository,
                                                              *context.coordinator);
-  // Lifecycle/main thread: one server owns all session connections and starts
-  // its shared coordinator's executor. The callback below runs on that executor.
+  // Lifecycle thread assembles resources. Access preparation/evaluation runs on Access workers;
+  // editing control and mutation protection stay on request coordination.
+  RuntimeLimits limits;
+  limits.access_workers = context.access_workers;
   context.runtime = std::make_unique<IpcServer>(
-      *context.ownership, [&](const OperationRequest& request, const Session& session) {
+      *context.ownership, IpcServer::Handler{}, "", limits,
+      [&](OperationRequest request, Session session) -> IpcServer::PreparedAction {
         if (std::holds_alternative<MutationRequest>(request) ||
             std::holds_alternative<AcquireEditRequest>(request) ||
             std::holds_alternative<ReleaseEditRequest>(request))
-          return context.mutations->handle(request, session);
-        return context.access->handle(request);
+          return context.mutations->prepare(std::move(request), std::move(session));
+        return context.access->prepare(std::move(request));
       });
   auto result = context.runtime->run();
   if (auto* error = std::get_if<IpcError>(&result)) {

@@ -63,7 +63,7 @@ Status distinguishes implemented contracts from agreed future direction. This re
 - **Motivation:** Preserve Repo/Catalog consistency without global class thread safety.
 - **Alternatives considered:** Independent simultaneous mutation of Storage objects.
 - **Consequences:** CreationCheck is availability only, not reservation.
-- **Open/Deferred:** [Concurrent Access/Catalog view refactor](../development/plans/catalog-concurrency.md) has an agreed architecture awaiting staged implementation review; cancellation remains open. All current Access and Mutation execution is sequential.
+- **Implemented:** [Concurrent Access/Catalog views](../development/plans/catalog-concurrency.md) shared query/Load workers from short coordination while preserving one sequential Mutation worker. Parallel Mutations and cancellation remain open.
 
 ## D08 — Exclusive interactive Entry editing
 
@@ -71,9 +71,10 @@ Status distinguishes implemented contracts from agreed future direction. This re
 - **Decision:** Frontend requests Backend-owned per-Entry edit permission; readers continue.
 - **Motivation:** Prevent competing interactive edits.
 - **Alternatives considered:** Frontend-only lock state or making every mutation require edit locks.
-- **Consequences:** Accepted actions retain connection ownership after disconnect. Full Update requires an owned lock; immediate Move/Rename/status rejects another owner but needs no temporary lock when unlocked. See the [lock contract](../contracts/mutations.md#edit-lock-ownership--implemented).
-- **Implemented:** [Ownership-only acquisition and separate Load](../contracts/mutations.md#edit-lock-ownership--implemented) replace combined lock/Snapshot acquisition; execution remains sequential.
-- **Open/Deferred:** Concurrent scheduling, revision protection and future mutation-specific concurrency rules remain under the [Catalog/concurrent Access plan](../development/plans/catalog-concurrency.md#filesystem-execution-and-edit-locks).
+- **Consequences:** Accepted actions retain connection ownership after disconnect. Full Update requires an owned lock; immediate Move/Rename/status rejects another owner but uses execution protection when unlocked, without acquiring a long-lived Edit Lock. See the [lock contract](../contracts/mutations.md#edit-lock-ownership--implemented).
+- **Implemented:** [Ownership-only acquisition and separate Load](../contracts/mutations.md#edit-lock-ownership--implemented) replace combined lock/Snapshot acquisition. RequestCoordinator now separates
+  short coordination, concurrent query/Load execution and one sequential Mutation worker.
+- **Open/Deferred:** Revision protection and future mutation-specific concurrency rules remain under the [Catalog/concurrent Access plan](../development/plans/catalog-concurrency.md#filesystem-execution-and-edit-locks).
 
 ## D09 — Push events
 
@@ -158,7 +159,7 @@ Status distinguishes implemented contracts from agreed future direction. This re
 
 ## D18 — Immutable Catalog views and concurrent Access
 
-- **Status:** Agreed architecture; not implemented; staged implementation review pending.
+- **Status:** Implemented concurrent baseline; Push handoff and later optimizations deferred.
 - **Decision:** Use structurally shared immutable Catalog states, stable query views
   and complete-state publication; borrow stable-reader architecture from search
   engines without adopting their engines or building custom MVCC.
@@ -166,9 +167,9 @@ Status distinguishes implemented contracts from agreed future direction. This re
   full-Catalog copying, iterator repair or query-long writer blocking.
 - **Alternatives considered:** Whole-state deep copies, per-Entry/batched
   reader–writer traversal, custom pipeline forwarding and replacing Catalog with
-  Tantivy/Xapian. No new dependency is selected yet.
+  Tantivy/Xapian. The implemented representation uses Immer persistent containers.
 - **Consequences:** Supersedes proposed per-Entry query locking, not filesystem
-  conflict coordination; current runtime remains sequential. The
+  conflict coordination; current runtime dispatches concurrent Access and sequential Mutations. The
   [design plan](../development/plans/catalog-concurrency.md) owns details, open
   decisions and staged review gates. Only its focused refactor baseline precedes
   4.3b; Push, Frontend integration and deferred optimizations keep their later

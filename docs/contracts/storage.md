@@ -373,7 +373,7 @@ CatalogCoordinator → IndexCodec / I/O → application.cache/index/normal.msgpa
 Explicit refresh_all → Repository.scan → typed metadata → Catalog.rebuild
 ```
 
-The owner must supply matching callbacks; standalone Repository use does not synchronize Catalog. Managed creation additionally supplies `creation_check()` to check all four Catalog identity maps before publication. It reserves no ID; single-writer execution is enforced by the shared Backend executor. Without that check, standalone creation retains global on-disk uniqueness discovery. Omitted Record locators intentionally request UUID discovery. Known locator operations never silently rediscover after StaleLocator. Directory load/rename use kind/UUID-derived paths directly.
+The owner must supply matching callbacks; standalone Repository use does not synchronize Catalog. Managed creation additionally supplies `creation_check()` to check all four Catalog identity maps before publication. It reserves no ID; single-writer execution is enforced by RequestCoordinator's one Mutation worker. Without that check, standalone creation retains global on-disk uniqueness discovery. Omitted Record locators intentionally request UUID discovery. Known locator operations never silently rediscover after StaleLocator. Directory load/rename use kind/UUID-derived paths directly.
 
 Publication followed by failure is not rollback. Typed failure notifications distinguish BeforeAuthoritativeChange, AuthoritativeStateMayHaveChanged, and CatalogSynchronizationFailed. Coordinator callbacks mark Inconsistent for the latter two; original diagnostics survive. No automatic scan, rollback, or Index I/O follows. Optional/custom callbacks cannot certify consistency by themselves.
 
@@ -471,8 +471,11 @@ Root Browse and Index encoding use one view across their related reads. Index sc
 and Repository/Coordinator callbacks are unchanged. Index-dirty bookkeeping remains
 Catalog-owned and separate from retained views.
 
-Capture, publication and Coordinator readiness remain executor-only in this increment;
-this change does not authorize concurrent access to the live Catalog. Old views are
+One Mutation worker owns Catalog writes. Concurrent capture uses
+`CatalogCoordinator::read_state()`, which synchronizes readiness and immutable-root
+capture with managed callbacks under one short publication mutex. Startup, full
+rebuild/Refresh and Index finalization require drained execution; this refactor
+does not add concurrent lifecycle I/O or background Index saving. Old views are
 valid metadata snapshots, not proof that their filesystem locators remain current.
 Long readers retain old structural branches until their views are released.
 
