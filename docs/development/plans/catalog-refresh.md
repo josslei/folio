@@ -116,9 +116,9 @@ Keep three responsibilities separate:
   response routing through the existing connection machinery.
 - A Backend-private Refresh component owns scope-specific scanning, candidate
   reconciliation and publication. Its precise API and file placement remain open.
-- A consistency-policy owner decides whether an Access anomaly warrants Refresh,
-  user action or no additional action. Its placement remains open; scheduling must
-  not become a second implementation of consistency policy.
+- A future consistency-policy owner may decide whether an Access anomaly warrants
+  maintenance, user action or no additional action. This mechanism is deferred;
+  scheduling must not become a second implementation of consistency policy.
 
 Explicit Refresh requests and later consistency-policy decisions use the same
 Refresh scheduling path. A Check only reports its result; it does not submit Refresh.
@@ -208,16 +208,53 @@ priority mechanism now.
 
 An Access operation can fail, including with StaleLocator, during Refresh. Return
 the actual failure to its originating Frontend; do not turn it into success or
-broadcast request-specific details. Separately pass the anomaly to consistency
-policy. If the active Refresh covers it, suppress duplicate recovery work, not the
-original error. Other policy choices remain open.
+broadcast request-specific details. Do not automatically forward it into another
+Refresh, reinterpret it as success or retry the originating operation.
 
-Associate anomalies with the Catalog version/view used and Refresh completion
-with its covered scope and published Catalog version. An Access using an older
-view can finish after publication; recognize coverage by a completed Refresh as
-well as an active one. Exact identity representation, coverage semantics and
-bounded retention remain implementation/design work; no wire-format version or
-Entry revision token is implied.
+General anomaly forwarding, Catalog-version coverage and retention are deferred,
+not immediate implementation requirements. The initial flow returns StaleLocator
+and lets the Frontend offer explicit Full Refresh. Concurrent Full Refresh requests
+share execution as described below; future Push updates obsolete prompts.
+
+### Full Refresh coalescing — approved direction
+
+Keep the unified scope-based Refresh API. RequestCoordinator recognizes Full
+Refresh by its scope. If one is pending/running, attach the new accepted request
+to that execution instead of starting another scan. Otherwise schedule a new
+Full Refresh. Scoped Refresh merging is not implied.
+
+The coordinator owns the association between one execution and its waiting request
+tickets. Each ticket represents that request's completion state/result and remains
+connected to its own connection worker. The execution worker does not own or mutate
+the subscriber list: it reports one outcome; coordination completes all associated
+tickets from that outcome. Later requests can therefore join while execution runs
+without editing the worker's captures. Preserve per-request admission/resource
+accounting, request-specific delivery and accepted-work lifetime after disconnect.
+Actual declarations and safe result sharing/copying remain implementation details.
+
+Use a uniform execution-to-ticket association: an execution completes one or more
+request tickets, with ordinary operations retaining exactly one. Normal admission,
+resource accounting, completion and connection delivery remain the common paths.
+Do not add another queue, thread, delivery mechanism or a Refresh-specific completion
+branch. Only the compatibility/join decision is operation-specific and belongs
+alongside Refresh scheduling requirements. Joining adds the newly admitted ticket
+to the association rather than modifying the running worker's captures. This is
+shared completion support, not a generic macro-operation framework or permission
+to coalesce arbitrary operations.
+
+Successful Refresh publication should produce a future Push notification so
+Frontends can update/dismiss obsolete Refresh prompts while still listening for
+events. Full Refresh completion means another Full Refresh is not required solely
+because of the earlier stale-location prompt; it does not prove an uncertain
+Mutation executed. Push delivery and prompt integration belong to 4.4a/4.4b.
+
+**Accepted race / Not Guaranteed:** a user can submit another Full Refresh after
+the previous execution completes but before receiving its Push notification. That
+request can start a redundant Full Refresh. This rare overlap is accepted; do not
+add historical result caching, Catalog-version tracking or a deduplication journal
+solely to eliminate it. During implementation, put a comment at the Full Refresh
+join-or-start decision documenting this exact boundary: only pending/running work
+is coalesced; completed work is not reused, and late requests may scan again.
 
 ## Count Check execution reservation — approved
 
@@ -286,8 +323,8 @@ continue to own later features. They do not authorize implementation.
 | ID | Status | Missing decision/capability and revisit point |
 | --- | --- | --- |
 | CONS-01 | Deferred Implementation / Open Design Decision | Implement the approved Check/Refresh contracts in 4.3b after reviewing concrete private Refresh APIs, worker placement, reconciliation details, bounded resources and shutdown integration. Current internal full rebuild requires drained execution. |
-| CONS-02 | Open Design Decision | Choose consistency-policy ownership and bounded anomaly/view/scope coverage tracking during 4.3b design; avoid redundant work from old-view errors without suppressing originating failures. |
-| CONS-03 | Open Design Decision | Set Refresh/Check coalescing, mutual ordering and fairness at dispatch selection before implementing their interaction. Refresh precedence is not a general priority policy; Batch priority is a future extension. |
+| CONS-02 | Deferred Implementation / Open Design Decision | General consistency-policy ownership and anomaly/view/scope coverage tracking are outside immediate scope. Revisit only if explicit errors, Full Refresh coalescing and future Push leave a concrete need; preserve originating failures. |
+| CONS-03 | Approved direction / Open Design Decision | Coalesce pending/running Full Refresh requests; accept the documented late-request race. Scoped merging, Check/Refresh mutual ordering and general fairness remain open at dispatch selection. Refresh precedence is not a general priority policy; Batch priority is a future extension. |
 | CONS-04 | Open Design Decision | Decide if and how scoped reconciliation may restore globally Inconsistent readiness; successful local repair alone is insufficient evidence. Revisit before approving state transitions. |
 | CONS-05 | Deferred Implementation / Open Design Decision | Choose Vault low-cost checking strategy in Vault design; Normal filesystem counts do not establish Vault layout or privacy rules. |
 | CONS-06 | Not Guaranteed | Count equality is not full verification; Refresh is not authoritative repair or proof of Mutation execution. Preserve these limits in APIs and future UI. |
