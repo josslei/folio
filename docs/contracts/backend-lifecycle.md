@@ -252,7 +252,7 @@ run_backend()
 [Serve]
   Serve(context)
     ├─ Construct IpcServer; store operation dispatch callback
-    │    └─ Construct RequestScheduler ──────────────────────────────────► Start executor
+    │    └─ Construct RequestCoordinator ──────────────────────────────────► Start executor
     │                                                                      └─ Wait for work
     └─ IpcServer::run() [blocks main thread]
          ├─ ownership.wait() → OS readiness wait
@@ -267,7 +267,7 @@ run_backend()
          │                               ├─ Wait / receive complete message
          │                               ├─ Validate framing/version/bounds
          │                               ├─ codec::decode<OperationRequest>()
-         │                               └─ scheduler.admit(action)
+         │                               └─ coordinator.admit(action)
          │                                    ├─ Reject → send Rejected
          │                                    └─ Enqueue ───────────────► Wake executor
          │                                         │                         ├─ Pop action
@@ -324,6 +324,10 @@ run_backend()
        ▼
      Stopped
 ```
+
+The [proposed Steps 5–6 thread flow](../development/plans/catalog-concurrency.md#lifecycle-and-thread-ownership)
+extends execution capacity while preserving these state responsibilities. The
+diagram above describes the current sequential implementation.
 
 `drain_requests()` is idempotent and does not close usable connections. The
 repeated calls establish the prerequisite on both termination paths and provide

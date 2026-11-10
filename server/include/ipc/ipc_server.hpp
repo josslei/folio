@@ -2,7 +2,7 @@
 
 #include <folio/ipc/application_protocol.hpp>
 #include "runtime/repository_ownership.hpp"
-#include "operations/request_scheduler.hpp"
+#include "execution/request_coordinator.hpp"
 #include "ipc/connection_session.hpp"
 
 #include <atomic>
@@ -18,7 +18,7 @@ struct RuntimeLimits {
 };
 
 // The Backend session owns one IpcServer for all Frontend connections and one
-// shared RequestScheduler. Connection workers admit/deliver; its executor runs
+// shared RequestCoordinator. Connection workers admit/deliver; its executor runs
 // handlers. Storage is accessed only through the executor handler, never by a
 // connection worker.
 // No additional lifecycle state machine: Serve runs this resource; Stopping and
@@ -32,7 +32,7 @@ public:
   ~IpcServer();
   IpcServer(const IpcServer&) = delete;
   /// Blocks the lifecycle thread while accepting connections; workers handle IPC
-  /// and the constructor-started scheduler executes handlers independently.
+  /// and the constructor-started RequestCoordinator executes handlers independently.
   /// Returning stops admission, but does not certify draining or join all workers.
   /// Stopping/Report drain; Finish closes connections before Storage finalization.
   core::Result<std::monostate, IpcError> run(std::stop_token shutdown = {});
@@ -75,12 +75,12 @@ private:
   Handler handler_;
   const std::string startup_failure_;
   const RuntimeLimits limits_;
-  RequestScheduler scheduler_;
+  RequestCoordinator request_coordinator_;
   /// Protects connection done/busy flags, active_/served_/stopping_, changed_ and
   /// failures_. Registration, last-disconnect detection and admission closure
   /// form one invariant: splitting their locks would permit shutdown races.
   /// The lifecycle thread alone changes the connections_ vector structure.
-  /// Lock order: connection_state_mutex_ -> scheduler's queue mutex. Scheduler
+  /// Lock order: connection_state_mutex_ -> coordinator's queue mutex. RequestCoordinator
   /// actions run without its queue mutex and may then report failures here.
   /// Never execute handlers, perform blocking stream reads/writes, drain or join
   /// with this lock held.

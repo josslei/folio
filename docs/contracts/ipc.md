@@ -116,22 +116,22 @@ or incremental editing needs explicit operation semantics.
 ### Current thread and request flow
 
 The Backend session owns one `IpcServer`, which owns every connection worker and
-one shared `RequestScheduler`. Workers capture the server's `this` pointer; they
-access its scheduler without copying it. The constructor starts the executor;
-there is no separate scheduling/coordinator thread in the current implementation.
+one shared `RequestCoordinator`. Workers capture the server's `this` pointer; they
+access its request coordinator without copying it. The constructor starts the executor;
+there is no separate request coordination thread in the current implementation.
 
 ```text
 BACKEND MAIN THREAD            CONNECTION WORKER (A, B, ...)              SINGLE EXECUTOR THREAD
 ---------------------------    ----------------------------------------   ------------------------------
 Serve()
   Construct IpcServer
-    Construct scheduler        --------------------------------------->   Start execute(); wait for work
+    Construct coordinator      --------------------------------------->   Start execute(); wait for work
   Call run() [blocks]
     Accept connection ------>  Start worker
                                Handshake -> Ready
                                Receive complete request
                                Decode / validate
-                               scheduler_.admit(action)
+                               request_coordinator_.admit(action)
                                  Reject -> send Rejected; receive next
                                  Accept -> append to shared queue
                                                    wake executor ----->   Dequeue next action
@@ -145,7 +145,7 @@ Serve()
                                Receive next request
 
     Accept more connections    Each has its own stream/worker;
-                               all submit to the SAME scheduler.
+                               all submit to the SAME request coordinator.
 ```
 
 After enqueueing, execution and sending Accepted can proceed independently.
@@ -156,21 +156,24 @@ Disconnecting cannot retract an accepted action; only final delivery is lost.
 Implementation entry points:
 [Serve](../../server/src/runtime/backend_states.cpp),
 [IpcServer connection/accept handling](../../server/src/ipc/ipc_server.cpp),
-[RequestScheduler admission/execution](../../server/src/operations/request_scheduler.cpp).
+[RequestCoordinator admission/execution](../../server/src/execution/request_coordinator.cpp).
 The [mutex declarations](../../server/include/ipc/ipc_server.hpp) document protected
-server state; [scheduler/ticket mutexes](../../server/include/operations/request_scheduler.hpp)
+server state; [request-coordinator/ticket mutexes](../../server/include/execution/request_coordinator.hpp)
 protect queue accounting and individual completion records. Admission acquires
-server state before the scheduler queue lock; handlers execute without either
+server state before the request coordinator queue lock; handlers execute without either
 lock held by the executor. Edit Lock ownership remains in
 [MutationOrchestrator](../../server/src/operations/mutation_orchestrator.cpp).
 
 This diagram describes sequential execution now. The
 [concurrent Access plan](../development/plans/catalog-concurrency.md#responsibility-overview)
-records the separate Step 5 coordination/worker design; it is not implemented here.
-
+records the combined Steps 5–6 design; its
+[proposed thread diagrams](../development/plans/catalog-concurrency.md#proposed-thread-and-request-flows)
+use RequestCoordinator and its proposed request coordination thread.
+CatalogCoordinator remains a separate Storage component.
+That concurrent execution is not implemented here.
 
 The complete request is decoded/validated before queue admission. A single
-`RequestScheduler` owns execution, with capacity 32 including its active job;
+`RequestCoordinator` owns execution, with capacity 32 including its active job;
 the stricter exchange-buffer reservations may reject earlier. Both current Queries
 and Mutations use this scheduling boundary. No connection worker accesses
 the Catalog. All operation execution is sequential for now; idle workers and the

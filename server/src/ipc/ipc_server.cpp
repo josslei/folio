@@ -22,7 +22,8 @@ ApplicationError capacity_error() {
 IpcServer::IpcServer(RepositoryOwnership& ownership, Handler handler, std::string startup_failure,
                      RuntimeLimits limits)
     : ownership_(ownership), handler_(std::move(handler)),
-      startup_failure_(std::move(startup_failure)), limits_(limits), scheduler_(limits.requests) {}
+      startup_failure_(std::move(startup_failure)), limits_(limits),
+      request_coordinator_(limits.requests) {}
 
 IpcServer::~IpcServer() {
   drain_requests();
@@ -65,7 +66,7 @@ bool IpcServer::send_rejection(IpcStream& stream, ApplicationError error, std::s
 
 void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_token stop) {
   // Connection worker: handshake and session registration begin here. This worker
-  // owns the stream; Application handlers execute on the scheduler's thread.
+  // owns the stream; Application handlers execute on the request coordinator's executor thread.
   std::stop_source reception;
   std::stop_callback closing(stop, [&] { reception.request_stop(); });
   std::stop_callback admission(admission_closed_.get_token(), [&] { reception.request_stop(); });
@@ -176,45 +177,47 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     request_message.payload.clear();
     request_message.payload.shrink_to_fit();
     // Connection worker: admission atomically checks server stopping state and
-    // enqueues into the shared scheduler. The lambda is stored, not run inline.
-    std::shared_ptr<RequestScheduler::Ticket> ticket;
+    // enqueues into the shared coordinator. The lambda is stored, not run inline.
+    std::shared_ptr<RequestCoordinator::Ticket> ticket;
     {
       std::lock_guard lock(connection_state_mutex_);
       if (!stopping_) {
-        ticket = scheduler_.admit([this, request = std::get<OperationRequest>(std::move(request)),
-                                   reservation, session]() -> RequestScheduler::Result {
-          // Executor thread: execute and encode the final result. Neither the
-          // server-state lock nor scheduler queue lock is held on this thread.
-          try {
-            auto result = handler_(request, session);
-            auto encoded = codec::encode<OperationResponse>(result);
-            if (std::holds_alternative<IpcError>(encoded)) {
-              // Never replace an executed mutation with an uncorrelated error
-              // or claim NotApplied. Delivery is unconfirmed; service continues.
-              if (std::holds_alternative<MutationRequest>(request)) {
-                try {
-                  SPDLOG_ERROR(
-                      "Mutation final response exceeded protocol limits; confirmation lost");
-                } catch (...) {
+        ticket = request_coordinator_.admit(
+            [this, request = std::get<OperationRequest>(std::move(request)), reservation,
+             session]() -> RequestCoordinator::Result {
+              // Executor thread: execute and encode the final result. Neither the
+              // server-state lock nor coordinator queue lock is held on this thread.
+              try {
+                auto result = handler_(request, session);
+                auto encoded = codec::encode<OperationResponse>(result);
+                if (std::holds_alternative<IpcError>(encoded)) {
+                  // Never replace an executed mutation with an uncorrelated error
+                  // or claim NotApplied. Delivery is unconfirmed; service continues.
+                  if (std::holds_alternative<MutationRequest>(request)) {
+                    try {
+                      SPDLOG_ERROR(
+                          "Mutation final response exceeded protocol limits; confirmation lost");
+                    } catch (...) {
+                    }
+                    return std::get<IpcError>(encoded);
+                  }
+                  encoded = codec::encode<OperationResponse>(
+                      ApplicationError{ErrorCategory::ApplicationUnavailable,
+                                       ErrorReason::ResourceLimit,
+                                       "The Application response exceeds the resource limit.",
+                                       {ErrorAction::Dismiss}});
                 }
-                return std::get<IpcError>(encoded);
+                if (auto* error = std::get_if<IpcError>(&encoded)) {
+                  failure(*error);
+                  return *error;
+                }
+                return Message{MessageKind::Response,
+                               payload_bytes(std::get<std::string>(encoded))};
+              } catch (...) {
+                failure(std::current_exception());
+                throw;
               }
-              encoded = codec::encode<OperationResponse>(
-                  ApplicationError{ErrorCategory::ApplicationUnavailable,
-                                   ErrorReason::ResourceLimit,
-                                   "The Application response exceeds the resource limit.",
-                                   {ErrorAction::Dismiss}});
-            }
-            if (auto* error = std::get_if<IpcError>(&encoded)) {
-              failure(*error);
-              return *error;
-            }
-            return Message{MessageKind::Response, payload_bytes(std::get<std::string>(encoded))};
-          } catch (...) {
-            failure(std::current_exception());
-            throw;
-          }
-        });
+            });
         if (ticket) connection.busy = true;
       }
     }
@@ -257,7 +260,7 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
       }
     }
     if (stop.stop_requested()) return;
-    std::optional<RequestScheduler::Result> result;
+    std::optional<RequestCoordinator::Result> result;
     {
       std::lock_guard lock(ticket->mutex);
       result = std::move(ticket->result);
@@ -282,7 +285,7 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
 
 core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) {
   // Backend lifecycle/main thread: accept connections and start their workers.
-  // The shared scheduler's executor was already started during construction.
+  // The shared coordinator's executor was already started during construction.
   struct StopAdmission {
     IpcServer& server;
     ~StopAdmission() { server.stop_admission(); }
@@ -312,7 +315,7 @@ core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) 
       if (shutdown.stop_requested() || !failures_.empty() || (served_ && active_ == 0) ||
           (!served_ && active_ == 0 && Clock::now() >= initial_deadline)) {
         stopping_ = true;
-        scheduler_.stop_admission();
+        request_coordinator_.stop_admission();
         if (!failures_.empty()) {
           auto error = std::move(failures_.front());
           failures_.erase(failures_.begin());
@@ -385,7 +388,7 @@ void IpcServer::stop_admission() {
   {
     std::lock_guard lock(connection_state_mutex_);
     stopping_ = true;
-    scheduler_.stop_admission();
+    request_coordinator_.stop_admission();
     notify();
   }
   admission_closed_.request_stop();
@@ -396,7 +399,7 @@ void IpcServer::drain_requests() {
   // Lifecycle thread (Stopping/Report): close admission, then join execution
   // outside the connection-state lock so actions can still publish failures.
   stop_admission();
-  scheduler_.drain();
+  request_coordinator_.drain();
   // Let bounded final-response delivery settle before Finish closes streams.
   {
     std::unique_lock lock(connection_state_mutex_);

@@ -1,15 +1,15 @@
-#include "operations/request_scheduler.hpp"
+#include "execution/request_coordinator.hpp"
 
 namespace folio::application::internal {
 
-RequestScheduler::RequestScheduler(std::size_t capacity)
+RequestCoordinator::RequestCoordinator(std::size_t capacity)
     : capacity_(capacity), executor_([this] { execute(); }) {}
 
-RequestScheduler::~RequestScheduler() {
+RequestCoordinator::~RequestCoordinator() {
   drain();
 }
 
-std::shared_ptr<RequestScheduler::Ticket> RequestScheduler::admit(Action action) {
+std::shared_ptr<RequestCoordinator::Ticket> RequestCoordinator::admit(Action action) {
   // Called by connection workers: admission only, never execute the action here.
   auto ticket = std::make_shared<Ticket>();
   {
@@ -22,7 +22,7 @@ std::shared_ptr<RequestScheduler::Ticket> RequestScheduler::admit(Action action)
   return ticket;
 }
 
-void RequestScheduler::stop_admission() {
+void RequestCoordinator::stop_admission() {
   {
     std::lock_guard lock(mutex_);
     accepting_ = false;
@@ -30,12 +30,12 @@ void RequestScheduler::stop_admission() {
   changed_.notify_one();
 }
 
-void RequestScheduler::drain() {
+void RequestCoordinator::drain() {
   stop_admission();
   if (executor_.joinable()) executor_.join();
 }
 
-void RequestScheduler::execute() {
+void RequestCoordinator::execute() {
   // Single executor thread: wait/dequeue, execute, then publish completion.
   for (;;) {
     Work work;

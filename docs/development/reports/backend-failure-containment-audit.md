@@ -18,7 +18,7 @@ for future Mutation handlers or arbitrary failures that prevent execution.
 Reviewed implementations: `server/src/storage/normal_repository.cpp`,
 `metadata_catalog.cpp`, `catalog_coordinator.cpp`, the callback template in
 `server/include/storage/catalog_coordinator.hpp`, and
-`server/src/operations/access_orchestrator.cpp`, `request_scheduler.cpp`, `ipc/ipc_server.cpp`,
+`server/src/operations/access_orchestrator.cpp`, `request_coordinator.cpp`, `ipc/ipc_server.cpp`,
 `runtime/backend_states.cpp` and `runtime/backend_state_machine.cpp`.
 The reviewed module implementations contain no explicit process-exit, abort or
 terminate calls. This observation alone is not the containment guarantee:

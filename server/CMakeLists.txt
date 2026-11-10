@@ -3,7 +3,7 @@ add_library(folio_backend STATIC
   src/backend.cpp
   src/operations/access_orchestrator.cpp
   src/operations/mutation_orchestrator.cpp
-  src/operations/request_scheduler.cpp
+  src/execution/request_coordinator.cpp
   src/runtime/backend_state_machine.cpp
   src/runtime/backend_states.cpp
   src/runtime/repository_ownership.cpp

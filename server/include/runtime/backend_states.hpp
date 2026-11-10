@@ -56,7 +56,7 @@ void retain_backend_notification_failures(BackendContext& context,
                                           const BackendStateMachine& machine);
 /// Initializes configuration, ownership and Storage before admitting operations.
 BackendActionOutcome Bootstrap(BackendContext& context);
-/// Runs IPC acceptance on the lifecycle thread; handlers execute on the scheduler.
+/// Runs IPC acceptance on the lifecycle thread; handlers execute on RequestCoordinator's executor.
 BackendActionOutcome Serve(BackendContext& context);
 /// Normal-stop path: closes admission and drains accepted work, retaining streams.
 BackendActionOutcome Stopping(BackendContext& context);

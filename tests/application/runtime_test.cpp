@@ -1,3 +1,4 @@
+#include "execution/request_coordinator.hpp"
 #include "ipc/ipc_server.hpp"
 #include <folio/ipc/application_codec.hpp>
 #include <folio/ipc/message_transport.hpp>
@@ -15,13 +16,13 @@ namespace fs = std::filesystem;
 using namespace std::chrono_literals;
 using Clock = std::chrono::steady_clock;
 
-TEST(RequestScheduler, SharedSequenceCapacityAndDrainSurviveLostDelivery) {
-  ipc::RequestScheduler scheduler(2);
+TEST(RequestCoordinator, SharedSequenceCapacityAndDrainSurviveLostDelivery) {
+  ipc::RequestCoordinator coordinator(2);
   std::promise<void> started, release;
   auto gate = release.get_future().share();
   std::mutex mutex;
   std::vector<int> executed;
-  auto first = scheduler.admit([&]() -> ipc::RequestScheduler::Result {
+  auto first = coordinator.admit([&]() -> ipc::RequestCoordinator::Result {
     started.set_value();
     gate.wait();
     std::lock_guard lock(mutex);
@@ -30,34 +31,34 @@ TEST(RequestScheduler, SharedSequenceCapacityAndDrainSurviveLostDelivery) {
   });
   ASSERT_TRUE(first);
   started.get_future().wait();
-  auto second = scheduler.admit([&]() -> ipc::RequestScheduler::Result {
+  auto second = coordinator.admit([&]() -> ipc::RequestCoordinator::Result {
     std::lock_guard lock(mutex);
     executed.push_back(2);
     return ipc::Message{ipc::MessageKind::Response, {}};
   });
   EXPECT_TRUE(second);
-  EXPECT_FALSE(scheduler.admit([]() -> ipc::RequestScheduler::Result {
+  EXPECT_FALSE(coordinator.admit([]() -> ipc::RequestCoordinator::Result {
     return ipc::Message{ipc::MessageKind::Response, {}};
   }));
   first.reset(); // Loss of a delivery owner does not retract accepted work.
-  scheduler.stop_admission();
+  coordinator.stop_admission();
   release.set_value();
-  scheduler.drain();
+  coordinator.drain();
   EXPECT_EQ(executed, (std::vector<int>{1, 2}));
   ASSERT_TRUE(second->completed.stop_requested());
   EXPECT_TRUE(second->result);
-  EXPECT_FALSE(scheduler.admit({}));
+  EXPECT_FALSE(coordinator.admit({}));
 }
 
-TEST(RequestScheduler, ExceptionalExecutionDoesNotDropFollowingAcceptedWork) {
-  ipc::RequestScheduler scheduler(2);
-  auto failed = scheduler.admit([]() -> ipc::RequestScheduler::Result {
+TEST(RequestCoordinator, ExceptionalExecutionDoesNotDropFollowingAcceptedWork) {
+  ipc::RequestCoordinator coordinator(2);
+  auto failed = coordinator.admit([]() -> ipc::RequestCoordinator::Result {
     throw std::runtime_error("synthetic operation exception");
   });
-  auto following = scheduler.admit([]() -> ipc::RequestScheduler::Result {
+  auto following = coordinator.admit([]() -> ipc::RequestCoordinator::Result {
     return ipc::Message{ipc::MessageKind::Response, {}};
   });
-  scheduler.drain();
+  coordinator.drain();
   ASSERT_TRUE(failed->result);
   EXPECT_TRUE(failed->exception);
   EXPECT_TRUE(std::holds_alternative<ipc::IpcError>(*failed->result));
@@ -65,32 +66,32 @@ TEST(RequestScheduler, ExceptionalExecutionDoesNotDropFollowingAcceptedWork) {
   EXPECT_TRUE(std::holds_alternative<ipc::Message>(*following->result));
 }
 
-TEST(RequestScheduler, DrainCollectsMultipleFailuresAndStillCompletesFollowingWork) {
-  ipc::RequestScheduler scheduler(4);
+TEST(RequestCoordinator, DrainCollectsMultipleFailuresAndStillCompletesFollowingWork) {
+  ipc::RequestCoordinator coordinator(4);
   std::promise<void> started, release;
   auto gate = release.get_future().share();
-  auto first = scheduler.admit([&]() -> ipc::RequestScheduler::Result {
+  auto first = coordinator.admit([&]() -> ipc::RequestCoordinator::Result {
     started.set_value();
     gate.wait();
     throw std::runtime_error("first synthetic failure");
   });
   started.get_future().wait();
-  auto second = scheduler.admit([]() -> ipc::RequestScheduler::Result {
+  auto second = coordinator.admit([]() -> ipc::RequestCoordinator::Result {
     throw std::logic_error("second synthetic failure");
   });
-  auto third = scheduler.admit([]() -> ipc::RequestScheduler::Result {
+  auto third = coordinator.admit([]() -> ipc::RequestCoordinator::Result {
     return ipc::IpcError{ipc::IpcErrorCode::IoError, "synthetic returned error"};
   });
-  auto last = scheduler.admit([]() -> ipc::RequestScheduler::Result {
+  auto last = coordinator.admit([]() -> ipc::RequestCoordinator::Result {
     return ipc::Message{ipc::MessageKind::Response, {}};
   });
   release.set_value();
-  ASSERT_NO_THROW(scheduler.drain());
-  EXPECT_NO_THROW(scheduler.drain());
+  ASSERT_NO_THROW(coordinator.drain());
+  EXPECT_NO_THROW(coordinator.drain());
   for (const auto& ticket : {first, second, third, last}) {
     ASSERT_TRUE(ticket);
     EXPECT_TRUE(ticket->completed.stop_requested());
-    EXPECT_EQ(ticket->stage, ipc::RequestScheduler::ExecutionStage::Finished);
+    EXPECT_EQ(ticket->stage, ipc::RequestCoordinator::ExecutionStage::Finished);
     ASSERT_TRUE(ticket->result);
   }
   ASSERT_TRUE(first->exception);

@@ -49,7 +49,7 @@ this is not proof against arbitrary hangs or resource exhaustion.
 
 **Review performed / Not Guaranteed:** Inspection of current executor, IPC,
 shutdown, Storage loops, and I/O progress handling found no confirmed
-preventable-hang defect. Existing scheduler/IPC/lifecycle tests passed on macOS;
+preventable-hang defect. Existing request coordination/IPC/lifecycle tests passed on macOS;
 this is not proof that all hangs are excluded or native Linux/Windows verification.
 Fix concrete preventable hangs when identified. Follow the
 [agreed unpredictable-hang boundary](../contracts/backend-lifecycle.md#unpredictable-hangs--agreed-limitation):

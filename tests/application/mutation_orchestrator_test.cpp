@@ -5,7 +5,7 @@
 #include <gtest/gtest.h>
 #include <fstream>
 #include <future>
-#include "operations/request_scheduler.hpp"
+#include "execution/request_coordinator.hpp"
 #include "ipc/ipc_server.hpp"
 #include "backend_connection_handle.hpp"
 #include <folio/ipc/message_transport.hpp>
@@ -409,22 +409,22 @@ TEST_F(MutationOrchestrator,
        AcceptedActionKeepsOwnershipAfterDisconnectAndCleanupFollowsExecution) {
   auto record = memo();
   acquire(record.id);
-  ipc::RequestScheduler scheduler(4);
+  ipc::RequestCoordinator coordinator(4);
   std::promise<void> entered, release;
   auto gate = release.get_future().share();
-  auto blocking = scheduler.admit([&]() -> ipc::RequestScheduler::Result {
+  auto blocking = coordinator.admit([&]() -> ipc::RequestCoordinator::Result {
     entered.set_value();
     gate.wait();
     return ipc::Message{ipc::MessageKind::Response, {}};
   });
   entered.get_future().wait();
   std::optional<app::MutationFailure> other_failure;
-  auto other = scheduler.admit([&]() -> ipc::RequestScheduler::Result {
+  auto other = coordinator.admit([&]() -> ipc::RequestCoordinator::Result {
     other_failure = failed(app::internal::MoveMemoRequest{record.id, {}, modified}, second);
     return ipc::Message{ipc::MessageKind::Response, {}};
   });
   bool saved_after_disconnect = false;
-  auto accepted = scheduler.admit([&, owner = first]() -> ipc::RequestScheduler::Result {
+  auto accepted = coordinator.admit([&, owner = first]() -> ipc::RequestCoordinator::Result {
     saved<core::MemoMetadata>(
         app::internal::UpdateMemoRequest{record.id, {"saved", "accepted body", {}}, modified},
         owner);
@@ -433,7 +433,7 @@ TEST_F(MutationOrchestrator,
   });
   first.reset(); // Simulate worker exit; the accepted action still owns the session.
   release.set_value();
-  scheduler.drain();
+  coordinator.drain();
   ASSERT_TRUE(other_failure);
   EXPECT_EQ(other_failure->error.reason, app::ErrorReason::LockConflict);
   EXPECT_TRUE(saved_after_disconnect);

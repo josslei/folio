@@ -13,7 +13,7 @@ namespace folio::application::internal {
 
 // Session-only scheduling, not Recovery or a persistent receipt. The executor
 // owns all operation execution; connection workers only admit and deliver.
-class RequestScheduler {
+class RequestCoordinator {
 public:
   using Result = core::Result<Message, IpcError>;
   using Action = std::function<Result()>;
@@ -25,7 +25,7 @@ public:
     std::stop_source completed;
     /// Protects this ticket's stage, result and exception across the executor
     /// and connection worker. Release before executing actions or signaling
-    /// completion; do not nest with the scheduler queue mutex.
+    /// completion; do not nest with the coordinator queue mutex.
     std::mutex mutex;
     ExecutionStage stage = ExecutionStage::Queued;
     std::optional<Result> result;
@@ -34,9 +34,9 @@ public:
 
   /// Starts the single executor immediately. Capacity counts queued and active work.
   /// Captures in accepted actions must stay valid until draining completes.
-  explicit RequestScheduler(std::size_t capacity);
-  ~RequestScheduler();
-  RequestScheduler(const RequestScheduler&) = delete;
+  explicit RequestCoordinator(std::size_t capacity);
+  ~RequestCoordinator();
+  RequestCoordinator(const RequestCoordinator&) = delete;
   // nullptr means rejected before acceptance. Capacity includes the active job.
   std::shared_ptr<Ticket> admit(Action action);
   /// Thread-safe admission closure; wakes the executor without cancelling work.

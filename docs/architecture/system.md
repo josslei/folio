@@ -101,10 +101,12 @@ to AccessOrchestrator::handle() and mutation/editing requests to MutationOrchest
 |   +-- Resource ownership and lifecycle data (BackendContext)
 |   +-- Exclusive Repo and IPC listener ownership (RepositoryOwnership)
 |
-+-- [IPC and scheduling]
++-- [IPC]
 |   +-- Connections, admission and response delivery (IpcServer)
 |   +-- Connection identity and lifetime (ConnectionSession)
-|   +-- Shared bounded queue and sequential executor (RequestScheduler)
+|
++-- [Execution]
+|   +-- Shared bounded queue and sequential executor (RequestCoordinator)
 |
 +-- [Operation handling]
 |   +-- [Operation dispatch]
@@ -130,13 +132,50 @@ Edit Lock requests are editing-control operations supporting mutation workflows,
 rather than authoritative data mutations or ordinary read-only Access.
 
 BackendContext owns the resource instances; BackendStateMachine enforces
-lifecycle transitions. IpcServer owns its RequestScheduler. Operation handlers
+lifecycle transitions. IpcServer owns its RequestCoordinator. Operation handlers
 borrow Catalog, Repository and Coordinator through C++ references. Coordinator
 borrows Catalog. Repository retains persistence sequencing and reports results
 through matching Coordinator callbacks; Coordinator synchronizes Catalog.
 ConnectionSession is Backend-private and is retained by workers/accepted work,
 while Edit Locks reference it weakly. No additional controller or lifecycle
 framework is implied.
+
+### Backend module responsibilities
+
+Application operation categories and execution resources are different dimensions.
+Access versus Mutation describes business effects, not a required worker hierarchy.
+Edit Lock acquisition/release is editing control. Worker allocation and conflict
+scheduling are execution policy; they do not define new domain operation types.
+
+| Directory under `server/include/` and `server/src/` | Responsibility and placement rule |
+| --- | --- |
+| `runtime/` | Backend lifecycle, resource assembly and lifetime, Repo ownership and safe finalization; not a container for all threaded code |
+| `ipc/` | Connections, protocol handling, admission acknowledgments and response delivery |
+| `execution/` | RequestCoordinator, scheduling eligibility, execution capacity and worker/completion coordination; currently one shared queue and sequential executor |
+| `operations/` | Application business rules and orchestration through AccessOrchestrator and MutationOrchestrator: prerequisites, lower-level call sequencing and public result interpretation |
+| `storage/` | Authoritative persistence, Catalog projections and Coordinator consistency mechanisms |
+
+Put a future operation helper under `operations/` when it implements Application
+semantics by coordinating lower-level components. Delete, Trash or Refresh
+orchestration could fit there once separately authorized. One operation does not
+require one class/file. Worker pools, queue accounting, codecs, filesystem
+primitives and Core models have other owners. Repository still owns persistence
+sequencing and invokes Coordinator callbacks; operation orchestration must not
+duplicate that synchronization path.
+
+```text
+runtime/       Assembles components; owns startup, draining and finalization
+    |
+    +-- ipc/ --> execution/ --> operations/ --> storage/
+                 When/where     What rules       Persistence and
+                 work runs      work follows     Catalog mechanisms
+```
+
+The arrows summarize responsibilities, not mandatory class dependencies. IpcServer
+currently owns RequestCoordinator; this file move does not change object ownership.
+The [combined Steps 5–6 plan](../development/plans/catalog-concurrency.md#execution-modules-and-combined-steps-56)
+separates short coordination from costly execution. Concurrent worker groups are
+planned, not implemented by the directory split.
 
 ## Ownership and boundaries
 
@@ -163,10 +202,12 @@ app/                         Frontend-only code
   src/                       Frontend implementations
   src/main.cpp               Shared dispatcher (explicit ownership exception)
 server/                      Backend-only code
-  include/                   Backend headers: entry point, runtime, IPC, Storage
-  src/                       Entry point, handlers and request executor
+  include/                   Role-private headers; matching responsibility dirs
+  src/                       Backend entry point and implementations
   src/runtime/               Lifecycle, state machine and ownership implementations
   src/ipc/                   Backend connection management
+  src/execution/             Request scheduling and execution coordination
+  src/operations/            Access and Mutation business orchestration
   src/storage/               Storage implementations (headers in include/storage)
 lib/                         Shared code; no dependency on either runtime role
   include/folio/             Core, Config, Logging, I/O and shared contracts
