@@ -57,7 +57,7 @@ for cross-directory tasks; automatic discovery is not assumed verified.
   audiences, knowledge ownership, sequence and pending cleanup work.
 - Active plans: [Application integration](development/plans/application.md),
   [Consistency Checking & Catalog Refresh](development/plans/catalog-refresh.md)
-  (approved 4.3b contracts; implementation and listed design details remain open),
+  (implemented Normal maintenance contracts; linked follow-ups distinguish open/later work),
   [Catalog views and concurrent Access](development/plans/catalog-concurrency.md)
   (implemented concurrent baseline; later Push integration remains deferred),
   [Recovery](development/plans/recovery.md), [Vault](development/plans/vault.md),

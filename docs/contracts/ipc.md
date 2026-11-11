@@ -113,9 +113,83 @@ or incremental editing needs explicit operation semantics.
 
 ## Scheduling and lifecycle
 
-For the approved but unimplemented Phase 4.3b extension, see
-[Consistency Check/Refresh coordination and dispatch precedence](../development/plans/catalog-refresh.md).
-It does not change the implemented execution guarantees described below.
+Automatic navigation Checks share pending/running execution by logical scope and
+retain the outcome for the Backend session, including failure. Repeated completed
+requests use the ordinary short reservation but CatalogMaintenance does not count
+files again. Completed outcomes are owned by CatalogMaintenance, not scheduling. Explicit rechecking is a
+later TUI design decision, not a new protocol flag here.
+
+The implemented [Consistency Check/Refresh extension](../development/plans/catalog-refresh.md)
+uses the same OperationRequest/Response codecs, admission and final-result path.
+Maintenance runs on the Access pool with Mutation exclusion; Refresh pending state
+blocks new Mutations without blocking coordination or ordinary Access. Checks also
+exclude Catalog publication while comparing counts. Full Refresh requests join
+pending/running execution through the common one-execution/multiple-ticket
+completion association; each request keeps its own resource accounting and reply.
+Completed executions are not cached. Protocol version remains 1.
+
+**Important follow-up — CONS-03:** implement a coherent priority system; Refresh
+must have highest priority. Use ordinary eligible selection for Check/Refresh for now, without a special
+priority path; pending Refresh still defers Mutations as an execution constraint.
+Fairness/starvation and Batch priority need design at the dispatch-selection TODO.
+
+### Queued work and scheduling plans
+
+Each pending queue item is a `RequestCoordinator::Work`, keeping scheduling
+information and executable work together:
+
+```text
+Work
+ +-- plan       Scheduling requirements (Plan)
+ +-- prepare    Callback retaining the request and preparing its action
+ +-- execution  Shared result state and subscribing request tickets
+```
+
+`plan(request)` classifies a decoded Application request without executing it or
+looking up Catalog/Repository state. Its `Plan` identifies the execution lane,
+optional Entry conflict identity and maintenance scheduling/duplicate-sharing
+information. It contains neither the business payload nor its result; the request
+is retained by the preparation callback rather than stored as another queue item.
+
+```text
+Decoded request + preparation callback
+                  |
+                  v
+       plan(request) + callback + execution
+                  |
+                  v
+            Pending Work queue
+                  |
+          eligible + reserve
+                  |
+                  v
+       Prepare and execute action
+                  |
+                  v
+          Completion inbox
+                  |
+       release reservations; complete tickets
+                  |
+                  v
+       Originating connection(s) deliver results
+```
+
+Preparation and execution run on an Access worker for Access/Maintenance work;
+short Mutation protection is prepared on coordination before dispatch to the
+Mutation worker. Control work stays on coordination. A running action is removed
+from the pending queue; the coordinator continues dispatching eligible requests.
+Workers post completion and wake coordination, which processes completions before
+selecting further work.
+
+Lane describes execution/reservation requirements, not priority. Check and Refresh
+share Maintenance but retain their different pending-Mutation exclusion and
+duplicate-sharing information in `Plan`. A shared execution can have multiple
+tickets: each accepted request receives its own final response, while only one
+action runs. This is scheduling bookkeeping, not persistent acceptance or Recovery.
+
+See [RequestCoordinator declarations](../../server/include/execution/request_coordinator.hpp)
+and [implementation](../../server/src/execution/request_coordinator.cpp) for the
+actual fields and scheduling rules.
 
 ### Current thread and request flow
 
@@ -192,7 +266,7 @@ No Busy, implicit scan, forwarding, retry or cancellation is added.
 Current Directory Rename rewrites the UUID folder's metadata without moving member
 files. Loads do not depend on that name, so Rename does not reserve every member.
 Directory creation, target membership validation and Record moves remain serialized
-with other Mutations. New Delete/Refresh/Batch operations must define additional
+with other Mutations. New Delete/Batch operations must define additional
 conflict scope before dispatch; a UUID reservation is not a universal future rule.
 
 CatalogCoordinator::read_state() captures readiness and immutable roots under the
@@ -321,3 +395,9 @@ Marker. Shutdown closes admission/connections, explicitly calls `finish_session(
 and releases ownership last. Failed finalization returns failure and retains the
 Marker according to Storage's existing contract. Backend crashes release locks,
 break connections and leave Marker-based reconstruction for the next session.
+
+Check and Refresh share the RequestCoordinator Maintenance lane: both execute on
+Access workers with the same active maintenance/Mutation exclusion. Operation
+identity remains separate: pending Refresh defers new Mutations, pending Check
+does not. Lane is not priority; the future priority system must select Refresh
+ahead of Check despite their shared lane. Ticket sharing remains operation-specific.

@@ -16,7 +16,24 @@ RequestCoordinator::Plan RequestCoordinator::plan(const OperationRequest& reques
   return std::visit(
       [](const auto& operation) -> Plan {
         using T = std::decay_t<decltype(operation)>;
-        if constexpr (std::is_same_v<T, MutationRequest>) {
+        if constexpr (std::is_same_v<T, RefreshRequest>) {
+          return {Lane::Maintenance,
+                  {},
+                  std::holds_alternative<RepositoryScope>(operation.scope),
+                  {},
+                  true};
+        } else if constexpr (std::is_same_v<T, CheckConsistencyRequest>) {
+          auto key = std::visit(
+              [](const auto& scope) -> std::string {
+                using S = std::decay_t<decltype(scope)>;
+                if constexpr (std::is_same_v<S, core::RecordType>)
+                  return "root:" + std::to_string(static_cast<unsigned>(scope));
+                else
+                  return "directory:" + scope.to_string();
+              },
+              operation.scope);
+          return {Lane::Maintenance, {}, false, std::move(key)};
+        } else if constexpr (std::is_same_v<T, MutationRequest>) {
           return std::visit(
               [](const auto& value) -> Plan {
                 using M = std::decay_t<decltype(value)>;
@@ -78,7 +95,31 @@ std::shared_ptr<RequestCoordinator::Ticket> RequestCoordinator::admit(Plan plan,
   {
     std::lock_guard lock(mutex_);
     if (!accepting_ || outstanding_ >= capacity_) return {};
-    queue_.push_back({std::move(plan), std::move(prepare), ticket});
+    if (plan.check_scope) {
+      if (auto found = checks_.find(*plan.check_scope); found != checks_.end()) {
+        if (auto execution = found->second.lock()) {
+          ticket->stage = execution->executing ? ExecutionStage::Executing : ExecutionStage::Queued;
+          execution->subscribers.push_back({ticket, std::move(prepare)});
+          ++outstanding_;
+          return ticket;
+        }
+      }
+    }
+    // Only pending/running Full Refresh is shared. Completed work is not reused:
+    // a late request before future Push delivery may legitimately scan again.
+    if (plan.full_refresh) {
+      if (auto execution = full_refresh_.lock()) {
+        ticket->stage = execution->executing ? ExecutionStage::Executing : ExecutionStage::Queued;
+        execution->subscribers.push_back({ticket, std::move(prepare)});
+        ++outstanding_;
+        return ticket;
+      }
+    }
+    auto execution = std::make_shared<Execution>();
+    execution->subscribers.push_back({ticket, {}});
+    queue_.push_back({plan, std::move(prepare), execution});
+    if (plan.full_refresh) full_refresh_ = execution;
+    if (plan.check_scope) checks_.emplace(*plan.check_scope, execution);
     ++outstanding_;
   }
   changed_.notify_one();
@@ -102,13 +143,22 @@ bool RequestCoordinator::eligible(std::size_t index) const {
   const auto& plan = queue_[index].plan;
   const auto lane = plan.lane;
   if (lane == Lane::Control) return true;
-  const bool access = lane == Lane::Query || lane == Lane::Load;
+  const bool maintenance = lane == Lane::Maintenance;
+  const bool access = lane == Lane::Query || lane == Lane::Load || maintenance;
   if (access) {
-    if (active_[lane_index(Lane::Query)] + active_[lane_index(Lane::Load)] >= access_workers_)
+    if (active_[lane_index(Lane::Query)] + active_[lane_index(Lane::Load)] +
+            active_[lane_index(Lane::Maintenance)] >=
+        access_workers_)
       return false;
   } else if (active_[lane_index(lane)] >= 1)
     return false;
+  if (maintenance) {
+    if (active_[lane_index(Lane::Mutation)] || active_[lane_index(Lane::Maintenance)]) return false;
+  }
   if (lane == Lane::Mutation) {
+    if (active_[lane_index(Lane::Maintenance)]) return false;
+    for (const auto& pending : queue_)
+      if (pending.plan.refresh) return false;
     // Preserve Mutation FIFO even when the first writer awaits an active reader.
     for (std::size_t i = 0; i < index; ++i)
       if (queue_[i].plan.lane == Lane::Mutation) return false;
@@ -144,12 +194,8 @@ void RequestCoordinator::execute(Work work, Action action) {
     exception = std::current_exception();
     result = IpcError{IpcErrorCode::IoError, "Backend operation raised an unexpected exception"};
   }
-  {
-    std::lock_guard lock(work.ticket->mutex);
-    work.ticket->result.emplace(std::move(result));
-    work.ticket->exception = exception;
-    work.ticket->stage = ExecutionStage::Finished;
-  }
+  work.execution->result.emplace(std::move(result));
+  work.execution->exception = exception;
   // Release request/session captures before completion makes another request eligible.
   action = {};
   work.prepare = {};
@@ -162,6 +208,7 @@ void RequestCoordinator::execute(Work work, Action action) {
 void RequestCoordinator::coordinate() {
   for (;;) {
     Work work;
+    std::vector<std::shared_ptr<Ticket>> started;
     {
       std::unique_lock lock(mutex_);
       changed_.wait(lock, [&] {
@@ -174,13 +221,37 @@ void RequestCoordinator::coordinate() {
         auto finished = std::move(completed_.back());
         completed_.pop_back();
         release(finished);
-        --outstanding_;
-        // Waking connection workers must not invoke their callbacks under queue lock.
+        auto execution = std::move(finished.execution);
+        if (finished.plan.full_refresh) full_refresh_.reset();
+        outstanding_ -= execution->subscribers.size();
+        if (finished.plan.check_scope) checks_.erase(*finished.plan.check_scope);
+        // One execution completes its own request tickets through the common path.
+        // No worker reads the association, so admission can join a running execution.
         lock.unlock();
-        finished.ticket->completed.request_stop();
+        for (auto& subscriber : execution->subscribers) {
+          subscriber.retained = {};
+          {
+            std::lock_guard ticket_lock(subscriber.ticket->mutex);
+            // Ordinary execution moves its sole result; shared maintenance only
+            // copies for additional subscribers (Refresh results are small).
+            if (&subscriber == &execution->subscribers.back())
+              subscriber.ticket->result = std::move(*execution->result);
+            else
+              subscriber.ticket->result = *execution->result;
+            subscriber.ticket->exception = execution->exception;
+            subscriber.ticket->stage = ExecutionStage::Finished;
+          }
+          subscriber.ticket->completed.request_stop();
+        }
         lock.lock();
+        execution->subscribers.clear();
       }
       if (!accepting_ && outstanding_ == 0) return;
+      // TODO(CONS-03): implement a coherent priority system here; Refresh must
+      // have highest priority, above Check even though both share Maintenance. Maintenance
+      // reservations make this an important follow-up, including future lower-priority Batch work
+      // and starvation. For now select ordinary eligible work, without a Check/Refresh priority
+      // branch. Pending Refresh still defers Mutations as an execution constraint.
       std::size_t index = 0;
       while (index < queue_.size() && !eligible(index))
         ++index;
@@ -188,16 +259,21 @@ void RequestCoordinator::coordinate() {
       work = std::move(queue_[index]);
       queue_.erase(queue_.begin() + index);
       reserve(work);
+      work.execution->executing = true;
+      for (const auto& subscriber : work.execution->subscribers)
+        started.push_back(subscriber.ticket);
+      // Snapshot tickets before releasing association lock; no nested ticket locks.
     }
-    {
-      std::lock_guard lock(work.ticket->mutex);
-      work.ticket->stage = ExecutionStage::Executing;
+
+    for (const auto& ticket : started) {
+      std::lock_guard lock(ticket->mutex);
+      ticket->stage = ExecutionStage::Executing;
     }
     // Reserve before dispatch. Access workers capture their own business state;
     // only short editing control / mutation protection runs on coordination.
     try {
       const auto lane = work.plan.lane;
-      const bool access = lane == Lane::Query || lane == Lane::Load;
+      const bool access = lane == Lane::Query || lane == Lane::Load || lane == Lane::Maintenance;
       Action action;
       if (access) {
         action = [prepare = std::move(work.prepare)]() mutable {

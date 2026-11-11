@@ -297,10 +297,13 @@ CatalogCoordinator::CatalogCoordinator(StoragePaths paths, MetadataCatalog& cata
     auto marker_ready = establish_marker();
     if (auto* problem = std::get_if<CoordinatorError>(&marker_ready)) return *problem;
   }
-  marker_cleanup_pending_ = false;
-  catalog_ = std::move(candidate);
-  status_ = CatalogStatus::Ready;
-  load_attempted_ = true;
+  {
+    std::lock_guard lock(publication_mutex_);
+    marker_cleanup_pending_ = false;
+    catalog_ = std::move(candidate);
+    status_ = CatalogStatus::Ready;
+    load_attempted_ = true;
+  }
   return std::move(inventory.diagnostics);
 }
 
@@ -310,6 +313,18 @@ CatalogCoordinator::refresh_all() {
     return error(CoordinatorErrorCode::Lifecycle, {}, "Session already finalized");
   load_attempted_ = true;
   return rebuild();
+}
+
+::folio::core::Result<std::monostate, CoordinatorError>
+CatalogCoordinator::publish_scoped_refresh(MetadataCatalog candidate) {
+  // Preparation/scan run without this lock. Publication and status are indivisible
+  // to Access captures; scheduling excludes other writers and lifecycle finalization.
+  std::lock_guard lock(publication_mutex_);
+  if (!session_active_ ||
+      (status_ != CatalogStatus::Ready && status_ != CatalogStatus::Inconsistent))
+    return error(CoordinatorErrorCode::Unavailable, {}, "Catalog session cannot publish Refresh");
+  catalog_ = std::move(candidate);
+  return std::monostate{};
 }
 
 ::folio::core::Result<SaveOutcome, CoordinatorError> CatalogCoordinator::shutdown_save() {

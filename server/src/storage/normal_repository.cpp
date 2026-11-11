@@ -1098,13 +1098,22 @@ StorageResult<fs::path> NormalRepository::locate_record(RecordType type,
   return located;
 }
 
-StorageResult<NormalRepositoryScanResult> NormalRepository::scan() const {
+StorageResult<NormalRepositoryScanResult>
+NormalRepository::scan(std::optional<RecordType> scan_type, std::optional<core::Id> directory_id,
+                       bool recursive) const {
   NormalRepositoryScanResult inventory;
+  if ((scan_type && static_cast<unsigned>(*scan_type) > 2) ||
+      (directory_id && (!scan_type || *scan_type == RecordType::Log)))
+    return fail(StorageErrorCode::InvalidLayout, root_, "Invalid scan scope");
   if (auto checked = safe_path(root_, root_, true); failure(checked)) return *failure(checked);
   std::error_code ec;
   const auto root_status = fs::symlink_status(root_, ec);
-  if (ec == std::errc::no_such_file_or_directory || root_status.type() == fs::file_type::not_found)
+  if (ec == std::errc::no_such_file_or_directory ||
+      root_status.type() == fs::file_type::not_found) {
+    if (directory_id)
+      return fail(StorageErrorCode::StaleLocator, root_, "Directory root is missing");
     return inventory;
+  }
   if (ec) return fail(io::FileErrorCode::IoError, root_, "Could not inspect Normal root", ec);
   if (!fs::is_directory(root_status))
     return fail(io::FileErrorCode::InvalidPath, root_, "Normal root is not a directory");
@@ -1225,18 +1234,32 @@ StorageResult<NormalRepositoryScanResult> NormalRepository::scan() const {
     return std::monostate{};
   };
 
-  fs::directory_iterator root_item{root_, ec};
   const fs::directory_iterator end;
-  while (!ec && root_item != end) {
-    const auto path = root_item->path();
-    const auto name = path.filename();
-    if (name != "logs" && name != "memos" && name != "todos")
-      note(path, "Unrelated root object was not parsed");
-    root_item.increment(ec);
+  if (!scan_type) {
+    fs::directory_iterator root_item{root_, ec};
+    while (!ec && root_item != end) {
+      const auto path = root_item->path();
+      const auto name = path.filename();
+      if (name != "logs" && name != "memos" && name != "todos")
+        note(path, "Unrelated root object was not parsed");
+      root_item.increment(ec);
+    }
+    if (ec) return fail(io::FileErrorCode::IoError, root_, "Could not enumerate Normal root", ec);
   }
-  if (ec) return fail(io::FileErrorCode::IoError, root_, "Could not enumerate Normal root", ec);
-
   for (auto type : {RecordType::Log, RecordType::Memo, RecordType::Todo}) {
+    if (scan_type && type != *scan_type) continue;
+    if (directory_id) {
+      const auto kind = type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo;
+      auto loaded = load_directory_at(root_, kind, *directory_id);
+      if (failure(loaded)) return *failure(loaded);
+      auto value = std::get<core::Directory::Snapshot>(std::move(loaded));
+      entry_ids.insert(value.id.to_string());
+      const auto folder = root_ / module_name(type) / directory_id->to_string();
+      inventory.directories.push_back(metadata_from(value, folder.lexically_relative(root_)));
+      if (auto visited = visit_files(type, folder, true); failure(visited))
+        return *failure(visited);
+      continue;
+    }
     const auto base = root_ / module_name(type);
     if (auto checked = safe_path(root_, base, true); failure(checked)) return *failure(checked);
     const auto status = fs::symlink_status(base, ec);
@@ -1271,8 +1294,10 @@ StorageResult<NormalRepositoryScanResult> NormalRepository::scan() const {
           if (!entry_ids.insert(value.id.to_string()).second)
             return fail(StorageErrorCode::DuplicateId, folder, "Duplicate stored Entry UUID");
           inventory.directories.push_back(metadata_from(value, folder.lexically_relative(root_)));
-          if (auto visited = visit_files(type, folder, true); failure(visited))
-            return *failure(visited);
+          if (recursive) {
+            if (auto visited = visit_files(type, folder, true); failure(visited))
+              return *failure(visited);
+          }
         }
       }
       item.increment(ec);
@@ -1288,6 +1313,26 @@ StorageResult<NormalRepositoryScanResult> NormalRepository::scan() const {
   std::sort(inventory.diagnostics.begin(), inventory.diagnostics.end(),
             [](const auto& a, const auto& b) { return a.path < b.path; });
   return inventory;
+}
+
+StorageResult<std::size_t>
+NormalRepository::count_entries(RecordType type, std::optional<core::Id> directory) const {
+  if (static_cast<unsigned>(type) > 2 || (type == RecordType::Log && directory))
+    return fail(StorageErrorCode::InvalidLayout, root_, "Invalid count scope");
+  auto folder = root_ / module_name(type);
+  if (directory) folder /= directory->to_string();
+  if (auto checked = safe_path(root_, folder, !directory); failure(checked))
+    return *failure(checked);
+  std::error_code ec;
+  fs::directory_iterator item(folder, ec), end;
+  if (!directory && ec == std::errc::no_such_file_or_directory) return std::size_t{0};
+  std::size_t count = 0;
+  while (!ec && item != end) {
+    ++count;
+    item.increment(ec);
+  }
+  if (ec) return fail(io::FileErrorCode::IoError, folder, "Could not count directory entries", ec);
+  return count;
 }
 
 } // namespace folio::core::storage

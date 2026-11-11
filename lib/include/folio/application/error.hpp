@@ -40,12 +40,14 @@ enum class ErrorReason {
   InvalidMutation,
   LockConflict,
   EditLockRequired,
-  CatalogSynchronizationFailed
+  CatalogSynchronizationFailed,
+  FullRefreshRequired
 };
 
 // Presentation choices, not automatic retries or guarantees of success.
-// Safe reconciliation remains deferred; see docs/contracts/mutations.md.
-enum class ErrorAction { Retry, ReloadView, Reconnect, ResolveExternally, Dismiss };
+// Authoritative Recovery remains deferred; Refresh rebuilds Catalog only.
+// See docs/contracts/mutations.md.
+enum class ErrorAction { Retry, ReloadView, Reconnect, ResolveExternally, Dismiss, Refresh };
 
 /// Safe presentation data: why the operation failed and possible user actions.
 /// Actions are suggestions, not commands. For mutations, consult status/evidence

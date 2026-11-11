@@ -389,3 +389,36 @@ TEST_F(MetadataAccessIntegration,
   EXPECT_FALSE(fs::exists(paths.application.state / "session.marker"));
   EXPECT_TRUE(fs::exists(paths.application.cache / "index/normal.msgpack"));
 }
+
+namespace {
+TEST_F(MetadataAccessIntegration, CheckAndRefreshUseExistingConnectionAndKeepBrowseCatalogOnly) {
+  auto connection = connect();
+  ASSERT_EQ(
+      std::get<app::ConsistencyCheckResult>(connection.check_consistency(core::RecordType::Memo)),
+      app::ConsistencyCheckResult::NoAnomalyDetected);
+  const auto old_path =
+      paths.normal_root /
+      std::get<fs::path>(repository.locate_record(core::RecordType::Memo, memo.id()));
+  fs::rename(old_path, old_path.parent_path() / "renamed.md");
+  auto loaded = connection.load_memo(memo.id());
+  ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(loaded));
+  EXPECT_EQ(std::get<app::ApplicationError>(loaded).reason, app::ErrorReason::StaleLocation);
+  auto browse = connection.browse(core::RecordType::Memo);
+  ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<app::BrowseResult>>(browse));
+  EXPECT_EQ(std::get<app::ApplicationResponse<app::BrowseResult>>(browse).value.records.size(), 1u);
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.refresh()));
+  EXPECT_TRUE(std::holds_alternative<core::Memo::Snapshot>(connection.load_memo(memo.id())));
+  std::ofstream(paths.normal_root / "memos" / "extra.txt") << "extra";
+  EXPECT_EQ(
+      std::get<app::ConsistencyCheckResult>(connection.check_consistency(core::RecordType::Memo)),
+      app::ConsistencyCheckResult::NoAnomalyDetected);
+  // A second Frontend shares the session observation, even after Refresh and
+  // external changes. Repeated navigation must not trigger another disk check.
+  auto second = connect();
+  EXPECT_EQ(std::get<app::ConsistencyCheckResult>(second.check_consistency(core::RecordType::Memo)),
+            app::ConsistencyCheckResult::NoAnomalyDetected);
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.refresh(app::DirectoryScanScope{
+      app::DirectoryRef{core::RecordType::Memo}, app::RefreshTraversal::Immediate})));
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
+}
+} // namespace

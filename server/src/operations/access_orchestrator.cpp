@@ -176,12 +176,12 @@ ApplicationError map_load_error(const storage::StorageError& failure) {
     reason = ErrorReason::IdentityConflict;
     message = "Entry identity conflict";
   }
-  // TODO(Application): expose explicit Refresh separately before advertising it
-  // as an action. It is not part of the approved read-access operation inventory.
-  return {ErrorCategory::AuthoritativeDataProblem,
-          reason,
-          message,
-          {ErrorAction::ResolveExternally, ErrorAction::Dismiss}};
+  return {
+      ErrorCategory::AuthoritativeDataProblem,
+      reason,
+      message,
+      {reason == ErrorReason::StaleLocation ? ErrorAction::Refresh : ErrorAction::ResolveExternally,
+       ErrorAction::Dismiss}};
 }
 
 ApplicationError map_load_error(const io::FileError& failure) {

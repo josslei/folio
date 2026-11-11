@@ -238,6 +238,14 @@ core::Result<BackendConnectionHandle, IpcError> connect_or_start_backend() {
     return IpcError{IpcErrorCode::IoError, problem->message, problem->system_error};
   return connect_or_start_backend(std::get<ConnectionSettings>(configured), launch_backend);
 }
+ApplicationResult<ConsistencyCheckResult>
+BackendConnectionHandle::check_consistency(DirectoryRef scope) {
+  return invoke_operation<ConsistencyCheckResult>(stream_,
+                                                  CheckConsistencyRequest{std::move(scope)});
+}
+ApplicationResult<std::monostate> BackendConnectionHandle::refresh(RefreshScope scope) {
+  return invoke_operation<std::monostate>(stream_, RefreshRequest{std::move(scope)});
+}
 ApplicationResult<ApplicationResponse<BrowseResult>>
 BackendConnectionHandle::browse(DirectoryRef dir, RecordOrder order) {
   return invoke_operation<ApplicationResponse<BrowseResult>>(stream_,

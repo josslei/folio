@@ -48,12 +48,14 @@ AuthoritativeDataProblem. Unavailable Catalog state is ApplicationUnavailable.
 A usable Inconsistent Catalog still supplies metadata with a warning; Index
 publication remains blocked by Coordinator. No query performs verification I/O.
 
-**Approved, not implemented:** a separate generic Consistency Check after navigation
-Browse/display, and explicit unified Scoped/Full Refresh. Browse stays Catalog-only;
+**Implemented Backend contracts:** a separate generic Consistency Check after
+navigation Browse/display, and explicit unified Scoped/Full Refresh. Frontend
+navigation/UI integration remains deferred. Browse stays Catalog-only;
 ordinary requery/sort does not itself trigger a Check. See the authoritative
 [4.3b design](../development/plans/catalog-refresh.md#consistency-check-and-navigation).
-Neither Check-triggered Refresh nor replay is automatic. Refresh/Recovery actions are not advertised as currently
-executable until their public capabilities exist. ErrorAction describes a user
+Neither Check-triggered Refresh nor replay is automatic. Stale-location errors
+offer explicit Refresh; `FullRefreshRequired` identifies scoped reconciliation
+that requires the user to choose Full Refresh. Recovery remains deferred. ErrorAction describes a user
 choice; it never triggers a retry or filesystem modification itself.
 
 The three questions remain: what failed, what happened to the operation, and
@@ -96,3 +98,9 @@ locked fields must never be faked with defaults. Snapshot loading does not grant
 permission to save or imply conflict-free editing. Frontend buffer preservation
 and bounded reconnection remain presentation integration work; the existing
 welcome TUI has not been expanded by this phase.
+
+Automatic navigation `check_consistency()` attempts are shared per logical scope
+for the Backend session. Pending/running calls share completion; repeated calls
+reuse the historical outcome, including failure, without filesystem work. This is
+not a freshness guarantee. See the [session-local Check contract](../development/plans/catalog-refresh.md#session-local-navigation-check-suppression).
+Explicit recheck semantics remain deferred to TUI design.

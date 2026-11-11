@@ -1,9 +1,9 @@
 # Phase 4.3b — Consistency Checking & Catalog Refresh
 
-**Status:** approved design, not implemented. Public contracts and scope direction
-are settled below; concrete APIs, scheduling details and listed follow-ups remain
-open. This plan does not authorize implementation. Current execution behavior
-remains defined by the [IPC contract](../../contracts/ipc.md#scheduling-and-lifecycle).
+**Status:** implemented Normal Check/Refresh contracts; later/open capabilities are
+marked below. Current execution behavior also follows the
+[IPC contract](../../contracts/ipc.md#scheduling-and-lifecycle). Frontend navigation
+and Push integration remain later work.
 
 ## Terminology
 
@@ -23,8 +23,8 @@ remains defined by the [IPC contract](../../contracts/ipc.md#scheduling-and-life
 
 Provide one generic Application-level Consistency Check: the Frontend identifies
 logical scope, and the Backend chooses the applicable low-cost strategy. Do not
-freeze C++ names/signatures, expose a Count-specific public API or build a checker
-registration framework. Normal initially uses counts; Vault or later Normal checks
+expose a Count-specific public API or build a checker registration framework.
+Concrete interfaces are summarized below. Normal initially uses counts; Vault or later Normal checks
 may use other strategies.
 
 Distinguish three results: no anomaly detected by the performed checks, anomaly
@@ -102,6 +102,27 @@ Do not offer an unsupported partial repair alternative. Full Refresh can itself
 fail on duplicate UUIDs or malformed authoritative data; it is not a guarantee of
 resolution and never silently repairs authoritative files.
 
+## Implemented interfaces and limits
+
+- Shared [maintenance types](../../../lib/include/folio/application/maintenance.hpp):
+  `DirectoryRef` selects Check locations; `RefreshScope` selects `RepositoryScope`
+  or `DirectoryScanScope` (a logical `DirectoryRef` plus Immediate/Recursive
+  `RefreshTraversal`). Repository scope always reconstructs the complete Catalog
+  and has no traversal field. Logs and user Directories have no recursive children.
+- Check returns `ApplicationResult<ConsistencyCheckResult>`: the two successful
+  observations are `NoAnomalyDetected` and `AnomalyDetected`; inability to complete
+  is an ApplicationError. Membership counts use immutable reverse indices without
+  copying/filtering Record metadata; the physical count is raw iteration.
+- Refresh returns `ApplicationResult<std::monostate>`. `FullRefreshRequired`
+  identifies scoped identity/location ambiguity; `ErrorAction::Refresh` is an
+  explicit user choice, never automatic execution. Stale Loads advertise it.
+- Repository `scan(type, directory, recursive)` reuses the full-scan parser/validation path;
+  scoped scans do not read unselected modules or member bodies. Scoped candidates
+  retain unscanned entries and validate complete UUID/membership/path invariants.
+- Scoped publication preserves global readiness, including Inconsistent. Full
+  successful reconstruction can restore Ready. Neither writes the Index or
+  removes the Session Marker. Failed scans/candidates retain the previous state.
+
 ## Responsibility and extension boundaries
 
 Refresh is one externally observable Application Operation with internal workflow
@@ -115,7 +136,9 @@ Keep three responsibilities separate:
 - RequestCoordinator owns dispatch eligibility, reservations, completions and
   response routing through the existing connection machinery.
 - A Backend-private Refresh component owns scope-specific scanning, candidate
-  reconciliation and publication. Its precise API and file placement remain open.
+  reconciliation and publication: `CatalogMaintenance` in
+  `server/include/operations/catalog_maintenance.hpp`. It borrows Repository and
+  Coordinator; worker execution owns its complete workflow.
 - A future consistency-policy owner may decide whether an Access anomaly warrants
   maintenance, user action or no additional action. This mechanism is deferred;
   scheduling must not become a second implementation of consistency policy.
@@ -140,8 +163,9 @@ rules. Resume Mutations after Refresh completes, applying the resulting Catalog
 safety state rather than assuming Refresh succeeded.
 
 Initially apply the same Mutation-wide exclusion to Scoped Refresh. Narrower
-scope-based exclusions are a later design decision. A dedicated maintenance
-thread is not required by this design; worker placement remains to be determined.
+scope-based exclusions are a later design decision. Maintenance executes on the shared Access pool; no dedicated maintenance thread
+is introduced. Checks and Refreshes do not overlap one another, protecting the
+comparison interval against Catalog replacement as well as authoritative writes.
 
 ```text
 CONNECTION WORKERS        REQUEST COORDINATOR          EXECUTION WORKERS
@@ -159,9 +183,10 @@ Receive final result <--- Resume eligible Mutations
 Refresh performs no scan or blocking operation on the coordinator thread. Building
 the candidate happens privately; complete publication and status capture must use
 the synchronized Catalog boundary. Existing Access operations retain immutable
-views. Current `CatalogCoordinator::refresh_all()` assumes drained execution and
-must be adapted before concurrent Refresh is enabled; immutable views alone do
-not establish thread safety for that method.
+views. Full rebuild now publishes under the Coordinator publication mutex. Scoped
+reconciliation uses `publish_scoped_refresh()` at the same boundary; no mutex spans
+Repository scanning or query evaluation. Scheduling excludes other writers;
+startup/finalization still require drained execution.
 
 ## Queue state, wakeups and dispatch precedence
 
@@ -175,34 +200,31 @@ coordinator's condition variable. Predicate-based waiting under the same mutex
 prevents lost wakeups. Completion notification does not interrupt a coordinator
 action already executing: all coordination actions must remain short.
 
-The dispatch loop must preserve this order:
+The dispatch loop preserves completion-first scheduling:
 
 ```text
 Process available completions; release finished reservations
                          |
                          v
-Refresh pending and now eligible? -- yes --> Dispatch Refresh
-                         |
-                         no
-                         v
-Dispatch one eligible ordinary request
+Select next ordinary eligible queued request
+  - pending Refresh prevents new Mutation dispatch
+  - active maintenance reservations remain enforced
                          |
                          v
 Return to completion processing before selecting more work
 ```
 
-If a Mutation finishes during one short ordinary dispatch, that dispatch may
-finish before its completion is observed. No new Mutation can slip ahead because
-pending Refresh already prevents Mutation dispatch. An Access dispatched in this
-interval is permitted to overlap Refresh. The coordinator must not join, wait for
-an operation result or execute filesystem work to establish this ordering.
+Latest priority clarification: do not add a dedicated Check/Refresh priority branch
+now. Ordinary eligible selection applies; a pending Refresh still defers Mutations
+as required by its execution contract. If a Mutation finishes during one short
+ordinary dispatch, that dispatch may finish before completion is observed. The
+coordinator never joins, waits for results or performs filesystem work.
 
-**Implementation obligation:** at the dispatch-selection branch corresponding to
-“Refresh pending and now eligible?”, add a code comment explaining that Refresh
-precedence is a specific initial policy, not a complete priority system. Future
-rules, such as lower-priority Batch work, must be reconciled at this point while
-preserving conflict ordering and considering starvation. Do not add a generic
-priority mechanism now.
+**Important implementation follow-up — CONS-03:** add a code TODO at this selection
+point for the future priority system. Refresh must have highest priority in that
+system; lower-priority Batch work and fairness/starvation must be reconciled there.
+This makes priority-system design increasingly necessary as maintenance cases grow.
+Do not implement a generic priority mechanism or a temporary special priority rule.
 
 ## Access anomalies while Refresh is in progress
 
@@ -230,7 +252,9 @@ the subscriber list: it reports one outcome; coordination completes all associat
 tickets from that outcome. Later requests can therefore join while execution runs
 without editing the worker's captures. Preserve per-request admission/resource
 accounting, request-specific delivery and accepted-work lifetime after disconnect.
-Actual declarations and safe result sharing/copying remain implementation details.
+The shared execution owns its outcome; the coordinator owns the subscriber list.
+Ordinary results move to their sole ticket; additional Refresh subscribers receive
+the same small encoded result. Every request retains admission/resource accounting.
 
 Use a uniform execution-to-ticket association: an execution completes one or more
 request tickets, with ordinary operations retaining exactly one. Normal admission,
@@ -269,7 +293,15 @@ This is an execution reservation, not an Edit Lock. Coherence assumes the agreed
 absence of concurrent external filesystem modifications; equal counts remain only
 a heuristic consistency indication.
 
-This settles execution safety, not dispatch precedence. Frontend navigation and explicit Refresh behavior are defined above. Track related
+This settles execution safety, not dispatch precedence. Until a priority system is
+implemented, Checks use ordinary eligible-request selection; do not add a special
+Check-versus-Refresh priority branch. An already running Check retains its
+reservation until completion. The future priority system must give Refresh its
+highest priority. Implementing that system is an important follow-up: maintenance
+reservations make dispatch policy increasingly consequential, not merely an
+optional performance optimization.
+
+Frontend navigation and explicit Refresh behavior are defined above. Track related
 scheduling cases together below.
 
 ## Collected special dispatch cases
@@ -281,8 +313,8 @@ policy can be designed from actual requirements rather than scattered exceptions
 
 | Case | Settled execution requirement | Dispatch policy / unresolved interaction |
 | --- | --- | --- |
-| Refresh (Full and Scoped workflows) | Wait for active Mutation completion; exclude new Mutations while pending/running; allow Access; execute off the coordinator thread. | Eligible Refresh takes precedence over ordinary dispatch after completion processing. Ordering/coalescing with Count Checks and starvation policy remain open. |
-| Consistency Check (initial Normal count strategy) | Reserve against Mutations before Catalog capture; hold through physical counting/comparison and completion; allow Access; execute off the coordinator thread. | Ordering relative to Refresh and waiting Mutations, coalescing and starvation policy remain open. Do not assume Refresh precedence automatically applies to Count Checks. |
+| Refresh (Full and Scoped workflows) | Wait for active Mutation completion; exclude new Mutations while pending/running; allow Access; execute off the coordinator thread. | Completion-first ordinary eligible selection; pending Refresh defers Mutations. No dedicated Check/Refresh priority branch until the priority system exists. General coalescing/fairness policy remains open. |
+| Consistency Check (initial Normal count strategy) | Reserve against Mutations before Catalog capture; hold through physical counting/comparison and completion; allow Access; execute off the coordinator thread. | Ordinary eligible selection initially; no dedicated Check priority rule. General fairness/coalescing policy remains open. |
 
 Reservation answers what may overlap; precedence answers what is dispatched next.
 Reconcile both cases at the dispatch-selection point described above, including
@@ -305,8 +337,8 @@ global readiness remains open.
 
 Keep Session Marker, Index durability, connection-owned Edit Locks, safe shutdown
 finalization and RepositoryOwnership guarantees. Refresh does not clear locks,
-overwrite drafts or justify finalizing Storage under active execution. Exact runtime
-integration remains to be designed; do not introduce another Catalog state machine.
+overwrite drafts or justify finalizing Storage under active execution. Lifecycle draining includes pending, active and joined maintenance requests;
+finalization follows worker completion. No new Catalog state machine is introduced.
 
 The Frontend retains unsaved/unconfirmed content and submission evidence under the
 [Mutation result contract](../../contracts/mutations.md#results-and-evidence) and
@@ -322,9 +354,9 @@ continue to own later features. They do not authorize implementation.
 
 | ID | Status | Missing decision/capability and revisit point |
 | --- | --- | --- |
-| CONS-01 | Deferred Implementation / Open Design Decision | Implement the approved Check/Refresh contracts in 4.3b after reviewing concrete private Refresh APIs, worker placement, reconciliation details, bounded resources and shutdown integration. Current internal full rebuild requires drained execution. |
+| CONS-01 | Implemented | `BackendConnectionHandle::check_consistency(DirectoryRef)` and `refresh(RefreshScope)` use the shared IPC/Access pool. `CatalogMaintenance` performs scanning/reconciliation, `CatalogCoordinator` publishes, and RequestCoordinator reserves/drains maintenance and shares pending/running Full Refresh executions. |
 | CONS-02 | Deferred Implementation / Open Design Decision | General consistency-policy ownership and anomaly/view/scope coverage tracking are outside immediate scope. Revisit only if explicit errors, Full Refresh coalescing and future Push leave a concrete need; preserve originating failures. |
-| CONS-03 | Approved direction / Open Design Decision | Coalesce pending/running Full Refresh requests; accept the documented late-request race. Scoped merging, Check/Refresh mutual ordering and general fairness remain open at dispatch selection. Refresh precedence is not a general priority policy; Batch priority is a future extension. |
+| CONS-03 | Approved direction / Open Design Decision | Coalesce pending/running Full Refresh requests; accept the documented late-request race. Scoped merging and general fairness remain open at dispatch selection. Check/Refresh initially use ordinary eligible selection without special priority handling. The priority system is an important next design task: Refresh must have highest priority, while Batch work motivates lower priorities. Current ordinary eligible selection is not a complete priority/fairness guarantee. |
 | CONS-04 | Open Design Decision | Decide if and how scoped reconciliation may restore globally Inconsistent readiness; successful local repair alone is insufficient evidence. Revisit before approving state transitions. |
 | CONS-05 | Deferred Implementation / Open Design Decision | Choose Vault low-cost checking strategy in Vault design; Normal filesystem counts do not establish Vault layout or privacy rules. |
 | CONS-06 | Not Guaranteed | Count equality is not full verification; Refresh is not authoritative repair or proof of Mutation execution. Preserve these limits in APIs and future UI. |
@@ -337,3 +369,30 @@ in their respective future designs; this phase introduces none. Existing
 [Mutation](../../contracts/mutations.md#traceable-follow-up-work) and
 [IPC](../../contracts/ipc.md#deferred-decisions) TODOs retain ownership of receipts,
 replay/deduplication, cancellation and related guarantees.
+
+## Session-local navigation Check suppression
+
+Automatic navigation Checks execute at most once per logical scope per Backend
+session, across all Frontends. CatalogMaintenance owns the once-per-scope policy and historical outcomes.
+RequestCoordinator only associates duplicate pending/running requests with one
+execution: pending/running duplicates attach result tickets through the existing
+shared-completion path. Once complete, later requests receive the retained
+historical outcome without another filesystem count. The ordinary short maintenance reservation
+still applies; there is no coordinator-side completed-result cache.
+Failures also count as attempted; navigation must not cause repeated retries.
+Only the result/exception is retained, not request captures or subscriber tickets.
+Backend restart resets this tracking. Mutation and Refresh do not reset it.
+
+This avoids repeated navigation overhead, not an upper bound on an individual
+filesystem operation. Results are historical observations, not current consistency
+certificates; external changes after checking can remain undetected. Browse still
+runs independently and remains Catalog-only.
+
+**Deferred Implementation:** explicit user-requested rechecking/bypass semantics
+must be discussed with TUI integration; the present API has no force-check flag.
+
+Check and Refresh share the RequestCoordinator Maintenance lane: both execute on
+Access workers with the same active maintenance/Mutation exclusion. Operation
+identity remains separate: pending Refresh defers new Mutations, pending Check
+does not. Lane is not priority; the future priority system must select Refresh
+ahead of Check despite their shared lane. Ticket sharing remains operation-specific.

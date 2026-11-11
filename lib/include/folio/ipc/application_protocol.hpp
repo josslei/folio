@@ -2,12 +2,20 @@
 
 #include <folio/application/error.hpp>
 #include <folio/application/query.hpp>
+#include <folio/application/maintenance.hpp>
 #include <folio/application/mutation.hpp>
 #include <folio/core/log.hpp>
 #include <folio/core/memo.hpp>
 
 // Shared wire value types, not Backend handlers or the public business API.
 namespace folio::application::internal {
+
+struct CheckConsistencyRequest {
+  DirectoryRef scope;
+};
+struct RefreshRequest {
+  RefreshScope scope;
+};
 
 struct BrowseRequest {
   DirectoryRef dir;
@@ -115,15 +123,16 @@ using MutationValue = std::variant<core::LogMetadata, core::MemoMetadata, core::
                                    core::DirectoryMetadata>;
 using NormalMutationResponse = MutationResponse<MutationValue>;
 
-using OperationRequest = std::variant<BrowseRequest, QueryRecordsRequest, ListDirectoriesRequest,
-                                      LoadLogRequest, LoadMemoRequest, LoadTodoRequest,
-                                      MutationRequest, AcquireEditRequest, ReleaseEditRequest>;
+using OperationRequest =
+    std::variant<BrowseRequest, QueryRecordsRequest, ListDirectoriesRequest, LoadLogRequest,
+                 LoadMemoRequest, LoadTodoRequest, MutationRequest, AcquireEditRequest,
+                 ReleaseEditRequest, CheckConsistencyRequest, RefreshRequest>;
 
 using OperationResponse =
     std::variant<ApplicationResponse<BrowseResult>,
                  ApplicationResponse<std::vector<core::RecordMetadata>>,
                  ApplicationResponse<std::vector<core::DirectoryMetadata>>, core::Log::Snapshot,
                  core::Memo::Snapshot, core::Todo::Snapshot, ApplicationError,
-                 NormalMutationResponse, std::monostate>;
+                 NormalMutationResponse, std::monostate, ConsistencyCheckResult>;
 
 } // namespace folio::application::internal

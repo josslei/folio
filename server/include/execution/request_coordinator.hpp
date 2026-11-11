@@ -23,10 +23,14 @@ public:
   using Result = core::Result<Message, IpcError>;
   using Action = std::function<Result()>;
   using Preparation = std::function<Action()>;
-  enum class Lane { Control, Query, Load, Mutation };
+  enum class Lane { Control, Query, Load, Mutation, Maintenance };
   struct Plan {
     Lane lane = Lane::Mutation;
     std::optional<std::string> entry;
+    bool full_refresh = false;
+    std::optional<std::string> check_scope; // pending/running duplicate identity
+    // Operation identity is distinct from lane/reservations and future priority.
+    bool refresh = false; // pending Refresh defers new Mutations; Check does not
   };
   /// Scheduling requirements only; no Catalog lookup or business validation.
   static Plan plan(const OperationRequest& request);
@@ -69,10 +73,21 @@ public:
   void drain();
 
 private:
+  struct Subscriber {
+    std::shared_ptr<Ticket> ticket;
+    // Retains each admitted request's session/resource captures until completion.
+    Preparation retained;
+  };
+  struct Execution {
+    std::vector<Subscriber> subscribers; // coordinator mutex; never read by workers
+    bool executing = false;
+    std::optional<Result> result; // worker publishes through completed_ synchronization
+    std::exception_ptr exception;
+  };
   struct Work {
     Plan plan;
     Preparation prepare;
-    std::shared_ptr<Ticket> ticket;
+    std::shared_ptr<Execution> execution;
   };
   /// Coordination thread: consume completions, reserve eligible work and prepare dispatch.
   void coordinate();
@@ -85,15 +100,19 @@ private:
   /// Coordination thread only, with mutex_ held, after execution and protection cleanup.
   void release(const Work& work);
   const std::size_t capacity_;
-  /// Protects queue_, completed_, outstanding_ and accepting_. IpcServer may enter admission
+  /// Protects queue_, completed_, full_refresh_, checks_, Execution subscriber lists/stages,
+  /// outstanding_ and accepting_. IpcServer may enter admission
   /// while holding its connection-state lock; never call actions or IpcServer
   /// while holding this mutex. Ticket locks are acquired separately, not nested.
   std::mutex mutex_;
   std::condition_variable changed_;
   std::deque<Work> queue_;
   std::vector<Work> completed_;
+  std::weak_ptr<Execution> full_refresh_; // mutex_; only pending/running execution
+  // Pending/running duplicate association only; Check policy belongs to maintenance.
+  std::map<std::string, std::weak_ptr<Execution>> checks_;
   // The coordination thread alone owns lane counts and Entry reservations.
-  std::array<std::size_t, 4> active_{};
+  std::array<std::size_t, 5> active_{};
   std::map<std::string, std::size_t> readers_;
   std::optional<std::string> writer_;
   const std::size_t access_workers_;

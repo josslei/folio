@@ -176,10 +176,18 @@ public:
   // persist the Index. Do not call it for
   // ordinary CRUD, queries, or directory navigation.
   // Reads formal files and returns metadata with actual relative locators.
+  // Absent type scans the entire Repository. A selected Directory includes its
+  // metadata and immediate members; recursive controls Root member traversal.
   // Snapshots are projected per file; bodies are not retained in the result.
   // Missing roots/modules are empty. Unrelated objects produce diagnostics;
   // malformed managed content, duplicate identities, and unsafe paths fail.
-  [[nodiscard]] StorageResult<NormalRepositoryScanResult> scan() const;
+  [[nodiscard]] StorageResult<NormalRepositoryScanResult>
+  scan(std::optional<RecordType> type = {}, std::optional<core::Id> directory = {},
+       bool recursive = true) const;
+  /// Raw immediate entry count, with safe-path validation but no file classification.
+  /// Missing module Roots count as empty; missing user Directories are errors.
+  [[nodiscard]] StorageResult<std::size_t>
+  count_entries(RecordType type, std::optional<core::Id> directory = {}) const;
 
 private:
   std::filesystem::path root_;

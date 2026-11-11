@@ -733,6 +733,26 @@ std::optional<DirectoryMetadata> MetadataCatalogView::find_directory(const Id& i
   const auto it = directories_.find(id.to_string());
   return !it ? std::nullopt : std::optional<DirectoryMetadata>{**it};
 }
+std::size_t MetadataCatalogView::record_count(RecordType type, std::optional<Id> directory) const {
+  if (directory) {
+    const auto* members = state_->directory_members_.find(directory->to_string());
+    return members ? members->size() : 0;
+  }
+  switch (type) {
+  case RecordType::Log:
+    return state_->log_roots_.size();
+  case RecordType::Memo:
+    return state_->memo_roots_.size();
+  case RecordType::Todo:
+    return state_->todo_roots_.size();
+  }
+  return 0;
+}
+std::size_t MetadataCatalogView::directory_count(DirectoryKind kind) const {
+  return std::count_if(state_->directories_.begin(), state_->directories_.end(),
+                       [kind](const auto& pair) { return pair.second->metadata.kind == kind; });
+}
+
 RootListing MetadataCatalogView::list_root(RecordType module) const {
   const auto& logs_ = state_->logs_;
   const auto& memos_ = state_->memos_;

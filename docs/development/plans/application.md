@@ -24,7 +24,7 @@ recipient rules. No temporary notification protocol is authorized.
 
 ## Navigation and verification
 
-Catalog queries remain memory-only. The approved
+Catalog queries remain memory-only. The implemented Backend
 [4.3b navigation and Consistency Check contract](catalog-refresh.md#consistency-check-and-navigation)
 separates Browse/display from a navigation-triggered Check and user-authorized
 Refresh. Its generic Backend Check initially counts all direct entries without
@@ -49,7 +49,7 @@ need the same evaluation engine.
 
 Before implementing the corresponding feature, settle its open contracts: event
 recipients/order, UI worker ownership/reconnection, revision checking and Recovery
-reconciliation and the remaining [4.3b implementation decisions](catalog-refresh.md#traceable-follow-ups). Existing
+reconciliation and the remaining [maintenance follow-up decisions](catalog-refresh.md#traceable-follow-ups). Existing
 ownership, protocol-v1 and lock contracts are not reopened merely by moving this
 plan. Native platform behavior still needs platform-specific verification.
 

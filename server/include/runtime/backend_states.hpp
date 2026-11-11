@@ -1,4 +1,5 @@
 #pragma once
+#include "operations/catalog_maintenance.hpp"
 
 #include "runtime/backend_state_machine.hpp"
 #include "ipc/ipc_server.hpp"
@@ -42,6 +43,7 @@ struct BackendContext {
   storage::MetadataCatalog catalog;
   std::unique_ptr<storage::NormalRepository> repository;
   std::unique_ptr<storage::CatalogCoordinator> coordinator;
+  std::unique_ptr<CatalogMaintenance> maintenance;
   std::unique_ptr<AccessOrchestrator> access;
   std::unique_ptr<MutationOrchestrator> mutations;
   std::unique_ptr<IpcServer> runtime;

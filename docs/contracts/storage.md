@@ -127,12 +127,12 @@ Decoding never receives a mutable live catalog. It restores Directory records be
 
 ### Persistent cache policy and reconstruction
 
-Persistent indexes are low-priority, rebuildable caches, rather than authoritative databases. The Normal cache is <application.cache>/index/normal.msgpack, outside authoritative roots, and must not be committed or pushed to Git. The persistence lifecycle is strict: attempt to load the persisted index at most once at application startup, use the in-memory catalog for the entire session, and normally save the complete index during orderly shutdown when necessary. Saving once is a caller policy, not an enforced attempt limit. There are no index disk reads or writes during ordinary application operations. The internal coordinator guards repeated startup loading but permits repeated save calls; Backend lifecycle wiring is implemented; public Refresh/count-check integration remains deferred. Missing, unsupported, or corrupted caches must never modify authoritative Entries. Ordinary listing, filtering, and metadata search use the loaded catalog without parsing Entry files again.
+Persistent indexes are low-priority, rebuildable caches, rather than authoritative databases. The Normal cache is <application.cache>/index/normal.msgpack, outside authoritative roots, and must not be committed or pushed to Git. The persistence lifecycle is strict: attempt to load the persisted index at most once at application startup, use the in-memory catalog for the entire session, and normally save the complete index during orderly shutdown when necessary. Saving once is a caller policy, not an enforced attempt limit. There are no index disk reads or writes during ordinary application operations. The internal coordinator guards repeated startup loading but permits repeated save calls; Backend lifecycle wiring is implemented; public Consistency Check and Scoped/Full Refresh are implemented; Frontend navigation UI remains deferred. Missing, unsupported, or corrupted caches must never modify authoritative Entries. Ordinary listing, filtering, and metadata search use the loaded catalog without parsing Entry files again.
 
 External editing, renaming, replacement, or deletion of Entry files is allowed, but is an exceptional workflow rather than ordinary Folio usage. These low-probability external changes and abnormal termination may leave the Index or Catalog stale. Folio deliberately avoids routine overhead to detect every such change: a successfully decoded Index is accepted without additional full filesystem validation, and ordinary Catalog queries perform no filesystem I/O. Explicit full Refresh provides authoritative reconstruction when needed; known-locator reads still validate the requested Entry identity and report stale locators for explicit caller-directed discovery.
 
-**Approved, not implemented:** navigation triggers a separate generic Consistency
-Check after Browse/display. Normal counts direct filesystem entries without
+**Implemented Backend contract / deferred UI:** navigation triggers a separate
+generic Consistency Check after Browse/display. Normal counts direct filesystem entries without
 classifying formal Entry files; Root overhead is 0 and user Directory overhead is
 1 for `.folio-dir.toml`. The [4.3b plan](../development/plans/catalog-refresh.md)
 owns count formulas, heuristic limitations, reservations, explicit Refresh and
@@ -179,7 +179,7 @@ The intended architecture is catalog-centric:
 
 This is a responsibility diagram, not a literal call sequence: the coordinator invokes IndexCodec and filesystem byte I/O. `Rebuild(metadata)` means reconstructing the catalog's derived structures from primary metadata, without filesystem I/O. Explicit full rebuild delegates authoritative reading to NormalRepository; Caller-supplied Repository callbacks apply saved metadata to the active Catalog. The coordinator tracks availability and known inconsistency separately from Index persistence state.
 
-The Application owner owns MetadataCatalog, CatalogCoordinator, and NormalRepository as separate components. The internal `CatalogCoordinator(StoragePaths, MetadataCatalog&)` borrows that active Catalog and coordinates explicit startup loading and orderly shutdown saving. The Catalog must outlive the coordinator and use of its callbacks; declare the Catalog before the coordinator in the owning object. It combines configured paths, IndexCodec, and generic filesystem byte I/O. It does not write authoritative Entries, implement serialization, or perform filesystem discovery. `startup_load()` performs startup loading with authoritative fallback; `shutdown_save()` performs orderly persistence. `refresh_all()` explicitly replaces the entire Catalog from authoritative Normal files through the existing `rebuild()` operation. The shared `rebuild()` implementation is private. The owner accesses its Catalog directly, without a coordinator forwarding accessor; `status()` reports Unloaded, Ready, Unavailable, or Inconsistent. Inconsistent blocks Index persistence until a successful full Refresh establishes a complete reconciled Catalog. The coordinator is non-copyable and non-movable so session guards and self-capturing callbacks cannot be duplicated or invalidated. No I/O occurs in its constructor or destructor. Application/TUI wiring remains deferred.
+The Application owner owns MetadataCatalog, CatalogCoordinator, and NormalRepository as separate components. The internal `CatalogCoordinator(StoragePaths, MetadataCatalog&)` borrows that active Catalog and coordinates explicit startup loading and orderly shutdown saving. The Catalog must outlive the coordinator and use of its callbacks; declare the Catalog before the coordinator in the owning object. It combines configured paths, IndexCodec, and generic filesystem byte I/O. It does not write authoritative Entries, implement serialization, or perform filesystem discovery. `startup_load()` performs startup loading with authoritative fallback; `shutdown_save()` performs orderly persistence. `refresh_all()` explicitly replaces the entire Catalog from authoritative Normal files through the existing `rebuild()` operation. The shared `rebuild()` implementation is private. The owner accesses its Catalog directly, without a coordinator forwarding accessor; `status()` reports Unloaded, Ready, Unavailable, or Inconsistent. Inconsistent blocks Index persistence until a successful full Refresh establishes a complete reconciled Catalog. The coordinator is non-copyable and non-movable so session guards and self-capturing callbacks cannot be duplicated or invalidated. No I/O occurs in its constructor or destructor. Backend Application wiring is implemented; TUI integration remains deferred.
 
 `startup_load()` reports an `InitializationOutcome`. An absent `index_error` means the persisted Index was adopted; a present error records the missing, corrupt, unsupported-schema, or resource-limit reason that led to a successful authoritative rebuild. Excluded-object diagnostics from rebuilding are returned separately. Path and I/O errors do not trigger fallback. If reconstruction fails, its contextual error is returned and no incomplete candidate is published. Startup initialization shares the existing load-attempt guard, so it cannot reload an already initialized or explicitly rebuilt Catalog. A failed initialization remains distinguishable from an empty successful reconstruction by its result and Unavailable status.
 
@@ -267,7 +267,7 @@ Caller -> Repository(UUID, optional relative locator)
                                         -> caller updates Catalog locator
 ```
 
-No automatic discovery fallback is introduced. Unsafe paths, malformed documents, and other filesystem failures retain their own errors. Manual Refresh scans authoritative files, rather than reloading or immediately saving the persistent index. Application-level targeted correction policy and directory-count checks remain deferred. Unexpected termination may leave a stale cache; authoritative files remain recoverable.
+No automatic discovery fallback is introduced. Unsafe paths, malformed documents, and other filesystem failures retain their own errors. Manual Refresh scans authoritative files, rather than reloading or immediately saving the persistent index. Application-level targeted correction policy remains deferred; generic Checks and explicit Scoped/Full Refresh are implemented. Unexpected termination may leave a stale cache; authoritative files remain recoverable.
 
 ### Vault index synchronization policy
 
@@ -477,11 +477,12 @@ Root Browse and Index encoding use one view across their related reads. Index sc
 and Repository/Coordinator callbacks are unchanged. Index-dirty bookkeeping remains
 Catalog-owned and separate from retained views.
 
-One Mutation worker owns Catalog writes. Concurrent capture uses
+One Mutation worker owns ordinary Catalog writes. Maintenance excludes Mutations
+while capturing/reconciling state. Concurrent capture uses
 `CatalogCoordinator::read_state()`, which synchronizes readiness and immutable-root
-capture with managed callbacks under one short publication mutex. Startup, full
-rebuild/Refresh and Index finalization require drained execution; this refactor
-does not add concurrent lifecycle I/O or background Index saving. Old views are
+capture with managed callbacks and maintenance publication under one short mutex.
+Startup and Index finalization require drained execution; explicit Refresh can
+coexist with immutable Access, without background Index saving. Old views are
 valid metadata snapshots, not proof that their filesystem locators remain current.
 Long readers retain old structural branches until their views are released.
 
@@ -547,3 +548,15 @@ On validation failure or an exception, B is discarded and Catalog continues to
 retain A. An identical update also leaves the current state and dirty flag
 unchanged. No rollback of A is needed: A was never modified. Shared ownership
 releases old states and their unshared data after their last owners disappear.
+
+## Application maintenance publication
+
+[Consistency Check and Refresh](../development/plans/catalog-refresh.md) are
+implemented through private `CatalogMaintenance`. NormalRepository exposes scoped
+scanning and raw direct-entry counts. Reconciliation builds a separate complete
+candidate; the Coordinator publication mutex protects adoption/status capture,
+not filesystem scanning. Refresh excludes Mutations while immutable Access views
+remain valid. Scoped publication retains global readiness; Full rebuild may
+restore Ready. Neither maintenance operation repairs Entry files or certifies an
+uncertain authoritative Mutation, and Refresh does not itself persist the Index
+or clear the Session Marker.

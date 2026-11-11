@@ -70,9 +70,10 @@ Private process code uses `folio::application::internal`. Domain/Storage namespa
 
 | Component | Responsibility / evidence |
 | --- | --- |
-| [NormalRepository](../../server/include/storage/normal_repository.hpp) | Authoritative Normal Entry operations; targeted identity verification, explicit UUID discovery, full scan |
+| [NormalRepository](../../server/include/storage/normal_repository.hpp) | Authoritative Normal Entry operations; targeted identity verification, explicit UUID discovery, scoped/full scan and direct-entry counts |
 | [MetadataCatalog](../../server/include/storage/metadata_catalog.hpp) | Four typed maps, derived UUID membership sets, non-recursive listing and Record metadata search; no filesystem I/O |
 | [CatalogCoordinator](../../server/include/storage/catalog_coordinator.hpp) | Borrows owner-supplied Catalog; startup, full Refresh, Index shutdown persistence, stored synchronization callbacks and consistency status |
+| [CatalogMaintenance](../../server/include/operations/catalog_maintenance.hpp) | Backend Check/Refresh workflow; logical scope resolution, scan reconciliation and candidate publication through Coordinator |
 | [IndexCodec](../../server/include/storage/index_codec.hpp) | Pure deterministic MessagePack encode/decode; temporary validated Catalog, no file I/O |
 | [I/O](../../lib/include/folio/io/filesystem.hpp) | Generic byte reads, atomic create/replace, and durability operations |
 | [Storage common types](../../server/include/storage/common.hpp) | Storage-specific errors, mixed Repository results, and effective-path validation |
@@ -153,12 +154,12 @@ scheduling are execution policy; they do not define new domain operation types.
 | `runtime/` | Backend lifecycle, resource assembly and lifetime, Repo ownership and safe finalization; not a container for all threaded code |
 | `ipc/` | Connections, protocol handling, admission acknowledgments and response delivery |
 | `execution/` | RequestCoordinator, scheduling eligibility, execution capacity and worker/completion coordination; one shared queue, short coordination and bounded execution workers |
-| `operations/` | Application business rules and orchestration through AccessOrchestrator and MutationOrchestrator: prerequisites, lower-level call sequencing and public result interpretation |
+| `operations/` | Application business rules and orchestration through AccessOrchestrator, MutationOrchestrator and CatalogMaintenance: prerequisites, lower-level call sequencing and public result interpretation |
 | `storage/` | Authoritative persistence, Catalog projections and Coordinator consistency mechanisms |
 
 Put a future operation helper under `operations/` when it implements Application
-semantics by coordinating lower-level components. Delete, Trash or Refresh
-orchestration could fit there once separately authorized. One operation does not
+semantics by coordinating lower-level components. CatalogMaintenance follows this boundary. Delete or Trash orchestration could fit
+there once separately authorized. One operation does not
 require one class/file. Worker pools, queue accounting, codecs, filesystem
 primitives and Core models have other owners. Repository still owns persistence
 sequencing and invokes Coordinator callbacks; operation orchestration must not

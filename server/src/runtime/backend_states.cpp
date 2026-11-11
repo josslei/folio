@@ -65,6 +65,8 @@ BackendActionOutcome Bootstrap(BackendContext& context) {
 }
 
 BackendActionOutcome Serve(BackendContext& context) {
+  context.maintenance =
+      std::make_unique<CatalogMaintenance>(*context.repository, *context.coordinator);
   context.access = std::make_unique<AccessOrchestrator>(context.catalog, *context.repository,
                                                         *context.coordinator);
   context.mutations = std::make_unique<MutationOrchestrator>(context.catalog, *context.repository,
@@ -76,6 +78,10 @@ BackendActionOutcome Serve(BackendContext& context) {
   context.runtime = std::make_unique<IpcServer>(
       *context.ownership, IpcServer::Handler{}, "", limits,
       [&](OperationRequest request, Session session) -> IpcServer::PreparedAction {
+        if (auto* check = std::get_if<CheckConsistencyRequest>(&request))
+          return [&context, scope = check->scope] { return context.maintenance->check(scope); };
+        if (auto* refresh = std::get_if<RefreshRequest>(&request))
+          return [&context, scope = refresh->scope] { return context.maintenance->refresh(scope); };
         if (std::holds_alternative<MutationRequest>(request) ||
             std::holds_alternative<AcquireEditRequest>(request) ||
             std::holds_alternative<ReleaseEditRequest>(request))
@@ -180,6 +186,7 @@ BackendActionOutcome Finish(BackendContext& context) {
     failed = true;
     cleanup_error({Phase::Finish, std::current_exception()});
   }
+  context.maintenance.reset();
   context.coordinator.reset();
   context.repository.reset();
   context.ownership.reset();

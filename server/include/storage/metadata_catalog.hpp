@@ -173,6 +173,10 @@ public:
   [[nodiscard]] bool contains_entry(const Id& id) const;
   [[nodiscard]] std::optional<RecordMetadata> find_record(const Id& id) const;
   [[nodiscard]] std::optional<DirectoryMetadata> find_directory(const Id& id) const;
+  /// Count immediate membership without copying metadata or evaluating a query.
+  /// Caller validates type and Directory existence/kind before selecting a scope.
+  [[nodiscard]] std::size_t record_count(RecordType type, std::optional<Id> directory = {}) const;
+  [[nodiscard]] std::size_t directory_count(DirectoryKind kind) const;
   [[nodiscard]] RootListing list_root(RecordType module) const;
   [[nodiscard]] ::folio::core::Result<std::vector<RecordMetadata>, StorageError>
   list_directory(DirectoryKind kind, const Id& id) const;

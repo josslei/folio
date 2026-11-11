@@ -16,7 +16,7 @@ or a proof against every failure.
 | Peer Access/Mutation orchestrators borrow Storage; Repository plus matching Coordinator callbacks owns persistence/synchronization sequencing. Implemented. | [Orchestration boundary](../contracts/mutations.md#application-orchestration-boundary--reviewed) | [Orchestrators](../../server/include/operations), [mutation tests](../../tests/application/mutation_orchestrator_test.cpp) |
 | Ordinary access uses current known locators, not implicit discovery/Full Refresh. Missing Catalog identity differs from stale authoritative location; usable inconsistent metadata may carry a warning. Implemented. | [Access errors](../contracts/access.md#errors-and-consistency) | [AccessOrchestrator](../../server/src/operations/access_orchestrator.cpp), [integration tests](../../tests/application/metadata_access_integration_test.cpp) |
 
-## Consistency Checking and Refresh — approved, not implemented
+## Consistency Checking and Refresh — implemented Backend contracts
 
 The [4.3b plan](../development/plans/catalog-refresh.md) owns the detailed contract:
 Browse remains Catalog-only; navigation requests a separate low-cost Check; anomalies
@@ -48,7 +48,7 @@ Refresh is projection reconstruction, not Draft/uncertain-Mutation Recovery.
 | Publication differs from durability; Applied can accompany later Catalog failure. Evidence is historical, not recovery authorization. Implemented for current operations. | [Failure mapping](../contracts/mutations.md#failure-mappings-and-evidence--implemented) | [I/O evidence](../../lib/include/folio/io/filesystem.hpp), [fault tests](../../tests/application/mutation_orchestrator_test.cpp) |
 | Frontend generates MutationId; Backend generates Entry UUID. Identity does not imply deduplication, receipts or execution proof; missing response never fabricates NotApplied. Implemented; stronger guarantees absent. | [Results and identity](../contracts/mutations.md#results-and-evidence) | [Mutation contracts](../../lib/include/folio/application/mutation.hpp), [correlation tests](../../tests/application/runtime_test.cpp) |
 | Update owns Full Editable Fields; Move owns membership/location; Frontend context is shared and not a revision token. Resolve current state before writing; no duplicate Catalog update. Implemented. | [Field model](../contracts/mutations.md#normal-execution-and-field-semantics--implemented) | [MutationOrchestrator](../../server/src/operations/mutation_orchestrator.cpp), [mutation tests](../../tests/application/mutation_orchestrator_test.cpp) |
-| Acquire lock with authoritative Snapshot; full Update requires ownership. Immediate Move/Rename/status respects ownership without temporary lock records. Accepted actions retain session ownership after disconnect. Implemented. | [Lock lifetime](../contracts/mutations.md#edit-lock-ownership--implemented) | [ConnectionSession](../../server/include/ipc/connection_session.hpp), [lock and disconnect tests](../../tests/application/mutation_orchestrator_test.cpp) |
+| Acquire ownership in memory, Load separately; full Update requires ownership. Immediate Move/Rename/status respects ownership without temporary lock records. Accepted actions retain session ownership after disconnect. Implemented. | [Lock lifetime](../contracts/mutations.md#edit-lock-ownership--implemented) | [ConnectionSession](../../server/include/ipc/connection_session.hpp), [lock and disconnect tests](../../tests/application/mutation_orchestrator_test.cpp) |
 
 ## Supporting systems and future boundaries
 

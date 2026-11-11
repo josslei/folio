@@ -49,6 +49,10 @@ FIELDS(RecordFilters, v.privacy, v.title_contains, v.tag, v.created, v.modified,
 FIELDS(RecordQuery, v.type, v.scope, v.filters, v.order)
 FIELDS(ApplicationError, v.category, v.reason, v.message, v.available_actions)
 FIELDS(ApplicationWarning, v.reason, v.message, v.available_actions)
+FIELDS(RepositoryScope)
+FIELDS(DirectoryScanScope, v.directory, v.traversal)
+FIELDS(CheckConsistencyRequest, v.scope)
+FIELDS(RefreshRequest, v.scope)
 FIELDS(BrowseRequest, v.dir, v.order)
 FIELDS(QueryRecordsRequest, v.query)
 FIELDS(ListDirectoriesRequest, v.kind)
@@ -151,11 +155,17 @@ constexpr auto last(MetadataSort) {
 constexpr auto last(ErrorCategory) {
   return ErrorCategory::ApplicationUnavailable;
 }
+constexpr auto last(RefreshTraversal) {
+  return RefreshTraversal::Recursive;
+}
+constexpr auto last(ConsistencyCheckResult) {
+  return ConsistencyCheckResult::AnomalyDetected;
+}
 constexpr auto last(ErrorReason) {
-  return ErrorReason::CatalogSynchronizationFailed;
+  return ErrorReason::FullRefreshRequired;
 }
 constexpr auto last(ErrorAction) {
-  return ErrorAction::Dismiss;
+  return ErrorAction::Refresh;
 }
 constexpr auto last(AuthoritativeChangeStatus) {
   return AuthoritativeChangeStatus::Unknown;

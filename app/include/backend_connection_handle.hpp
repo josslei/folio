@@ -4,6 +4,7 @@
 #include "backend_launcher.hpp"
 #include <folio/application/error.hpp>
 #include <folio/application/query.hpp>
+#include <folio/application/maintenance.hpp>
 #include <folio/application/mutation.hpp>
 #include <folio/core/log.hpp>
 #include <folio/core/memo.hpp>
@@ -41,6 +42,14 @@ public:
   query_records(const RecordQuery& query = {});
   ApplicationResult<ApplicationResponse<std::vector<core::DirectoryMetadata>>>
   list_directories(core::DirectoryKind kind);
+  /// Compares the selected location with Catalog using a low-cost heuristic.
+  /// Does not refresh or repair; errors are distinct from detected anomalies.
+  /// Automatic navigation Check: one attempt per scope per Backend session.
+  /// Repeated calls return its historical outcome, including failures; not a fresh check.
+  ApplicationResult<ConsistencyCheckResult> check_consistency(DirectoryRef scope);
+  /// Explicitly reconciles the selected Catalog scope without modifying Entries.
+  /// Full Refresh requests share pending/running execution; success is not Recovery.
+  ApplicationResult<std::monostate> refresh(RefreshScope scope = {});
   /// Loads complete authoritative content through the current Catalog locator.
   /// Typed loads reject mismatched types and stale locations without a full scan.
   /// Read-only loading does not acquire editing rights.

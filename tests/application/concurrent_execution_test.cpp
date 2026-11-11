@@ -586,3 +586,219 @@ TEST_F(ConcurrentOperations, AcceptedQueuedMutationRetainsDisconnectedOwnerUntil
 }
 
 } // namespace
+
+namespace {
+TEST(ConcurrentMaintenance, RefreshDefersMutationsAllowsAccessAndSharesRunningResult) {
+  ipc::RequestCoordinator coordinator(8, 2);
+  Gate mutation_gate, refresh_gate;
+  std::promise<void> mutation_started, refresh_started;
+  std::atomic<int> scans = 0, writes = 0;
+  auto mutation = coordinator.admit({Lane::Mutation, "A"}, [&] {
+    return [&] {
+      mutation_started.set_value();
+      mutation_gate.ready.wait();
+      return empty_result();
+    };
+  });
+  ASSERT_EQ(mutation_started.get_future().wait_for(2s), std::future_status::ready);
+  auto refresh = coordinator.admit({Lane::Maintenance, {}, true, {}, true}, [&] {
+    return [&] {
+      ++scans;
+      refresh_started.set_value();
+      refresh_gate.ready.wait();
+      return empty_result();
+    };
+  });
+  auto deferred = coordinator.admit({Lane::Mutation, "B"}, [&] {
+    return [&] {
+      ++writes;
+      return empty_result();
+    };
+  });
+  auto read = coordinator.admit({Lane::Query, {}}, [] { return [] { return empty_result(); }; });
+  EXPECT_TRUE(finished(read));
+  EXPECT_EQ(scans.load(), 0);
+  EXPECT_EQ(writes.load(), 0);
+  mutation_gate.open();
+  ASSERT_EQ(refresh_started.get_future().wait_for(2s), std::future_status::ready);
+  auto joined = coordinator.admit({Lane::Maintenance, {}, true, {}, true}, [&] {
+    return [&] {
+      ++scans;
+      return empty_result();
+    };
+  });
+  ASSERT_TRUE(joined);
+  auto another_read =
+      coordinator.admit({Lane::Load, "A"}, [] { return [] { return empty_result(); }; });
+  EXPECT_TRUE(finished(another_read));
+  EXPECT_EQ(writes.load(), 0);
+  refresh_gate.open();
+  coordinator.drain();
+  EXPECT_TRUE(finished(refresh));
+  EXPECT_TRUE(finished(joined));
+  EXPECT_TRUE(finished(deferred));
+  EXPECT_EQ(scans.load(), 1);
+  EXPECT_EQ(writes.load(), 1);
+}
+TEST(ConcurrentMaintenance, CheckReservationEndsOnFailureAndDoesNotBlockAccess) {
+  ipc::RequestCoordinator coordinator(8, 2);
+  Gate gate;
+  std::promise<void> checking;
+  std::atomic<bool> mutated = false;
+  auto check = coordinator.admit({Lane::Maintenance, {}}, [&] {
+    return [&]() -> ipc::RequestCoordinator::Result {
+      checking.set_value();
+      gate.ready.wait();
+      throw std::runtime_error("check failed");
+    };
+  });
+  ASSERT_EQ(checking.get_future().wait_for(2s), std::future_status::ready);
+  auto mutation = coordinator.admit({Lane::Mutation, {}}, [&] {
+    return [&] {
+      mutated = true;
+      return empty_result();
+    };
+  });
+  auto query = coordinator.admit({Lane::Query, {}}, [] { return [] { return empty_result(); }; });
+  EXPECT_TRUE(finished(query));
+  EXPECT_FALSE(mutated.load());
+  gate.open();
+  coordinator.drain();
+  EXPECT_TRUE(finished(check));
+  EXPECT_TRUE(finished(mutation));
+  EXPECT_TRUE(mutated.load());
+  std::lock_guard lock(check->mutex);
+  EXPECT_TRUE(check->exception);
+}
+TEST(ConcurrentMaintenance, CoalescedRequestsCountAgainstAdmissionAndFailureReachesEveryTicket) {
+  ipc::RequestCoordinator coordinator(2, 1);
+  Gate gate;
+  std::promise<void> started;
+  auto first = coordinator.admit({Lane::Maintenance, {}, true, {}, true}, [&] {
+    return [&]() -> ipc::RequestCoordinator::Result {
+      started.set_value();
+      gate.ready.wait();
+      throw std::runtime_error("refresh failed");
+    };
+  });
+  ASSERT_EQ(started.get_future().wait_for(2s), std::future_status::ready);
+  auto second = coordinator.admit({Lane::Maintenance, {}, true, {}, true},
+                                  [] { return [] { return empty_result(); }; });
+  ASSERT_TRUE(second);
+  EXPECT_FALSE(coordinator.admit({Lane::Maintenance, {}, true, {}, true},
+                                 [] { return [] { return empty_result(); }; }));
+  coordinator.stop_admission();
+  gate.open();
+  coordinator.drain();
+  for (const auto& ticket : {first, second}) {
+    EXPECT_TRUE(finished(ticket));
+    std::lock_guard lock(ticket->mutex);
+    EXPECT_TRUE(ticket->exception);
+    EXPECT_TRUE(std::holds_alternative<ipc::IpcError>(*ticket->result));
+  }
+}
+} // namespace
+
+namespace {
+TEST(ConcurrentMaintenance, CheckAndRefreshUseOrdinaryEligibleSelectionUntilPrioritySystemExists) {
+  ipc::RequestCoordinator coordinator(8, 2);
+  Gate writer_gate, check_gate;
+  std::promise<void> writer_started, check_started;
+  std::atomic<bool> refreshed = false;
+  coordinator.admit({Lane::Mutation, {}}, [&] {
+    return [&] {
+      writer_started.set_value();
+      writer_gate.ready.wait();
+      return empty_result();
+    };
+  });
+  ASSERT_EQ(writer_started.get_future().wait_for(2s), std::future_status::ready);
+  auto check = coordinator.admit({Lane::Maintenance, {}}, [&] {
+    return [&] {
+      check_started.set_value();
+      check_gate.ready.wait();
+      return empty_result();
+    };
+  });
+  auto refresh = coordinator.admit({Lane::Maintenance, {}, true, {}, true}, [&] {
+    return [&] {
+      refreshed = true;
+      return empty_result();
+    };
+  });
+  writer_gate.open();
+  ASSERT_EQ(check_started.get_future().wait_for(2s), std::future_status::ready);
+  EXPECT_FALSE(refreshed.load());
+  check_gate.open();
+  coordinator.drain();
+  EXPECT_TRUE(finished(check));
+  EXPECT_TRUE(finished(refresh));
+  EXPECT_TRUE(refreshed.load());
+}
+} // namespace
+
+namespace {
+TEST(ConcurrentMaintenance, ChecksSharePendingExecutionButDoNotCachePolicyInCoordinator) {
+  for (bool fail : {false, true}) {
+    ipc::RequestCoordinator coordinator(8, 2);
+    Gate gate;
+    std::promise<void> started;
+    std::atomic<int> attempts = 0;
+    auto plan = ipc::RequestCoordinator::plan(ipc::CheckConsistencyRequest{core::RecordType::Memo});
+    auto prepare = [&] {
+      return [&]() -> ipc::RequestCoordinator::Result {
+        ++attempts;
+        started.set_value();
+        gate.ready.wait();
+        if (fail) throw std::runtime_error("check failed");
+        return empty_result();
+      };
+    };
+    auto first = coordinator.admit(plan, prepare);
+    ASSERT_EQ(started.get_future().wait_for(2s), std::future_status::ready);
+    auto second = coordinator.admit(plan, prepare);
+    ASSERT_TRUE(second);
+    gate.open();
+    EXPECT_TRUE(finished(first));
+    EXPECT_TRUE(finished(second));
+    auto repeated = coordinator.admit(plan, [&] {
+      return [&] {
+        ++attempts;
+        return empty_result();
+      };
+    });
+    ASSERT_TRUE(repeated);
+    EXPECT_TRUE(finished(repeated));
+    EXPECT_EQ(attempts.load(), 2);
+    auto other = coordinator.admit(
+        ipc::RequestCoordinator::plan(ipc::CheckConsistencyRequest{core::RecordType::Todo}), [&] {
+          return [&] {
+            ++attempts;
+            return empty_result();
+          };
+        });
+    EXPECT_TRUE(finished(other));
+    EXPECT_EQ(attempts.load(), 3);
+    coordinator.drain();
+  }
+}
+} // namespace
+
+namespace {
+TEST(ConcurrentMaintenance, SharedLanePreservesRefreshAndCheckSchedulingIdentity) {
+  const auto check =
+      ipc::RequestCoordinator::plan(ipc::CheckConsistencyRequest{core::RecordType::Memo});
+  const auto full = ipc::RequestCoordinator::plan(ipc::RefreshRequest{});
+  const auto scoped = ipc::RequestCoordinator::plan(
+      ipc::RefreshRequest{folio::application::DirectoryScanScope{core::RecordType::Memo}});
+  EXPECT_EQ(check.lane, Lane::Maintenance);
+  EXPECT_EQ(full.lane, check.lane);
+  EXPECT_EQ(scoped.lane, check.lane);
+  EXPECT_FALSE(check.refresh);
+  EXPECT_TRUE(check.check_scope);
+  EXPECT_TRUE(full.refresh);
+  EXPECT_TRUE(full.full_refresh);
+  EXPECT_TRUE(scoped.refresh);
+  EXPECT_FALSE(scoped.full_refresh);
+}
+} // namespace

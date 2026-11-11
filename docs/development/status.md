@@ -1,6 +1,6 @@
 # Current development status
 
-**Status:** living capability/limitation summary after Phase 4.3a. Update when
+**Status:** living capability/limitation summary after Phase 4.3b. Update when
 capabilities or verification change; milestone reports do not override this page.
 The [Catalog/concurrent Access design](plans/catalog-concurrency.md) is agreed and
 implemented for the pre-4.3b baseline: immutable Catalog views use Immer;
@@ -22,12 +22,18 @@ Push and Frontend integration retain their later roadmap placement. The
 | Runtime | One Backend, multiple Frontends, ownership, event-driven IPC, shared bounded admission, short coordination, concurrent Access and sequential Mutations |
 | Public Access | Browse, scoped metadata query, Directory listing, typed Record loading |
 | Normal Mutations | Create/Update/Move, Directory Create/Rename and immediate Todo status changes |
+| Catalog maintenance | Generic low-cost Check, unified Scoped/Full Refresh, atomic reconciliation, Full Refresh execution sharing |
 | Editing control | Connection-owned Entry Edit Locks with accepted-work lifetime retention |
 | Configuration/Logging/I/O | Shared factory-template Configuration, process spdlog and byte-oriented atomic file operations |
 | Frontend | Welcome TUI and blocking connection API; functional editor and UI/IPC worker integration deferred |
-| Not implemented | Public Full Refresh/count checks, Push, persistent Draft/compound Recovery, Delete/Trash, Vault and Git Sync |
+| Not implemented | Push, persistent Draft/compound Recovery, Delete/Trash, Vault and Git Sync |
 
 ## Verification evidence
+
+The [Catalog maintenance verification record](reports/catalog-maintenance-verification.md)
+records 435 regular tests passing on macOS Debug after Check/Refresh integration.
+Linux/Windows, ThreadSanitizer and the opt-in resource suite were not verified in
+that change. Frontend navigation/Push integration remains deferred.
 
 The [Steps 5–6 verification record](reports/concurrent-access-verification.md)
 reports the initial 416-test baseline and shared-pool follow-up (418 regular

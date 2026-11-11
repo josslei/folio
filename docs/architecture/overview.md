@@ -47,8 +47,8 @@ broaden the review before implementation.
 
 Normal Access operations, Normal Mutations, Entry Edit Locks, Configuration,
 Logging and event-driven Backend IPC are implemented. The welcome TUI is not a
-complete editor. Push notifications, Full Refresh/count-check public integration,
-Recovery, Vault and Git Sync remain deferred. Concurrent Access execution is
+complete editor. Consistency Check and Scoped/Full Refresh are implemented. Push notifications,
+Frontend maintenance UI integration, Recovery, Vault and Git Sync remain deferred. Concurrent Access execution is
 implemented; parallel Mutations, cancellation, revision checking and mutation
 receipts remain open/deferred.
 

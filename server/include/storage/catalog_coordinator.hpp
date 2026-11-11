@@ -58,7 +58,8 @@ enum class SaveOutcome { Saved, SkippedPersisted };
 /// saving once at shutdown is caller policy and failed saves may be retried.
 /// Failed startup cannot be turned into save permission by editing the Catalog.
 /// One mutation worker serializes callbacks; read_state() captures roots/status
-/// under a short mutex. Lifecycle I/O must wait for accepted work to drain. Index persistence is
+/// under a short mutex. Refresh excludes Mutations; startup/finalization must wait
+/// for accepted work to drain. Index persistence is
 /// not Record persistence.
 class CatalogCoordinator {
 public:
@@ -75,8 +76,14 @@ public:
   // and are neither migrated nor removed. Construction performs no Index I/O.
   [[nodiscard]] ::folio::core::Result<InitializationOutcome, CoordinatorError> startup_load();
   // Explicit full replacement from authoritative Normal files, not a targeted
-  // correction of individual cached records.
+  // correction of individual cached records. Caller excludes Mutations through
+  // completion; Access captures/publication share a short mutex.
   [[nodiscard]] ::folio::core::Result<std::vector<ExcludedObject>, CoordinatorError> refresh_all();
+  /// Publish a privately validated maintenance candidate. Caller excludes Mutations
+  /// through completion; concurrent Access retains immutable views. Scoped publication
+  /// preserves readiness and never clears global Inconsistent state.
+  [[nodiscard]] ::folio::core::Result<std::monostate, CoordinatorError>
+  publish_scoped_refresh(MetadataCatalog candidate);
   [[nodiscard]] ::folio::core::Result<SaveOutcome, CoordinatorError> shutdown_save();
   // Backend shutdown entry point: stop work first, then call finish_session().
   // Saves if needed, then durably removes the Marker; failures are retryable.
@@ -89,7 +96,8 @@ public:
     MetadataCatalogView view;
   };
   /// Capture status and immutable roots under the same short publication boundary.
-  /// Safe during managed mutations. Startup/Refresh/finalization require drained work.
+  /// Safe during managed mutations. Startup/finalization require drained work; Refresh excludes
+  /// Mutations.
   [[nodiscard]] ReadState read_state() const;
   // Created once by the constructor. Accessors borrow the stored callbacks;
   // use them by const reference and keep this coordinator alive during use.
@@ -170,8 +178,9 @@ private:
   StoragePaths paths_;
   MetadataCatalog& catalog_;
   /// Protects managed Catalog publication and read_state capture; never held for
-  /// Repository I/O. Single writer owns lifecycle fields; startup/Refresh/finalization
-  /// run only with execution drained. Status is atomic for independent availability checks.
+  /// Repository I/O. Single writer owns lifecycle fields; startup/finalization
+  /// run only with execution drained; Refresh excludes Mutations. Status is atomic for independent
+  /// availability checks.
   mutable std::mutex publication_mutex_;
   std::atomic<CatalogStatus> status_{CatalogStatus::Unloaded};
   bool load_attempted_ = false;

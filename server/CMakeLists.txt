@@ -1,6 +1,7 @@
 # Backend-only implementation. Only its narrow execution entry point is exported.
 add_library(folio_backend STATIC
   src/backend.cpp
+  src/operations/catalog_maintenance.cpp
   src/operations/access_orchestrator.cpp
   src/operations/mutation_orchestrator.cpp
   src/execution/execution_pool.cpp
