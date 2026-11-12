@@ -33,7 +33,7 @@ owns current requirements. Complete TUI integration is not implemented.
 ## Verification
 
 macOS Debug incremental parallel build and the complete regular CTest suite:
-**451/451 passed**, using native local socket/process access outside the sandbox.
+**458/458 passed**, using native local socket/process access outside the sandbox.
 The sandbox itself denied listener binding with `Operation not permitted`.
 Formatting, local documentation links and whitespace checks are also checked.
 
@@ -46,11 +46,46 @@ request-error isolation; fresh reconnection; old immutable view survival; notifi
 producer failure leaving authoritative/Catalog success intact; and fatal Report
 notification sanitization/delivery before Finish.
 
-Earlier parallel native passes encountered child-process orderly-exit deadlines.
-The isolated raw-connection case passed 12 repetitions and the multi-session
-Mutation/lock case passed 15 repetitions; the final full run passed. The cause of
-those earlier timing failures was not conclusively established, so this record does
-not claim all subprocess timing sensitivity has been eliminated.
+### Shutdown timing investigation — 2026-11-12
+
+An earlier 458-test parallel run failed three MetadataAccessIntegration tests on
+child orderly-exit deadlines; all three passed on immediate rerun. After the
+reviewed ownership/callback changes, a fresh native full run passed **458/458**
+in 4.00 seconds. Each affected test also passed **30 consecutive repetitions**
+with the three tests running concurrently (90 successful executions):
+
+- `LargeContentAndMetadataMessagesAllowTwoPeersAndSubsequentPing`
+- `MissingWrongTypeAndStaleErrorsLeaveConnectionUsableWithoutDiscovery`
+- `PrematureDisconnectAndInvalidMessagesDoNotAffectOtherConnections`
+
+Inspection followed Frontend receiver termination, Request session cleanup,
+IpcServer last-session stopping/wakeups, and the test child completion marker.
+No runtime defect was confirmed. A concrete timing mismatch remains: the fixture's
+`until()` budget is 8 seconds, while an unused Backend candidate may wait 10 seconds
+for its first client. The fixture can launch multiple candidates and waits for all
+of their completion markers. This is a possible contributor, not an established
+explanation of the earlier failures; neither production deadlines nor test budgets
+were changed to make this investigation pass.
+
+**PUSH-VERIFY-01 — Deferred Investigation:** if orderly-exit failures recur, capture
+the failing candidate's lifecycle progress before fixture termination, distinguish
+an unused candidate's startup wait from an active Backend shutdown stall, and align
+the fixture deadline with the actual lifecycle contract if confirmed. Revisit before
+claiming shutdown timing reliability; passing repetitions do not prove absence of a
+race. No runtime fix is claimed by this report.
+
+A subsequent native parallel stress run repeated every regular test ten times:
+**4,580 executions passed**, completing in 36.73 seconds. The earlier failures
+remain unreproduced. The 8/10-second mismatch applies only to unused candidates;
+it cannot explain a confirmed stall in a Backend that already served clients.
+Accordingly it is not treated as the root cause or justification to relax the
+shutdown test deadline. Distinguishing candidate identity/lifecycle position is
+still required if the failure recurs.
+
+
+Initial sandboxed full/repetition attempts failed because native local socket
+access was denied; those runs are not evidence of a Backend shutdown regression.
+The successful results above used native IPC access outside that restriction.
 
 Linux, Windows, ThreadSanitizer and the opt-in resource-limit suite were not run.
 macOS results do not establish runtime support on another platform.
