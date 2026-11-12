@@ -1511,3 +1511,30 @@ TEST_F(CatalogCoordinatorTest, MarkerRemovalSyncFailurePreservesOriginalErrorAnd
 #endif
 
 } // namespace
+
+namespace {
+TEST_F(CatalogCoordinatorTest, NotificationFailureCannotChangeAuthoritativeOrCatalogSuccess) {
+  storage::CatalogCoordinator coordinator{paths(), owned_catalog};
+  ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
+  storage::NormalRepository repository{normal};
+  const auto old_view = coordinator.read_state().view;
+  unsigned failures = 0;
+  coordinator.set_change_observer([](const auto&) { throw std::runtime_error("delivery failed"); },
+                              [&] { ++failures; });
+  const auto record = authoritative_log();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(
+      record, coordinator.log_creation_callback(), coordinator.creation_check())));
+  EXPECT_EQ(failures, 1u);
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+  EXPECT_TRUE(coordinator.read_state().view.find_record(record.id));
+  EXPECT_FALSE(old_view.find_record(record.id));
+  EXPECT_TRUE(std::holds_alternative<core::Log::Snapshot>(repository.load_log(record.id)));
+  ASSERT_TRUE(
+      std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
+  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+  EXPECT_EQ(failures, 2u);
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(coordinator.publish_scoped_refresh(
+      owned_catalog, [] { throw std::runtime_error("scoped delivery failed"); })));
+  EXPECT_EQ(failures, 3u);
+}
+} // namespace

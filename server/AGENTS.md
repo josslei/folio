@@ -20,4 +20,4 @@ Applies to server/. Consult these contract owners before changing their behavior
   ownership. Do not let worker disconnection race ahead of accepted work.
 
 Ordinary request errors return to their originating connection; shared lifecycle
-notifications are separate deferred work, not a reason to broadcast request details.
+notifications use the separate [Push path](../docs/contracts/ipc.md#push-notifications-and-session-ownership), not a reason to broadcast request details.

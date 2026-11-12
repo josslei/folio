@@ -19,7 +19,13 @@ public:
   OperationResponse check(const DirectoryRef& scope);
   OperationResponse refresh(const RefreshScope& scope) const;
 
+  /// Optional Application sink, called inside the scoped publication boundary.
+  void set_refresh_observer(std::function<void(const RefreshScope&)> observer) {
+    refreshed_ = std::move(observer);
+  }
+
 private:
+  std::function<void(const RefreshScope&)> refreshed_;
   OperationResponse perform_check(const DirectoryRef& scope) const;
   struct CheckOutcome {
     std::optional<OperationResponse> result;

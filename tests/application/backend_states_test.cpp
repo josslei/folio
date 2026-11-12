@@ -1,4 +1,5 @@
 #include "runtime/backend_states.hpp"
+#include <folio/ipc/application_codec.hpp>
 
 #include <gtest/gtest.h>
 #include <folio/logging/logging.hpp>
@@ -6,6 +7,7 @@
 #include <fstream>
 #include <future>
 #include "backend_connection_handle.hpp"
+#include "push_fixture.hpp"
 #include <stdexcept>
 
 namespace folio::application::internal {
@@ -124,8 +126,11 @@ TEST_F(BackendStates, AcceptedWorkDrainsBeforeCatalogFinalizationAndOwnershipRel
     if (lifecycle.joinable()) lifecycle.join();
     if (frontend.joinable()) frontend.join();
   }};
-  context.runtime = std::make_unique<IpcServer>(
-      *context.ownership, [&](const OperationRequest&, const Session&) -> OperationResponse {
+  context.request_coordinator = std::make_unique<RequestCoordinator>(
+      context.runtime_limits->requests, context.runtime_limits->access_workers,
+      [&](std::exception_ptr error) { context.fatal_errors.report(error); },
+      RequestCoordinator::PrepareOperation{},
+      [&](const OperationRequest&, const Session&) -> OperationResponse {
         entered.set_value();
         gate.wait();
         return ApplicationError{ErrorCategory::TargetUnavailable,
@@ -133,6 +138,8 @@ TEST_F(BackendStates, AcceptedWorkDrainsBeforeCatalogFinalizationAndOwnershipRel
                                 "Synthetic missing Memo",
                                 {ErrorAction::Dismiss}};
       });
+  context.runtime = std::make_unique<IpcServer>(*context.request_coordinator, context.fatal_errors,
+                                                *context.ownership, "", *context.runtime_limits);
   lifecycle = std::jthread([&] {
     context.runtime->run(shutdown.get_token());
     stopping.set_value();
@@ -279,4 +286,85 @@ TEST_F(BackendStates, LogsPrimaryAndCleanupFailuresWithoutSensitiveMessages) {
   expect_released();
 }
 } // namespace
+} // namespace folio::application::internal
+
+namespace folio::application::internal {
+namespace {
+TEST_F(BackendStates, FinishDrainsCoordinatorWhenIpcWasNotConstructed) {
+  ASSERT_EQ(bootstrap(), BackendActionOutcome::Success);
+  context.request_coordinator = std::make_unique<RequestCoordinator>(
+      context.runtime_limits->requests, context.runtime_limits->access_workers,
+      [&](std::exception_ptr error) { context.fatal_errors.report(error); });
+  bool executed = false;
+  auto ticket = context.request_coordinator->admit([&]() -> RequestCoordinator::Result {
+    executed = true;
+    return Message{MessageKind::Response, {}};
+  });
+  ASSERT_TRUE(ticket);
+  ASSERT_FALSE(context.runtime);
+  EXPECT_EQ(Finish(context), BackendActionOutcome::Success);
+  EXPECT_TRUE(executed); // Draining joined execution before this observation.
+  EXPECT_TRUE(ticket->completed.stop_requested());
+}
+
+TEST_F(BackendStates, ReportDeliversFatalAvailabilityBeforeFinishClosesSessions) {
+  using namespace std::chrono_literals;
+  ASSERT_EQ(bootstrap(), BackendActionOutcome::Success);
+  context.request_coordinator = std::make_unique<RequestCoordinator>(
+      context.runtime_limits->requests, context.runtime_limits->access_workers,
+      [&](std::exception_ptr error) { context.fatal_errors.report(error); });
+  context.runtime = std::make_unique<IpcServer>(*context.request_coordinator, context.fatal_errors,
+                                                *context.ownership, "", *context.runtime_limits);
+  std::stop_source shutdown;
+  std::jthread serving([&] { context.runtime->run(shutdown.get_token()); });
+  auto settings = std::get<ConnectionSettings>(connection_settings(paths));
+  auto connected = BackendConnectionHandle::connect(settings);
+  ASSERT_TRUE(std::holds_alternative<BackendConnectionHandle>(connected));
+  auto handle = std::get<BackendConnectionHandle>(std::move(connected));
+  shutdown.request_stop();
+  serving.join();
+  record_backend_failure(
+      context, {Phase::Serve,
+                IpcError{IpcErrorCode::IoError, "private diagnostic must never appear in Push"}});
+  ASSERT_EQ(Report(context), BackendActionOutcome::Success);
+  ASSERT_TRUE(folio::test::wait_push_notifications(handle, std::chrono::steady_clock::now() + 1s));
+  auto notifications = handle.take_push_notifications();
+  ASSERT_EQ(notifications.size(), 1u);
+  EXPECT_EQ(std::get<AvailabilityChangeNotice>(notifications[0]).state, SharedAvailability::Fatal);
+  EXPECT_TRUE(std::get<AvailabilityChangeNotice>(notifications[0]).error);
+  const auto bytes = std::get<std::string>(codec::encode(notifications[0]));
+  EXPECT_EQ(bytes.find("private diagnostic"), std::string::npos);
+  EXPECT_TRUE(handle.connected());
+  EXPECT_EQ(Finish(context), BackendActionOutcome::Success);
+}
+} // namespace
+} // namespace folio::application::internal
+
+namespace folio::application::internal {
+TEST(FatalErrorReporter, RetainsCausesAndWakesWithoutIpcOwnership) {
+  FatalErrorReporter reporter;
+  auto wake = reporter.wake_token();
+  std::stop_source observed;
+  std::stop_callback callback(wake, [&] { observed.request_stop(); });
+  std::jthread worker([&] {
+    reporter.report(IpcError{IpcErrorCode::IoError, "synthetic fatal failure"});
+    reporter.report(std::make_exception_ptr(std::runtime_error("synthetic exception")));
+  });
+  worker.join();
+  EXPECT_TRUE(observed.stop_requested());
+  auto first = reporter.take_one();
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(std::holds_alternative<IpcError>(*first));
+  EXPECT_EQ(std::get<IpcError>(*first).message, "synthetic fatal failure");
+  auto remaining = reporter.take_failures();
+  ASSERT_EQ(remaining.size(), 1u);
+  EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(remaining.front()));
+  auto next = reporter.wake_token();
+  EXPECT_FALSE(next.stop_requested());
+  reporter.report(IpcError{IpcErrorCode::IoError, "next generation"});
+  EXPECT_TRUE(next.stop_requested());
+  // A failure submitted before registration must also be observable immediately.
+  auto pending = reporter.wake_token();
+  EXPECT_TRUE(pending.stop_requested());
+}
 } // namespace folio::application::internal

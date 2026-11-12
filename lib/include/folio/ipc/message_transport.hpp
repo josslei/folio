@@ -41,6 +41,7 @@ core::Result<Message, IpcError> receive_message(IpcStream& stream, MessageTransp
 // Synchronous sequential exchange for Frontends. Backend uses the same progress
 // methods without blocking other connections. No retry/reconnect/replay occurs.
 core::Result<Message, IpcError> exchange_message(IpcStream& stream, const Message& request,
-                                                 std::chrono::steady_clock::time_point deadline);
+                                                 std::chrono::steady_clock::time_point deadline,
+                                                 std::stop_token wake = {});
 
 } // namespace folio::application::internal

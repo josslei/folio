@@ -17,3 +17,14 @@ log_level = "warn"
 [performance]
 # Concurrent Catalog queries and authoritative reads; mutations remain sequential. Must be a positive integer.
 access_workers = 4
+
+[ipc]
+# Logical sessions, accepted requests, and maximum-size buffered exchanges.
+backend_sessions = 64
+backend_requests = 32
+backend_buffered_requests = 4
+# Per-session notification counts. Overflow terminates the affected session.
+frontend_push_queue_capacity = 256
+backend_push_queue_capacity = 256
+# Send plus receipt ACK deadline; not UI processing or an idle-wait timeout.
+push_ack_timeout_ms = 30000

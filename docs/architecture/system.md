@@ -134,7 +134,7 @@ Edit Lock requests are editing-control operations supporting mutation workflows,
 rather than authoritative data mutations or ordinary read-only Access.
 
 BackendContext owns the resource instances; BackendStateMachine enforces
-lifecycle transitions. IpcServer owns its RequestCoordinator. Operation handlers
+lifecycle transitions. BackendContext owns IpcServer and RequestCoordinator as peers. Operation handlers
 borrow Catalog, Repository and Coordinator through C++ references. Coordinator
 borrows Catalog. Repository retains persistence sequencing and reports results
 through matching Coordinator callbacks; Coordinator synchronizes Catalog.
@@ -174,7 +174,7 @@ runtime/       Assembles components; owns startup, draining and finalization
 ```
 
 The arrows summarize responsibilities, not mandatory class dependencies. IpcServer
-currently owns RequestCoordinator; this file move does not change object ownership.
+borrows RequestCoordinator; BackendContext owns both runtime services.
 The [combined Steps 5–6 plan](../development/plans/catalog-concurrency.md#execution-modules-and-combined-steps-56)
 separates short coordination from costly execution. Concurrent worker groups are implemented; business categories and execution
 resources remain separate dimensions.
@@ -257,3 +257,50 @@ The [IPC contract](../contracts/ipc.md#scheduling-and-lifecycle) defines admissi
 execution; the [mutation contract](../contracts/mutations.md) defines field ownership,
 Edit Locks and evidence. [Current status](../development/status.md) distinguishes
 implemented capabilities from the [roadmap](../development/roadmap.md).
+
+## Paired IPC session — implemented
+
+```text
+Frontend session                         Backend session
+  Request caller / future UI worker        Request I/O worker
+          |                                       |
+          +----------- Request connection --------+
+          |                                       +--> RequestCoordinator
+          |                                              | Access pool
+          |                                              | Sequential Mutation worker
+  Push receiver                            Push I/O worker
+          +------------- Push / ACK -------------+
+          |                                       ^
+  Retained invalidations                    Bounded recipient queue
+          |                                       ^
+  Future serialized UI consumer             Catalog / Edit Lock / lifecycle changes
+```
+
+Both connections share one lifetime and editing identity. Push I/O and receipt ACKs
+remain independent of Request transfers and UI processing. Request-time events are
+retained until result delivery; UI integration must apply the result before retained
+invalidations. Report attempts sanitized fatal availability delivery with a bounded
+window; Finish terminates sessions before Catalog finalization. The
+[IPC contract](../contracts/ipc.md#push-notifications-and-session-ownership) owns
+pairing, payload, bounds, ordering and failure details.
+
+### Runtime ownership and handoff
+
+```text
+BackendContext (lifecycle resource owner)
+  |-- FatalErrorReporter                 retained causes + lifecycle wake signal
+  |-- RequestCoordinator                 coordination thread + execution pools
+  |     |-- PrepareOperation callback --> operation orchestrators / maintenance
+  |     `-- fatal-report callback ------> FatalErrorReporter
+  `-- IpcServer                          Request / Push connection workers
+        |-- borrowed RequestCoordinator -> admit_operation() / ticket result
+        `-- borrowed FatalErrorReporter -> fatal report / wait wakeup
+```
+
+Serve constructs RequestCoordinator before IpcServer; the coordinator starts its
+own threads. IpcServer has no business Handler or Preparer dependency. It supplies
+response encoding while the coordinator owns operation preparation/dispatch.
+Stopping/Report close IPC admission, drain the coordinator, then wait for final
+response delivery. Report resolves Push delivery before Finish closes IPC workers.
+The coordinator is drained even if IPC initialization fails; Storage finalization
+follows execution termination. Destruction order keeps borrowed services alive.

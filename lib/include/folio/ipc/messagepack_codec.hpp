@@ -1,6 +1,7 @@
 #pragma once
 
 #include <folio/ipc/application_protocol.hpp>
+#include <folio/application/push_notification.hpp>
 #include <folio/ipc/ipc.hpp>
 #include <folio/application/mutation.hpp>
 #include <msgpack.hpp>
@@ -24,6 +25,14 @@ namespace folio::application::internal::codec {
   inline auto fields(const Type& v) {                                                              \
     return std::tie(__VA_ARGS__);                                                                  \
   }
+FIELDS(RequestHello)
+FIELDS(PushHello, v.pairing_token)
+FIELDS(PushEnvelope, v.sequence, v.notification)
+FIELDS(PushReceipt, v.sequence)
+FIELDS(RecordChangeNotice, v.id, v.metadata, v.content)
+FIELDS(CatalogChangeNotice, v.scope, v.content)
+FIELDS(EditLockChangeNotice, v.id)
+FIELDS(AvailabilityChangeNotice, v.state, v.error)
 FIELDS(core::LogMetadata, v.id, v.privacy, v.created, v.modified, v.title, v.tags, v.log_date)
 FIELDS(core::MemoMetadata, v.id, v.privacy, v.created, v.modified, v.title, v.tags, v.directory_id)
 FIELDS(core::TodoMetadata, v.id, v.privacy, v.created, v.modified, v.title, v.status, v.priority,
@@ -131,6 +140,9 @@ using Object = msgpack::object;
 constexpr std::size_t max_items = 100000;
 
 // Every enum crossing this private protocol has an explicit upper bound.
+constexpr auto last(SharedAvailability) {
+  return SharedAvailability::Fatal;
+}
 constexpr auto last(core::RecordType) {
   return core::RecordType::Todo;
 }
@@ -192,6 +204,8 @@ template <class T> void pack(Packer& p, const T& value) {
     if (value.size() > max_application_bytes) throw Failure{true};
     p.pack_str(static_cast<std::uint32_t>(value.size()));
     p.pack_str_body(value.data(), static_cast<std::uint32_t>(value.size()));
+  } else if constexpr (std::is_same_v<T, std::uint64_t>) {
+    p.pack_uint64(value);
   } else if constexpr (std::is_same_v<T, bool>) {
     p.pack(value);
   } else if constexpr (std::is_enum_v<T>) {
@@ -247,6 +261,9 @@ template <class T> T read(const Object& o) {
   if constexpr (std::is_same_v<T, std::string>) {
     require(o.type == msgpack::type::STR);
     return {o.via.str.ptr, o.via.str.size};
+  } else if constexpr (std::is_same_v<T, std::uint64_t>) {
+    require(o.type == msgpack::type::POSITIVE_INTEGER);
+    return o.via.u64;
   } else if constexpr (std::is_same_v<T, bool>) {
     require(o.type == msgpack::type::BOOLEAN);
     return o.via.boolean;

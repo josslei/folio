@@ -34,6 +34,7 @@ struct IpcError {
 
 struct ConnectionSettings {
   std::filesystem::path endpoint;
+  std::size_t push_queue_capacity;
 };
 
 // Derives settings from resolved paths; does not create or connect a socket.
@@ -53,7 +54,9 @@ enum class MessageKind : std::uint16_t {
   Request = 6,
   Response = 7,
   Accepted = 11,
-  Rejected = 12
+  Rejected = 12,
+  Push = 14,
+  PushAck = 15
 };
 
 struct Message {

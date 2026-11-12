@@ -3,7 +3,7 @@
 **Status:** implemented Normal Check/Refresh contracts; later/open capabilities are
 marked below. Current execution behavior also follows the
 [IPC contract](../../contracts/ipc.md#scheduling-and-lifecycle). Frontend navigation
-and Push integration remain later work.
+and prompt integration remain later work; Push transport and Refresh invalidations are implemented.
 
 ## Terminology
 
@@ -266,11 +266,11 @@ to the association rather than modifying the running worker's captures. This is
 shared completion support, not a generic macro-operation framework or permission
 to coalesce arbitrary operations.
 
-Successful Refresh publication should produce a future Push notification so
+Successful Refresh publication produces a Push invalidation so
 Frontends can update/dismiss obsolete Refresh prompts while still listening for
 events. Full Refresh completion means another Full Refresh is not required solely
 because of the earlier stale-location prompt; it does not prove an uncertain
-Mutation executed. Push delivery and prompt integration belong to 4.4a/4.4b.
+Mutation executed. Push delivery is implemented; prompt integration remains 4.4b.
 
 **Accepted race / Not Guaranteed:** a user can submit another Full Refresh after
 the previous execution completes but before receiving its Push notification. That
@@ -361,7 +361,7 @@ continue to own later features. They do not authorize implementation.
 | CONS-05 | Deferred Implementation / Open Design Decision | Choose Vault low-cost checking strategy in Vault design; Normal filesystem counts do not establish Vault layout or privacy rules. |
 | CONS-06 | Not Guaranteed | Count equality is not full verification; Refresh is not authoritative repair or proof of Mutation execution. Preserve these limits in APIs and future UI. |
 
-Push distribution/ordering remains [4.4a work](catalog-concurrency.md#query-results-and-push-handoff);
+Push transport distribution/retention is implemented; complete UI application remains later work under the [handoff contract](catalog-concurrency.md#query-results-and-push-handoff);
 Frontend navigation presentation and UI/IPC worker integration remain 4.4b.
 [Recovery](recovery.md), uncertain Mutation resolution and compound-operation
 recovery remain separate later work. Undo/Redo and cancellation are deferred/open
@@ -396,3 +396,11 @@ Access workers with the same active maintenance/Mutation exclusion. Operation
 identity remains separate: pending Refresh defers new Mutations, pending Check
 does not. Lane is not priority; the future priority system must select Refresh
 ahead of Check despite their shared lane. Ticket sharing remains operation-specific.
+
+### Observer initialization follow-up
+
+**CONS-06 — Deferred Implementation / Open Design Decision:** review constructor
+support alongside `CatalogMaintenance::set_refresh_observer()` and choose the
+appropriate Backend wiring time during the later initialization/API refactor.
+The setter remains available; this naming cleanup does not change initialization
+order. Review other setters only within that future refactor's agreed scope.

@@ -219,7 +219,9 @@ OperationResponse CatalogMaintenance::refresh(const RefreshScope& scope) const {
   auto built = candidate.rebuild(std::move(logs), std::move(memos), std::move(todos),
                                  std::move(directories));
   if (auto* failure = std::get_if<storage::StorageError>(&built)) return scan_error(*failure);
-  auto published = coordinator_.publish_scoped_refresh(std::move(candidate));
+  auto published = coordinator_.publish_scoped_refresh(std::move(candidate), [&] {
+    if (refreshed_) refreshed_(scope);
+  });
   if (std::holds_alternative<storage::CoordinatorError>(published)) return unavailable();
   return std::monostate{};
 }

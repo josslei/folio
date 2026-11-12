@@ -1,6 +1,8 @@
 #pragma once
 
 #include <folio/application/error.hpp>
+#include <folio/application/push_notification.hpp>
+#include <cstdint>
 #include <folio/application/query.hpp>
 #include <folio/application/maintenance.hpp>
 #include <folio/application/mutation.hpp>
@@ -9,6 +11,13 @@
 
 // Shared wire value types, not Backend handlers or the public business API.
 namespace folio::application::internal {
+
+/// Connection role is explicit; Push attaches using a single-use session capability.
+struct RequestHello {};
+struct PushHello {
+  core::Id pairing_token;
+};
+using HelloPayload = std::variant<RequestHello, PushHello>;
 
 struct CheckConsistencyRequest {
   DirectoryRef scope;
@@ -134,5 +143,17 @@ using OperationResponse =
                  ApplicationResponse<std::vector<core::DirectoryMetadata>>, core::Log::Snapshot,
                  core::Memo::Snapshot, core::Todo::Snapshot, ApplicationError,
                  NormalMutationResponse, std::monostate, ConsistencyCheckResult>;
+
+/// Push delivery identity is connection-local, unrelated to Application requests/MutationId.
+struct PushEnvelope {
+  std::uint64_t sequence;
+  PushNotification notification;
+};
+struct PushReceipt {
+  std::uint64_t sequence;
+};
+inline constexpr std::size_t max_push_notification_payload_bytes = 4096;
+inline constexpr std::size_t max_push_bytes = 8192;
+inline constexpr std::size_t max_push_ack_bytes = 32;
 
 } // namespace folio::application::internal

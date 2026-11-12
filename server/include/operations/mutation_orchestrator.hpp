@@ -6,6 +6,7 @@
 #include <map>
 #include <mutex>
 #include <functional>
+#include <folio/application/push_notification.hpp>
 
 namespace folio::application::internal {
 
@@ -15,8 +16,10 @@ namespace folio::application::internal {
 // Coordinator callbacks for Catalog synchronization. This handler does not own
 // worker threads, scheduling or Backend lifecycle. Only Normal storage exists
 // today; storage-domain selection belongs behind this Application boundary.
-// Expired session owners are removed before each mutation/editing request; no leases,
-// timed expiry, cross-session permissions or persistence are implied.
+// Final session-reference release removes owners promptly; requests also prune expired owners.
+// No leases, timed expiry, cross-session permissions or persistence are implied.
+// Must outlive accepted actions and session tokens carrying its cleanup callback;
+// Backend lifecycle closes/drains those resources before destroying orchestration.
 class MutationOrchestrator {
 public:
   MutationOrchestrator(core::storage::MetadataCatalog& catalog,
@@ -31,7 +34,17 @@ public:
   /// The returned action retains protection/session through execution, including exceptions.
   std::function<OperationResponse()> prepare(OperationRequest request, Session session);
 
+  /// Install/remove with execution drained. Sink only enqueues, never performs I/O.
+  void set_lock_observer(std::function<void(const core::Id&)> sink) { lock_sink_ = std::move(sink); }
+
 private:
+  /// Called by the session release callback when its last reference is destroyed.
+  /// Acquires ownership_mutex_ for registry cleanup; never performs Storage I/O.
+  void cleanup_locks();
+  /// Called by cleanup_locks(), handle() and prepare() with ownership_mutex_ held.
+  /// Removes expired lock owners and reports each availability transition.
+  void prune_locks();
+  std::function<void(const core::Id&)> lock_sink_;
   /// Caller holds ownership_mutex_; required means a long-lived Edit Lock is needed.
   std::optional<ApplicationError> check_lock(const core::Id& id, const Session& session,
                                              bool required);
@@ -49,7 +62,7 @@ private:
   std::mutex ownership_mutex_;
   std::map<std::string, std::weak_ptr<ConnectionSession>> active_mutations_;
   // Weak ownership avoids keeping disconnected sessions alive. Accepted actions
-  // hold strong session references; expired owners are pruned on later requests.
+  // hold strong session references; final release triggers synchronized cleanup.
   std::map<std::string, std::weak_ptr<ConnectionSession>> locks_;
 };
 } // namespace folio::application::internal

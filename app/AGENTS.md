@@ -8,8 +8,8 @@ work also consult the affected module instructions through the root index.
 - Use launch_backend(); generic process/executable helpers stay role-private.
   Launch success is not Ready. Read the [startup contract](../docs/contracts/backend-lifecycle.md#process-startup-and-ownership)
   before changing process ownership or discovery.
-- Public methods remain blocking and sequential per connection. UI/IPC worker and
-  reconnection integration is deferred: do not turn the API asynchronous or replay
+- Public methods remain blocking and sequential per connection. UI Request-worker and
+  reconnection integration is deferred; independent Push reception exists: do not turn the API asynchronous or replay
   unconfirmed Mutations. See [IPC](../docs/contracts/ipc.md) and
   [Frontend plan](../docs/development/plans/application.md).
 - Keep presentation separate from business rules. Consult [Access](../docs/contracts/access.md)

@@ -145,7 +145,7 @@ TEST_F(Logging, FrontendLaunchFailureIsLoggedWithoutPayloadOrExceptionText) {
   const fs::path endpoint = L"\\\\.\\pipe\\folio-logging-test-" + base.filename().wstring();
 #endif
   const auto failed = folio::application::connect_or_start_backend(
-      folio::application::internal::ConnectionSettings{endpoint}, [] {
+      folio::application::internal::ConnectionSettings{endpoint, 1}, [] {
         return folio::core::Result<folio::application::LaunchedProcess,
                                    folio::application::ProcessError>{
             folio::application::ProcessError{folio::application::ProcessErrorCode::LaunchFailed,

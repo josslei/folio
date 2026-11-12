@@ -1,3 +1,4 @@
+#include "push_fixture.hpp"
 #include "execution/request_coordinator.hpp"
 #include "ipc/ipc_server.hpp"
 #include <folio/ipc/application_codec.hpp>
@@ -112,6 +113,8 @@ protected:
                                     {base / "config", base / "data", base / "state", base / "cache",
                                      base / "logs", base / "runtime"}};
   std::optional<ipc::RepositoryOwnership> ownership;
+  ipc::FatalErrorReporter fatal_errors;
+  std::unique_ptr<ipc::RequestCoordinator> request_coordinator;
   std::unique_ptr<ipc::IpcServer> runtime;
   std::jthread server;
   std::stop_source shutdown;
@@ -122,17 +125,20 @@ protected:
   bool hold_report = false, drained = false;
   bool fail_operations = false, expect_failures = false;
   bool mismatch_mutation = false;
-  ipc::RuntimeLimits limits;
+  ipc::RuntimeLimits limits{std::get<folio::config::EffectiveConfig>(
+      folio::config::configuration_defaults(paths.application))};
   std::optional<ipc::IpcError> server_error;
   std::exception_ptr server_exception;
-  std::vector<ipc::IpcServer::Failure> additional_failures;
+  std::vector<ipc::FatalErrorReporter::Failure> additional_failures;
 
   void start() {
     auto acquired = ipc::RepositoryOwnership::acquire(paths);
     ASSERT_TRUE(std::holds_alternative<ipc::RepositoryOwnership>(acquired));
     ownership.emplace(std::get<ipc::RepositoryOwnership>(std::move(acquired)));
-    runtime = std::make_unique<ipc::IpcServer>(
-        *ownership,
+    request_coordinator = std::make_unique<ipc::RequestCoordinator>(
+        limits.requests, limits.access_workers,
+        [&](std::exception_ptr error) { fatal_errors.report(error); },
+        ipc::RequestCoordinator::PrepareOperation{},
         [&](const ipc::OperationRequest& request, const ipc::Session&) -> ipc::OperationResponse {
           std::unique_lock lock(mutex);
           if (const auto* load = std::get_if<ipc::LoadMemoRequest>(&request))
@@ -160,8 +166,9 @@ protected:
                                        app::ErrorReason::NotFound,
                                        "Synthetic missing Memo",
                                        {app::ErrorAction::Dismiss}};
-        },
-        "", limits);
+        });
+    runtime = std::make_unique<ipc::IpcServer>(*request_coordinator, fatal_errors, *ownership, "",
+                                               limits);
     server = std::jthread([&] {
       try {
         auto result = runtime->run(shutdown.get_token());
@@ -169,7 +176,9 @@ protected:
       } catch (...) {
         server_exception = std::current_exception();
       }
-      runtime->drain_requests();
+      runtime->stop_admission();
+      request_coordinator->drain();
+      runtime->wait_for_responses();
       {
         std::unique_lock lock(mutex);
         drained = true;
@@ -177,7 +186,7 @@ protected:
         changed.wait(lock, [&] { return !hold_report; });
       }
       runtime->close_connections();
-      additional_failures = runtime->take_failures();
+      additional_failures = fatal_errors.take_failures();
       std::lock_guard lock(mutex);
       stopped = true;
       changed.notify_all();
@@ -187,15 +196,21 @@ protected:
   ipc::ConnectionSettings settings() {
     return std::get<ipc::ConnectionSettings>(ipc::connection_settings(paths));
   }
+  std::vector<std::unique_ptr<folio::test::PushPeer>> push_receivers;
   ipc::IpcStream connect() {
     auto connected = ipc::IpcStream::connect(settings().endpoint);
     if (!std::holds_alternative<ipc::IpcStream>(connected))
       throw std::runtime_error("connect failed");
     auto stream = std::get<ipc::IpcStream>(std::move(connected));
-    auto ready = ipc::exchange_message(stream, {ipc::MessageKind::Hello, {}}, Clock::now() + 3s);
+    auto ready = ipc::exchange_message(
+        stream,
+        {ipc::MessageKind::Hello, ipc::payload_bytes(std::get<std::string>(
+                                      ipc::codec::encode(ipc::HelloPayload{ipc::RequestHello{}})))},
+        Clock::now() + 3s);
     if (!std::holds_alternative<ipc::Message>(ready) ||
         std::get<ipc::Message>(ready).kind != ipc::MessageKind::Ready)
       throw std::runtime_error("handshake failed");
+    push_receivers.push_back(folio::test::pair_push(settings(), std::get<ipc::Message>(ready)));
     return stream;
   }
   ipc::Message receive(ipc::IpcStream& stream) {
@@ -519,4 +534,275 @@ TEST_F(IpcServer, LostMutationFinalResponseRetainsAcceptedSubmissionWithoutBacke
   EXPECT_EQ(std::get<app::NoMutationResponse>(result).mutation_id, id);
   EXPECT_EQ(std::get<app::NoMutationResponse>(result).submission, app::SubmissionState::Accepted);
   EXPECT_FALSE(connection.connected());
+}
+
+TEST_F(IpcServer, NotificationProducerFailureReachesLifecycleWithoutClosingSessions) {
+  hold_report = true;
+  expect_failures = true;
+  start();
+  auto connected = app::BackendConnectionHandle::connect(settings());
+  ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(connected));
+  auto connection = std::get<app::BackendConnectionHandle>(std::move(connected));
+  runtime->publish(app::AvailabilityChangeNotice{
+      app::SharedAvailability::Fatal,
+      app::ApplicationError{app::ErrorCategory::ApplicationUnavailable,
+                            app::ErrorReason::BackendUnavailable,
+                            std::string(9000, 'x'),
+                            {}}});
+  {
+    std::unique_lock lock(mutex);
+    ASSERT_TRUE(changed.wait_for(lock, 3s, [&] { return drained; }));
+  }
+  EXPECT_TRUE(connection.connected());
+  runtime->publish(app::AvailabilityChangeNotice{app::SharedAvailability::Fatal});
+  ASSERT_TRUE(folio::test::wait_push_notifications(connection, Clock::now() + 1s));
+  auto events = connection.take_push_notifications();
+  ASSERT_EQ(events.size(), 1u);
+  EXPECT_EQ(std::get<app::AvailabilityChangeNotice>(events.front()).state,
+            app::SharedAvailability::Fatal);
+  {
+    std::lock_guard lock(mutex);
+    hold_report = false;
+    changed.notify_all();
+  }
+}
+
+TEST_F(IpcServer, CancellingNotificationWaitLeavesSessionUsable) {
+  start();
+  auto connected = app::BackendConnectionHandle::connect(settings());
+  ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(connected));
+  auto connection = std::get<app::BackendConnectionHandle>(std::move(connected));
+  std::stop_source stop;
+  auto waiting = std::async(std::launch::async,
+                            [&] { return connection.wait_push_notifications(stop.get_token()); });
+  stop.request_stop();
+  EXPECT_FALSE(waiting.get());
+  EXPECT_TRUE(connection.connected());
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
+}
+
+TEST_F(IpcServer, PushIsAckedWhileRequestExecutesAndRetainedUntilResult) {
+  start();
+  auto connected = app::BackendConnectionHandle::connect(settings());
+  ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(connected));
+  auto connection = std::get<app::BackendConnectionHandle>(std::move(connected));
+  const auto id = core::Id::generate();
+  auto request = std::async(std::launch::async, [&] { return connection.load_memo(id); });
+  ASSERT_TRUE(await_count(1));
+  runtime->publish(app::PushNotification{app::RecordChangeNotice{id, true, false}});
+  EXPECT_TRUE(connection.connected());
+  EXPECT_TRUE(connection.take_push_notifications().empty());
+  EXPECT_EQ(request.wait_for(0ms), std::future_status::timeout);
+  release();
+  EXPECT_TRUE(std::holds_alternative<app::ApplicationError>(request.get()));
+  ASSERT_TRUE(folio::test::wait_push_notifications(connection, Clock::now() + 1s));
+  auto events = connection.take_push_notifications();
+  ASSERT_EQ(events.size(), 1u);
+  const auto& invalidation = std::get<app::RecordChangeNotice>(events[0]);
+  EXPECT_EQ(invalidation.id, id);
+  EXPECT_TRUE(invalidation.metadata);
+  EXPECT_FALSE(invalidation.content);
+}
+
+TEST_F(IpcServer, PushOrderIsIndependentOfUiConsumptionAndRequestTraffic) {
+  start();
+  auto connected = app::BackendConnectionHandle::connect(settings());
+  auto connection = std::get<app::BackendConnectionHandle>(std::move(connected));
+  const auto first = core::Id::generate(), second = core::Id::generate();
+  runtime->publish(app::PushNotification{app::EditLockChangeNotice{first}});
+  runtime->publish(app::PushNotification{app::EditLockChangeNotice{second}});
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
+  ASSERT_TRUE(folio::test::wait_push_notifications(connection, Clock::now() + 1s));
+  auto events = connection.take_push_notifications();
+  const auto deadline = Clock::now() + 1s;
+  while (events.size() < 2 && folio::test::wait_push_notifications(connection, deadline)) {
+    auto more = connection.take_push_notifications();
+    events.insert(events.end(), more.begin(), more.end());
+  }
+  ASSERT_EQ(events.size(), 2u);
+  EXPECT_EQ(std::get<app::EditLockChangeNotice>(events[0]).id, first);
+  EXPECT_EQ(std::get<app::EditLockChangeNotice>(events[1]).id, second);
+  EXPECT_TRUE(runtime->wait_for_push_delivery());
+}
+
+TEST_F(IpcServer, MissingPushAckTerminatesSessionButPreservesAcceptedWork) {
+  limits.push_timeout = 40ms;
+  start();
+  auto request = std::get<ipc::IpcStream>(ipc::IpcStream::connect(settings().endpoint));
+  auto token = std::get<ipc::Message>(ipc::exchange_message(
+      request,
+      {ipc::MessageKind::Hello, ipc::payload_bytes(std::get<std::string>(
+                                    ipc::codec::encode(ipc::HelloPayload{ipc::RequestHello{}})))},
+      Clock::now() + 3s));
+  auto push = std::get<ipc::IpcStream>(ipc::IpcStream::connect(settings().endpoint));
+  ASSERT_EQ(std::get<ipc::Message>(
+                ipc::exchange_message(
+                    push,
+                    {ipc::MessageKind::Hello,
+                     ipc::payload_bytes(std::get<std::string>(ipc::codec::encode(ipc::HelloPayload{
+                         ipc::PushHello{*core::Id::parse(ipc::payload_text(token.payload))}})))},
+                    Clock::now() + 3s))
+                .kind,
+            ipc::MessageKind::Ready);
+  submit(request, core::Id::generate());
+  EXPECT_EQ(receive(request).kind, ipc::MessageKind::Accepted);
+  ASSERT_TRUE(await_count(1));
+  runtime->publish(
+      app::PushNotification{app::AvailabilityChangeNotice{app::SharedAvailability::Ready}});
+  EXPECT_EQ(receive(push).kind, ipc::MessageKind::Push);
+  const auto delivery_start = Clock::now();
+  EXPECT_FALSE(runtime->wait_for_push_delivery());
+  EXPECT_LT(Clock::now() - delivery_start, 1s);
+  ipc::MessageTransport input;
+  auto closed = ipc::receive_message(request, input, Clock::now() + 3s);
+  EXPECT_TRUE(std::holds_alternative<ipc::IpcError>(closed));
+  EXPECT_FALSE(request.connected());
+  release();
+  EXPECT_TRUE(await_stop());
+  EXPECT_EQ(executed.size(), 1u);
+}
+
+TEST_F(IpcServer, NotificationOverflowTerminatesSessionWithoutWaitingForAckTimeout) {
+  limits.pending_push_notification_capacity = 1;
+  start();
+  auto request = std::get<ipc::IpcStream>(ipc::IpcStream::connect(settings().endpoint));
+  auto token = std::get<ipc::Message>(ipc::exchange_message(
+      request,
+      {ipc::MessageKind::Hello, ipc::payload_bytes(std::get<std::string>(
+                                    ipc::codec::encode(ipc::HelloPayload{ipc::RequestHello{}})))},
+      Clock::now() + 3s));
+  auto push = std::get<ipc::IpcStream>(ipc::IpcStream::connect(settings().endpoint));
+  ASSERT_EQ(std::get<ipc::Message>(
+                ipc::exchange_message(
+                    push,
+                    {ipc::MessageKind::Hello,
+                     ipc::payload_bytes(std::get<std::string>(ipc::codec::encode(ipc::HelloPayload{
+                         ipc::PushHello{*core::Id::parse(ipc::payload_text(token.payload))}})))},
+                    Clock::now() + 3s))
+                .kind,
+            ipc::MessageKind::Ready);
+  runtime->publish(app::PushNotification{app::EditLockChangeNotice{core::Id::generate()}});
+  EXPECT_EQ(receive(push).kind, ipc::MessageKind::Push);
+  runtime->publish(app::PushNotification{app::EditLockChangeNotice{core::Id::generate()}});
+  ipc::MessageTransport input;
+  EXPECT_TRUE(std::holds_alternative<ipc::IpcError>(
+      ipc::receive_message(request, input, Clock::now() + 1s)));
+}
+
+TEST_F(IpcServer, PairingTokenIsSingleUseAndCannotAttachAnUnrelatedSession) {
+  start();
+  auto request = std::get<ipc::IpcStream>(ipc::IpcStream::connect(settings().endpoint));
+  auto token = std::get<ipc::Message>(ipc::exchange_message(
+      request,
+      {ipc::MessageKind::Hello, ipc::payload_bytes(std::get<std::string>(
+                                    ipc::codec::encode(ipc::HelloPayload{ipc::RequestHello{}})))},
+      Clock::now() + 3s));
+  auto receiver = folio::test::pair_push(settings(), token);
+  auto intruder = std::get<ipc::IpcStream>(ipc::IpcStream::connect(settings().endpoint));
+  auto rejected = ipc::exchange_message(
+      intruder,
+      {ipc::MessageKind::Hello,
+       ipc::payload_bytes(std::get<std::string>(ipc::codec::encode(ipc::HelloPayload{
+           ipc::PushHello{*core::Id::parse(ipc::payload_text(token.payload))}})))},
+      Clock::now() + 3s);
+  ASSERT_TRUE(std::holds_alternative<ipc::Message>(rejected));
+  EXPECT_EQ(std::get<ipc::Message>(rejected).kind, ipc::MessageKind::Reject);
+  EXPECT_EQ(std::get<ipc::Message>(
+                ipc::exchange_message(request, {ipc::MessageKind::Ping, {}}, Clock::now() + 3s))
+                .kind,
+            ipc::MessageKind::Pong);
+}
+
+TEST_F(IpcServer, ShutdownWakesPushAckWaitAndDoesNotWaitForItsDeadline) {
+  start();
+  auto request = std::get<ipc::IpcStream>(ipc::IpcStream::connect(settings().endpoint));
+  auto token = std::get<ipc::Message>(ipc::exchange_message(
+      request,
+      {ipc::MessageKind::Hello, ipc::payload_bytes(std::get<std::string>(
+                                    ipc::codec::encode(ipc::HelloPayload{ipc::RequestHello{}})))},
+      Clock::now() + 3s));
+  auto push = std::get<ipc::IpcStream>(ipc::IpcStream::connect(settings().endpoint));
+  ASSERT_EQ(std::get<ipc::Message>(
+                ipc::exchange_message(
+                    push,
+                    {ipc::MessageKind::Hello,
+                     ipc::payload_bytes(std::get<std::string>(ipc::codec::encode(ipc::HelloPayload{
+                         ipc::PushHello{*core::Id::parse(ipc::payload_text(token.payload))}})))},
+                    Clock::now() + 3s))
+                .kind,
+            ipc::MessageKind::Ready);
+  runtime->publish(app::PushNotification{app::EditLockChangeNotice{core::Id::generate()}});
+  EXPECT_EQ(receive(push).kind, ipc::MessageKind::Push);
+  shutdown.request_stop();
+  EXPECT_TRUE(await_stop());
+}
+
+TEST_F(IpcServer, IncompleteLargeRequestDoesNotOccupyPushIoWorker) {
+  start();
+  auto request = connect();
+  const auto id = core::Id::generate();
+  core::TimestampContext time{core::Timestamp{}, "UTC", {}};
+  ipc::OperationRequest operation = ipc::MutationRequest{
+      app::MutationId::generate(),
+      ipc::CreateMemoRequest{
+          app::MemoEditableFields{"title", std::string(256 * 1024, 'x'), {}}, time, time, {}}};
+  const auto payload = std::get<std::string>(ipc::codec::encode(operation));
+  const auto bytes = ipc::encode_message({ipc::MessageKind::Request, ipc::payload_bytes(payload)});
+  auto written = request.write(std::as_bytes(std::span(bytes.data(), 8)));
+  ASSERT_TRUE(std::holds_alternative<std::size_t>(written));
+  ASSERT_EQ(std::get<std::size_t>(written), 8u);
+  runtime->publish(app::PushNotification{app::EditLockChangeNotice{id}});
+  ASSERT_TRUE(push_receivers.back()->wait(Clock::now() + 1s));
+  EXPECT_EQ(push_receivers.back()->take().size(), 1u);
+  {
+    std::lock_guard lock(mutex);
+    EXPECT_TRUE(executed.empty());
+  }
+  std::size_t offset = 8;
+  while (offset < bytes.size()) {
+    auto sent = request.write(std::as_bytes(std::span(bytes.data(), bytes.size())).subspan(offset));
+    ASSERT_TRUE(std::holds_alternative<std::size_t>(sent));
+    offset += std::get<std::size_t>(sent);
+    if (offset < bytes.size())
+      ASSERT_TRUE(std::holds_alternative<bool>(request.wait(true, Clock::now() + 3s)));
+  }
+  EXPECT_EQ(receive(request).kind, ipc::MessageKind::Accepted);
+  release();
+  EXPECT_EQ(receive(request).kind, ipc::MessageKind::Response);
+}
+
+TEST_F(IpcServer, WrongPushReceiptFailsOnlyItsOwnSession) {
+  start();
+  auto healthy = connect();
+  auto request = std::get<ipc::IpcStream>(ipc::IpcStream::connect(settings().endpoint));
+  auto token = std::get<ipc::Message>(ipc::exchange_message(
+      request,
+      {ipc::MessageKind::Hello, ipc::payload_bytes(std::get<std::string>(
+                                    ipc::codec::encode(ipc::HelloPayload{ipc::RequestHello{}})))},
+      Clock::now() + 3s));
+  auto push = std::get<ipc::IpcStream>(ipc::IpcStream::connect(settings().endpoint));
+  ASSERT_EQ(std::get<ipc::Message>(
+                ipc::exchange_message(
+                    push,
+                    {ipc::MessageKind::Hello,
+                     ipc::payload_bytes(std::get<std::string>(ipc::codec::encode(ipc::HelloPayload{
+                         ipc::PushHello{*core::Id::parse(ipc::payload_text(token.payload))}})))},
+                    Clock::now() + 3s))
+                .kind,
+            ipc::MessageKind::Ready);
+  runtime->publish(app::PushNotification{app::EditLockChangeNotice{core::Id::generate()}});
+  auto envelope = receive(push);
+  auto decoded = std::get<ipc::PushEnvelope>(
+      ipc::codec::decode<ipc::PushEnvelope>(ipc::payload_text(envelope.payload)));
+  const auto wrong =
+      std::get<std::string>(ipc::codec::encode(ipc::PushReceipt{decoded.sequence + 1}));
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(ipc::send_message(
+      push, {ipc::MessageKind::PushAck, ipc::payload_bytes(wrong)}, Clock::now() + 3s)));
+  ipc::MessageTransport input;
+  EXPECT_TRUE(std::holds_alternative<ipc::IpcError>(
+      ipc::receive_message(request, input, Clock::now() + 1s)));
+  EXPECT_EQ(std::get<ipc::Message>(
+                ipc::exchange_message(healthy, {ipc::MessageKind::Ping, {}}, Clock::now() + 3s))
+                .kind,
+            ipc::MessageKind::Pong);
 }

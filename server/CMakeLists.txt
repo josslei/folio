@@ -6,6 +6,7 @@ add_library(folio_backend STATIC
   src/operations/mutation_orchestrator.cpp
   src/execution/execution_pool.cpp
   src/execution/request_coordinator.cpp
+  src/runtime/fatal_error_reporter.cpp
   src/runtime/backend_state_machine.cpp
   src/runtime/backend_states.cpp
   src/runtime/repository_ownership.cpp

@@ -91,7 +91,7 @@ records the implemented concurrent baseline and later Push handoff design.
 Query extraction is deferred separately in that plan's linked Application TODO.
 
 Vault, locked placeholders and Directory visibility, persistent Recovery, revision
-checking, Push Events and full-text search are not implemented. Normal Mutation
+checking and full-text search are not implemented. Push invalidation transport is implemented; UI refresh handling remains deferred. Normal Mutation
 outcomes and Edit Locks are implemented separately from read access.
 Complete unlocked Vault metadata may eventually use the same complete types;
 locked fields must never be faked with defaults. Snapshot loading does not grant

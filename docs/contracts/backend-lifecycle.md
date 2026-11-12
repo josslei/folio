@@ -12,7 +12,7 @@ The lifecycle owner controls termination; modules return errors. Applicable clea
 obligations survive ordinary operational failure. Ownership outlives explicit
 Catalog finalization. Stop admission and settle accepted execution before closing
 workers and finalizing Storage. Reporting does not certify consistency or replace
-finalization; connected-Frontend lifecycle delivery is still deferred.
+finalization; Report delivers sanitized fatal availability through the [bounded Push path](ipc.md#report-and-finish) before Finish closes sessions.
 
 ## User configuration and executable
 
@@ -244,15 +244,15 @@ Establish durable Marker
   Failure -----------------------------------------------------> [Report]
 
 [Serve]
-Construct IpcServer
-  Construct RequestCoordinator ----------------------> Start coordinate()
+Construct RequestCoordinator ----------------------> Start coordinate()
     Construct ExecutionPools --------------------------------------------------> Shared Access / Mutation
                                                                                 workers wait for tasks
-run() [blocks]
+Construct IpcServer (borrows coordinator and reporter)
+IpcServer::run() [blocks]
   Wait/accept -----------> Start connection worker
                            Handshake -> Ready
                            Receive/decode
-                           admit(plan, prepare) ------> Shared bounded queue
+                           admit_operation() ---------> Shared bounded queue
                            Send Accepted               Select eligible request
                            Wait for result             Reserve / dispatch -----> Prepare Access / execute / encode
                            Deliver final result <------ Complete ticket <-------- Report completion
@@ -264,18 +264,18 @@ run() [blocks]
   Failure -----------------------------------------------------> [Report]
 
 [Stopping - normal]
-drain_requests() ------------------------------------> Dispatch remaining work -> Complete accepted work
+drain_backend_requests() ------------------------------------> Dispatch remaining work -> Complete accepted work
                            Attempt final delivery      Collect completions
                            Reap exited workers         Exit coordination
 Join coordination and all execution pools
 Collect retained failures
 
 [Report - also entered directly on Bootstrap/Serve failure]
-drain_requests()           Usable connections remain    Failure path drains/joins;
+drain_backend_requests()           Usable connections remain    Failure path drains/joins;
                            without new admission        normal path already drained
 Collect retained failures
 Existing startup rejection where applicable
-Connected-Frontend lifecycle notification remains deferred
+Push sanitized fatal availability; bounded receipt-delivery window
 
 [Finish]
 Ensure drained [exceptional fallback]
@@ -289,13 +289,13 @@ The [Steps 5–6 plan](../development/plans/catalog-concurrency.md#lifecycle-and
 records the design rationale. The diagram above describes the implemented concurrent
 execution baseline; authoritative Mutations remain sequential.
 
-`drain_requests()` is idempotent and does not close usable connections. The
+`drain_backend_requests()` is idempotent and does not close usable connections. The
 repeated calls establish the prerequisite on both termination paths and provide
 Finish's exceptional fallback; they do not certify clean Catalog state.
 `take_failures()` transfers and clears retained failures, without logging or
 sending them. Connection workers parked after admission closes are woken by
 Finish's cooperative stop signal; threads are not forcibly terminated.
-Actual lifecycle notification remains deferred to the output/notification design;
+Report sends sanitized fatal availability through paired Push;
 keeping streams alive is resource preparation, not a placeholder wire message.
 Catalog finalization eligibility, error propagation, and the transition table are
 unchanged.
@@ -306,7 +306,7 @@ Operation errors and exceptions are outcomes collected during draining, not
 failures of draining itself. The executor catches action exceptions, retains
 original exception pointers on tickets, publishes completion, and continues with
 all remaining accepted actions. IpcServer retains handler failures for lifecycle
-diagnostics without rethrowing them from `drain_requests()`. Repeated draining
+diagnostics without rethrowing them from `drain_backend_requests()`. Repeated draining
 is harmless. Completion means execution has stopped, not that every action
 succeeded or that Catalog state is consistent.
 
@@ -344,3 +344,26 @@ particular Mutation's outcome, and does not promise Draft Recovery.
 Revisit additional hang-handling mechanisms only for a concrete requirement
 through design review. No such mechanism is currently scheduled.
 
+
+## Shared fatal-error reporting
+
+`BackendContext` owns `FatalErrorReporter`, which outlives IPC, execution workers
+and reporting callbacks. It retains fatal causes and signals a wake token; it
+does not perform I/O, close sessions, cancel work, or transition lifecycle states.
+`IpcServer::run()` observes that signal and exits into the existing lifecycle
+error path. Report drains accepted work and collects remaining causes before
+fatal Push delivery; Finish preserves existing finalization rules.
+
+RequestCoordinator receives an injected fatal-reporting callback. Its exception
+boundary covers preparation, dispatch and execution; modules do not depend on
+IpcServer to report failures. Push publication wiring uses the same reporter while
+containing errors after persistence, so a Push production failure cannot rewrite
+the authoritative Mutation outcome. Fatal IPC infrastructure errors also use
+this inbox. Ordinary Application errors remain request-specific results, and
+recipient transport/ACK failures remain session-local. No new lifecycle machine
+or error-code-based authoritative outcome mapping is introduced.
+
+Implementation: [reporter](../../server/include/runtime/fatal_error_reporter.hpp),
+[execution boundary](../../server/src/execution/request_coordinator.cpp),
+[Backend wiring](../../server/src/runtime/backend_states.cpp). Fatal inbox
+allocation/synchronization exhaustion is not guaranteed recoverable.

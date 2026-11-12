@@ -3,6 +3,7 @@
 #include <folio/ipc/ipc.hpp>
 #include <folio/ipc/application_protocol.hpp>
 #include "execution/execution_pool.hpp"
+#include "ipc/connection_session.hpp"
 #include <array>
 #include <map>
 #include <optional>
@@ -20,6 +21,11 @@ namespace folio::application::internal {
 /// One short coordination thread dispatches bounded workers; IPC only admits/delivers.
 class RequestCoordinator {
 public:
+  using OperationAction = std::function<OperationResponse()>;
+  using PrepareOperation = std::function<OperationAction(OperationRequest, Session)>;
+  /// Serialized execution adapter for callers without separate preparation.
+  using ExecuteOperation =
+      std::function<OperationResponse(const OperationRequest&, const Session&)>;
   using Result = core::Result<Message, IpcError>;
   using Action = std::function<Result()>;
   using Preparation = std::function<Action()>;
@@ -52,7 +58,12 @@ public:
   /// Starts coordination, a shared bounded Access pool and one writer.
   /// access_workers must be positive; capacity counts preparation, queued and active work.
   /// Captures in accepted actions must stay valid until draining completes.
-  explicit RequestCoordinator(std::size_t capacity, std::size_t access_workers = 4);
+  /// Fatal execution/preparation/dispatch exceptions use the injected Backend sink.
+  /// The sink is called without queue locks; its target must outlive drained work.
+  explicit RequestCoordinator(std::size_t capacity, std::size_t access_workers = 4,
+                              std::function<void(std::exception_ptr)> fatal_error = {},
+                              PrepareOperation prepare_operation = {},
+                              ExecuteOperation execute_operation = {});
   ~RequestCoordinator();
   RequestCoordinator(const RequestCoordinator&) = delete;
   // nullptr means rejected before acceptance. Capacity includes the active job.
@@ -61,6 +72,11 @@ public:
   /// Mutation protection is prepared on coordination before dispatch; Control stays there.
   /// Neither callback runs under queue/ticket locks. Accepted captures survive disconnect.
   std::shared_ptr<Ticket> admit(Plan plan, Preparation prepare);
+  /// Admit decoded work; operation preparation belongs to scheduling, encoding to IPC.
+  /// Retains session and resource reservations even if the originating peer disconnects.
+  std::shared_ptr<Ticket> admit_operation(OperationRequest request, Session session,
+                                          std::shared_ptr<void> reservation,
+                                          std::function<Result(OperationResponse, bool)> encode);
   /// Thread-safe admission closure; wakes coordination without cancelling work.
   void stop_admission();
   // Drains every accepted action, including actions whose connection is gone.
@@ -99,6 +115,9 @@ private:
   void reserve(const Work& work);
   /// Coordination thread only, with mutex_ held, after execution and protection cleanup.
   void release(const Work& work);
+  const PrepareOperation prepare_operation_;
+  const ExecuteOperation execute_operation_;
+  const std::function<void(std::exception_ptr)> fatal_error_;
   const std::size_t capacity_;
   /// Protects queue_, completed_, full_refresh_, checks_, Execution subscriber lists/stages,
   /// outstanding_ and accepting_. IpcServer may enter admission

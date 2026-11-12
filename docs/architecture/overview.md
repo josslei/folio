@@ -28,6 +28,8 @@ broaden the review before implementation.
   Failure may bypass Stopping into Report. Drain accepted work and close/join
   workers before eligible Catalog finalization; retain RepositoryOwnership until
   afterward. Cleanup must be attempted on ordinary failure paths.
+- Backend-owned FatalErrorReporter collects fatal causes and wakes lifecycle via
+  injected reporting callbacks; IPC is not the owner of general fatal reporting.
 - Modules return operational errors instead of terminating the process. Unsafe
   state rejects affected work; recognizable fatal service failures reach the
   lifecycle owner. Draining collects failures and attempts remaining accepted
@@ -47,7 +49,7 @@ broaden the review before implementation.
 
 Normal Access operations, Normal Mutations, Entry Edit Locks, Configuration,
 Logging and event-driven Backend IPC are implemented. The welcome TUI is not a
-complete editor. Consistency Check and Scoped/Full Refresh are implemented. Push notifications,
+complete editor. Consistency Check and Scoped/Full Refresh are implemented. Paired Push/ACK notifications are implemented.
 Frontend maintenance UI integration, Recovery, Vault and Git Sync remain deferred. Concurrent Access execution is
 implemented; parallel Mutations, cancellation, revision checking and mutation
 receipts remain open/deferred.

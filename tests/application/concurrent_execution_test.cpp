@@ -444,9 +444,14 @@ TEST_F(ConcurrentOperations, IpcControlBrowseAndUnrelatedLoadProgressWhileAccept
   std::promise<void> entered;
   std::stop_source shutdown;
   std::exception_ptr error;
-  ipc::IpcServer server(
-      ownership, {}, "", {},
-      [&](ipc::OperationRequest request, ipc::Session session) -> ipc::IpcServer::PreparedAction {
+  ipc::FatalErrorReporter fatal_errors;
+  ipc::RuntimeLimits limits{std::get<folio::config::EffectiveConfig>(
+      folio::config::configuration_defaults(paths.application))};
+  ipc::RequestCoordinator request_coordinator(
+      limits.requests, limits.access_workers,
+      [&](std::exception_ptr error) { fatal_errors.report(error); },
+      [&](ipc::OperationRequest request,
+          ipc::Session session) -> ipc::RequestCoordinator::OperationAction {
         const bool mutation = std::holds_alternative<ipc::MutationRequest>(request);
         auto run = mutation || std::holds_alternative<ipc::AcquireEditRequest>(request) ||
                            std::holds_alternative<ipc::ReleaseEditRequest>(request)
@@ -459,10 +464,13 @@ TEST_F(ConcurrentOperations, IpcControlBrowseAndUnrelatedLoadProgressWhileAccept
           return run();
         };
       });
+  ipc::IpcServer server(request_coordinator, fatal_errors, ownership, "", limits);
   std::thread thread([&] {
     try {
       EXPECT_TRUE(std::holds_alternative<std::monostate>(server.run(shutdown.get_token())));
-      server.drain_requests();
+      server.stop_admission();
+      request_coordinator.drain();
+      server.wait_for_responses();
       server.close_connections();
     } catch (...) {
       error = std::current_exception();
@@ -511,7 +519,7 @@ TEST_F(ConcurrentOperations, IpcControlBrowseAndUnrelatedLoadProgressWhileAccept
   auto loaded = loading.load_memo(memo.id);
   ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(loaded));
   EXPECT_EQ(std::get<core::Memo::Snapshot>(loaded).title, "changed");
-  EXPECT_TRUE(server.take_failures().empty());
+  EXPECT_TRUE(fatal_errors.take_failures().empty());
 }
 
 TEST_F(ConcurrentOperations, RepeatedReadStartsObserveAtomicMetadataAndMembershipPublication) {

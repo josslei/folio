@@ -10,7 +10,7 @@ Core values, never Backend handler or Storage headers. This physical separation
 does not change messages or runtime behavior.
 
 Access and Mutation are categories of Application Operation, not C++ base classes.
-Both use the existing per-user IPC connection, version-1 messages, positional
+Both use the Request connection of one paired logical session, version-1 messages, positional
 MessagePack encoding, bounded logical messages and sequential exchanges. The public
 access point remains `BackendConnectionHandle`. Phase 4.3a adds concrete Normal
 Mutation payloads/dispatch and Edit Lock requests to that same OperationRequest and
@@ -55,12 +55,13 @@ negotiation or separate Mutation schema version.
 
 | Kind | Value | Meaning |
 |---|---|---|
-| Hello / Ready | 1 / 2 | Readiness handshake |
+| Hello / Ready | 1 / 2 | Request handshake returns a one-use pairing capability; Push Ready completes pairing |
 | Ping / Pong | 3 / 4 | Connection health |
 | Reject | 5 | Protocol/lifecycle rejection followed by closure |
 | Request / Response | 6 / 7 | Complete Application request / final result |
 | Accepted | 11 | Empty acknowledgment: admitted to this Backend session |
 | Rejected | 12 | ApplicationError: refused before acceptance |
+| Push / PushAck | 14 / 15 | Ordered invalidation envelope / complete-message receipt |
 
 `MessageTransport` owns partial-transfer bookkeeping. `send_message` and
 `receive_message` drive it using OS waits, not recurring sleeps. Linux/macOS use
@@ -69,15 +70,16 @@ Pipe I/O and `WaitForMultipleObjects` on completion/wake events. Windows buffers
 and OVERLAPPED objects remain alive until completion or cancellation has drained.
 The 64 KiB OS-transfer buffer is not a wire boundary.
 
-Headers are validated before payload accumulation. At most 64 connection workers
-exist, with one stream owner per worker. The Backend accepts no more than four
+Headers are validated before payload accumulation. At most 64 logical sessions
+(128 physical connection workers, including incomplete handshakes) exist, with
+one stream owner per worker. The Backend accepts no more than four
 buffered Application exchanges concurrently: each reserves one maximum-sized
 64 MiB exchange **before** accumulating a Request body, and holds that reservation
 through queuing, execution and final delivery. An abandoned connection transfers
 its reservation obligation to its accepted job until execution completes. This is
 a conservative 256 MiB logical-buffer allowance, not an exact process-RSS cap:
 MessagePack/domain objects, transient encoding copies, executor state and thread
-stacks also use bounded resources. Lifecycle messages must be empty and cannot
+stacks also use bounded resources. Ordinary lifecycle messages are empty; pairing carries exactly a UUIDv4 capability. They cannot
 bypass this allowance with large payloads. No unbounded per-connection queues exist.
 
 A capacity rejection before the body can be buffered sends Rejected and closes
@@ -193,7 +195,8 @@ actual fields and scheduling rules.
 
 ### Current thread and request flow
 
-One IpcServer owns all connection workers and one RequestCoordinator. Connection
+BackendContext owns one IpcServer and one RequestCoordinator as peers.
+IpcServer owns the connection workers and borrows the RequestCoordinator. Connection
 workers only receive/decode, admit, acknowledge and deliver. Admission remains a
 short synchronized call on the connection worker; it does not access business
 state. One request coordination thread handles eligibility/reservations/completions,
@@ -275,7 +278,7 @@ query evaluation holds that mutex. MutationOrchestrator separately synchronizes
 long-lived ownership and immediate-mutation protection. Other Frontends cannot
 acquire editing rights during a protected mutation; existing ownership still
 wins. Query results describe one coherent captured state, not every publication
-before delivery. Push coverage during/after queries is still deferred to 4.4a.
+before delivery. [Push notification retention](#push-notifications-and-session-ownership) covers concurrent publications without making the query restart.
 
 Generic internal IpcServer handlers without a preparer retain serialized execution;
 normal Backend Serve supplies the prepared concurrent path. This compatibility
@@ -324,7 +327,127 @@ separate. An ID mismatch is not a confirmed Mutation failure. Missing confirmati
 must never fabricate NotApplied. A MutationId provides correlation, not execution
 proof, safe replay, deduplication or exactly-once execution.
 
+## Push notifications and session ownership
+
+**Implemented:** one logical session owns a Request connection and an independent
+Push/ACK connection. Backend workers are dedicated to their streams. Frontend
+Request I/O stays on the synchronous caller (the future UI IPC worker); a dedicated
+`PushNotificationReceiver` continuously receives Push. No UI thread, Request transfer,
+query evaluation or notification consumer is needed to issue ACK.
+
+```text
+FRONTEND                                   BACKEND
+Logical session                            Logical session / Edit Lock identity
+  Request caller/worker <---- Request ---->   Request I/O worker
+    blocking Public API                      admission / final-result delivery
+  Push receiver         <---- Push ------>   Push I/O worker
+    validate / ACK                           ordered send / receipt deadline
+    bounded retained events                  bounded recipient queue
+          |                                        ^
+    future UI consumer                  publication / lock / lifecycle producers
+```
+
+### Pairing and lifetime
+
+Hello carries a typed MessagePack `HelloPayload`: `RequestHello` establishes the
+Request role, while `PushHello` carries the pairing token. Request Hello returns Ready with a cryptographically random
+UUIDv4 capability generated through Core's existing randomness facility. Push Hello
+on a second connection consumes that capability exactly once. Unknown/reused
+capabilities are rejected. Pairing must finish within three seconds; no Application
+operation executes before pairing. Push notification coverage is installed before Push
+Ready and before Request execution can capture a Catalog view. Endpoint user/OS
+access restrictions remain in force; capabilities are never logged.
+
+A terminal connection failure, invalid Push/ACK, notification overflow or missing
+ACK terminates the logical session and wakes both I/O paths. Each stream is closed
+by its owning worker/caller; termination tokens interrupt blocked transfers.
+Accepted work retains its session identity independently and is not cancelled.
+Lock cleanup runs only when the final accepted/session reference is released.
+The Push transport does not create a second editing identity.
+
+### Payload and production
+
+`PushNotification` is a variant of the four change-notice types, without an
+additional payload wrapper. Each notification is sent and
+ACKed separately; one operation may publish several ordered notifications:
+
+| Notice alternative | Safe fields / meaning |
+| --- | --- |
+| Record | Entry UUID, metadata/content possibly changed flags |
+| Catalog | Logical RefreshScope, whether loaded content within scope may also be stale |
+| Edit Lock | Entry UUID; ownership/availability must be reconsidered |
+| Availability | Ready/Inconsistent/Unavailable/Stopping/Fatal, optional sanitized shared ApplicationError |
+
+No Entry bodies, metadata values, physical locators, session identities, MutationId
+or request-specific errors are replicated. All connected paired sessions receive
+events, including the initiator. No subscriptions or coalescing are implemented.
+
+Managed Catalog callbacks enqueue events inside the publication boundary. Update
+compares authoritative content/notes/subtasks with submitted fields, so metadata-only
+edits need not trigger a full Load. Move preserves body content and invalidates both
+listings. Directory changes invalidate the kind's Root listing. Successful Refresh
+invalidates its scope including possibly changed loaded content; scanning metadata
+does not certify unchanged bodies. Uncertain authoritative changes invalidate
+shared Catalog state conservatively, without claiming that the Mutation succeeded.
+
+Actual Edit Lock acquire/release and final disconnected-owner cleanup generate
+availability invalidations. Same-owner reacquisition is not a transition. Changes
+to Catalog readiness generate shared availability events; `unpersisted` alone does
+not. RequestCoordinator completion order is not used as publication order.
+
+### Delivery, bounds and handoff
+
+The Push worker sends a MessagePack `[sequence, notification]` envelope, with a
+strictly increasing, nonzero connection-local unsigned sequence. One Push is
+outstanding at a time. PushAck echoes only that sequence, immediately after complete
+valid reception. It confirms neither UI processing nor authoritative persistence.
+No retransmission or replay occurs. Invalid, missing or mismatched receipts fail
+the session; the send/ACK exchange has a thirty-second deadline by default.
+A timeout is session failure, not proof that the OS connection was physically lost.
+
+Each Backend recipient queue and Frontend retained queue defaults to at most 256 events (independently configurable through
+[IPC resource settings](configuration.md#push-delivery-resource-settings));
+an outstanding Push still occupies its Backend queue slot. Producers never wait
+for network I/O. Overflow fails the affected session rather than silently losing
+freshness. Each notification contains one notice and at most 4096 encoded bytes;
+Push envelopes are rejected above 8192 bytes and ACK messages above 32 body bytes.
+These smaller bounds do not change the 64 MiB Application message limit.
+
+Coverage lasts for the whole paired session. The receiver ACKs immediately but
+retains invalidations while a synchronous Application request is outstanding.
+`take_push_notifications()` returns none during that interval. The Frontend integration
+must apply each completed synchronous result before consuming subsequent retained
+invalidations on its serialized UI/event path. `wait_push_notifications()` provides an
+event-driven off-UI-thread wait without a deadline; a stop token cancels only
+the wait, and session closure also wakes it. Receipt does not depend on calling it. This closes
+the transport handoff without a shared cross-stream arrival order or RequestId.
+An old immutable query view may complete; retained invalidations then invalidate
+that result. Phase 4.4b must preserve result-before-event application rather than
+posting unrelated result/event callbacks in arbitrary UI order. Push never writes
+Buffers or initiates Query/Load automatically.
+
+### Report and Finish
+
+Stopping closes admission and drains accepted work, retaining usable sessions.
+Report publishes a sanitized Fatal availability error when lifecycle diagnostics
+exist, retaining usable sessions until Finish. Report then waits for Push delivery with the configured delivery timeout.
+Delivery/ACK failure cannot change a Mutation result. Receipt is not established merely by enqueueing;
+an unreachable Frontend cannot hold shutdown indefinitely. Finish terminates
+sessions, wakes and joins I/O workers, then performs eligible Catalog finalization
+and releases RepositoryOwnership. Failures first encountered during finalization
+after session closure remain in local diagnostics; Finish does not reenter Report.
+Report resolves pending delivery before Finish, subject to receipt failures/timeouts (PUSH-REPORT-01).
+Arbitrarily hung operations remain outside shutdown guarantees. Normal final disconnection needs no delivery to departed
+Frontends. Reconnection starts fresh; normal Query/Load initialization restores
+current views without event replay or an automatic manual Catalog Refresh.
+
 ## Deferred decisions
+
+The implemented [Push session design](../development/plans/application.md#paired-push-and-request-connections--implemented)
+pairs Request and Push connections under one lifecycle/ownership identity, with
+dedicated I/O workers for independent progress. Each complete Push requires an
+immediate receipt ACK; ACK timeout fails and closes the entire paired session,
+without resend or cancellation of accepted operations. This contract owns the implemented mechanism; the plan tracks remaining UI and optional delivery enhancements.
 
 ### IPC-01 — Event-driven waiting (Implemented; native verification incomplete)
 
@@ -339,10 +462,10 @@ transport; its replacement belongs to Frontend UI/IPC Worker integration below.
 | ID | Status | Missing capability / revisit condition |
 |---|---|---|
 | IPC-02 | Implemented for current Normal operations | Phase 4.3a adds execution, current-state/lock preconditions, final evidence and MutationId validation. Admission rejection remains local SubmissionState::Rejected; Accepted without final confirmation remains distinct. Future operations extend the same infrastructure. |
-| IPC-03 | Deferred Implementation | Edit Locks are implemented in 4.3a; Push/lifecycle notifications in 4.4a and Frontend handling in 4.4b. Define recipients explicitly: request errors go to their originating Frontend; shared availability changes may notify affected Frontends without disclosing another Frontend's operation details. Scheduling does not implement these notification protocols. |
+| IPC-03 | Implemented transport; Deferred Implementation | Paired Push/ACK and shared lifecycle notifications are implemented. Complete Frontend UI consumption/reconnection remains 4.4b; preserve request-specific error isolation. |
 | IPC-04 | Deferred Implementation | Frontend UI/IPC Worker ownership and completion events, connection monitor replacement, bounded reconnection and ordinary state initialization on a new connection: 4.4b. Blocking methods must run off the UI thread; no extra manual Refresh is required solely by reconnecting. |
 | IPC-05 | Deferred Implementation | Durable Batch Recovery preparation before protected authoritative changes; revisit Batch/Recovery design. Acceptance does not require persistence. Frontend Draft Persistence remains separate in Recovery phases. |
-| IPC-06 | Implemented baseline; Push handoff deferred | Concurrent Catalog queries and bounded authoritative Loads use RequestCoordinator with one sequential Mutation worker; ownership, conflict reservations and draining are integrated. [Design and review](../development/plans/catalog-concurrency.md) records the boundary. Gap-free notification handoff belongs to 4.4a, not this refactor. |
+| IPC-06 | Implemented transport handoff; UI deferred | Concurrent Catalog queries and bounded authoritative Loads use RequestCoordinator with one sequential Mutation worker; ownership, conflict reservations and draining are integrated. [Design and review](../development/plans/catalog-concurrency.md) records the boundary. Paired-session coverage and request-time event retention are implemented; serialized UI application remains 4.4b. |
 | IPC-07 | Open Design Decision | Request cancellation semantics need operation-specific safety rules. Ceasing to wait or disconnecting does not cancel accepted work. |
 | IPC-08 | Deferred Verification | Linux/Windows runtime, access controls, overlapped I/O cancellation and shutdown need native verification before claiming support for that platform is verified. Linux testing awaits an environment; Windows may be deferred to release preparation and omitted from the first release if not verified. |
 
@@ -401,3 +524,16 @@ Access workers with the same active maintenance/Mutation exclusion. Operation
 identity remains separate: pending Refresh defers new Mutations, pending Check
 does not. Lane is not priority; the future priority system must select Refresh
 ahead of Check despite their shared lane. Ticket sharing remains operation-specific.
+
+**PUSH-REPORT-01 — Implemented:** after draining accepted work and publishing
+fatal notices, Report blocks until pending Push messages are ACKed, their sessions
+fail, or one shared configured `ipc.push_ack_timeout_ms` deadline expires. A
+timed-out recipient is terminated independently. Only then may Finish close the
+remaining sessions. ACK proves receipt, not UI processing. Fatal producer failures
+reach the lifecycle owner; an unusable transport cannot guarantee receipt.
+
+Fatal infrastructure and Push production failures use the Backend-owned
+[FatalErrorReporter](backend-lifecycle.md#shared-fatal-error-reporting), not an
+IpcServer-owned failure service. Operation modules retain injected callback
+boundaries; RequestCoordinator reports unexpected execution exceptions through
+the same Backend sink.

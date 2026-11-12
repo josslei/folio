@@ -121,11 +121,12 @@ core::Result<Message, IpcError> receive_message(IpcStream& stream, MessageTransp
 }
 
 core::Result<Message, IpcError> exchange_message(IpcStream& stream, const Message& request,
-                                                 std::chrono::steady_clock::time_point deadline) {
-  auto sent = send_message(stream, request, deadline);
+                                                 std::chrono::steady_clock::time_point deadline,
+                                                 std::stop_token wake) {
+  auto sent = send_message(stream, request, deadline, wake);
   if (auto* error = std::get_if<IpcError>(&sent)) return *error;
   MessageTransport transport;
-  return receive_message(stream, transport, deadline);
+  return receive_message(stream, transport, deadline, wake);
 }
 
 } // namespace folio::application::internal

@@ -370,5 +370,41 @@ TEST_F(Configuration, AccessWorkerSettingUsesTemplateDefaultsAndRejectsInvalidVa
   }
 }
 
+TEST_F(Configuration, IpcSettingsDefaultOverrideAndValidate) {
+  write("");
+  auto defaults = folio::config::load_configuration(application, file);
+  ASSERT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(defaults));
+  const auto& value = std::get<folio::config::EffectiveConfig>(defaults);
+  EXPECT_EQ(value.backend_sessions, 64u);
+  EXPECT_EQ(value.backend_requests, 32u);
+  EXPECT_EQ(value.backend_buffered_requests, 4u);
+  EXPECT_EQ(value.frontend_push_queue_capacity, 256u);
+  EXPECT_EQ(value.backend_push_queue_capacity, 256u);
+  EXPECT_EQ(value.push_ack_timeout.count(), 30000);
+  write("[ipc]\nbackend_sessions = 3\nbackend_requests = 5\nbackend_buffered_requests = "
+        "2\nfrontend_push_queue_capacity = 7\nbackend_push_queue_capacity = "
+        "9\npush_ack_timeout_ms = 1234");
+  auto custom = folio::config::load_configuration(application, file);
+  ASSERT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(custom));
+  const auto& changed = std::get<folio::config::EffectiveConfig>(custom);
+  EXPECT_EQ(changed.backend_sessions, 3u);
+  EXPECT_EQ(changed.backend_requests, 5u);
+  EXPECT_EQ(changed.backend_buffered_requests, 2u);
+  EXPECT_EQ(changed.frontend_push_queue_capacity, 7u);
+  EXPECT_EQ(changed.backend_push_queue_capacity, 9u);
+  EXPECT_EQ(changed.push_ack_timeout.count(), 1234);
+  for (auto key :
+       {"backend_sessions", "backend_requests", "backend_buffered_requests",
+        "frontend_push_queue_capacity", "backend_push_queue_capacity", "push_ack_timeout_ms"})
+    for (auto invalid : {"0", "-1", "true", "1.5", "'7'"}) {
+      write(std::string("[ipc]\n") + key + " = " + invalid);
+      EXPECT_TRUE(std::holds_alternative<folio::config::ConfigurationError>(
+          folio::config::load_configuration(application, file)));
+    }
+  write("[ipc]\npush_ack_timeout_ms = 9223372036854775807");
+  EXPECT_TRUE(std::holds_alternative<folio::config::ConfigurationError>(
+      folio::config::load_configuration(application, file)));
+}
+
 } // namespace
 } // namespace folio::application::internal

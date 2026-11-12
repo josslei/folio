@@ -9,6 +9,8 @@
 #include <folio/core/log.hpp>
 #include <folio/core/memo.hpp>
 #include <functional>
+#include <folio/application/push_notification.hpp>
+#include <memory>
 #include <utility>
 
 namespace folio::application::internal {
@@ -21,7 +23,8 @@ ApplicationError operation_connection_error(const IpcError& error);
 namespace folio::application {
 /// Owns an established Backend connection for TUI, CLI, and other Frontends.
 /// Destruction closes it; moving transfers connection-scoped editing permissions.
-/// Calls block and must not overlap on one handle; run them off the UI thread.
+/// Application calls block and must not overlap; run them off the UI thread.
+/// PushNotification wait/drain may run alongside Request I/O; UI application remains ordered.
 /// There is no automatic reconnect/replay. Closing does not cancel accepted work.
 /// See docs/contracts/ipc.md for admission and final-confirmation semantics.
 class BackendConnectionHandle {
@@ -30,7 +33,13 @@ public:
   BackendConnectionHandle& operator=(BackendConnectionHandle&&) noexcept = default;
   BackendConnectionHandle(const BackendConnectionHandle&) = delete;
 
-  bool connected() const { return stream_.connected(); }
+  bool connected() const;
+  /// Drain invalidations after applying prior synchronous results on the UI thread.
+  /// No implicit Query/Load, Draft replacement, retry or UI processing occurs here.
+  std::vector<PushNotification> take_push_notifications();
+  /// Wait off the UI thread for retained invalidations; reception/ACK never waits here.
+  /// No timeout. false means cancellation or ended session; check connected() separately.
+  bool wait_push_notifications(std::stop_token stop = {});
 
   core::Result<std::monostate, internal::IpcError> ping();
 
@@ -116,9 +125,15 @@ public:
           std::chrono::milliseconds timeout = std::chrono::seconds(3));
 
 private:
-  explicit BackendConnectionHandle(internal::IpcStream stream) : stream_(std::move(stream)) {}
+  /// Owns Push I/O and request-time retention; defined only in the implementation.
+  class PushNotificationReceiver;
 
-  internal::IpcStream stream_;
+  /// Takes both established streams and starts the private Push receiver.
+  BackendConnectionHandle(internal::IpcStream request, internal::IpcStream push,
+                          const internal::ConnectionSettings& settings);
+
+  internal::IpcStream request_stream_;
+  std::shared_ptr<PushNotificationReceiver> push_notification_receiver_;
 };
 
 // Injectable launch operation permits controlled process tests without private

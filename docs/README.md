@@ -59,11 +59,11 @@ for cross-directory tasks; automatic discovery is not assumed verified.
   [Consistency Checking & Catalog Refresh](development/plans/catalog-refresh.md)
   (implemented Normal maintenance contracts; linked follow-ups distinguish open/later work),
   [Catalog views and concurrent Access](development/plans/catalog-concurrency.md)
-  (implemented concurrent baseline; later Push integration remains deferred),
+  (implemented concurrent baseline and Push transport; complete UI handling remains deferred),
   [Recovery](development/plans/recovery.md), [Vault](development/plans/vault.md),
   [Git Sync](development/plans/git-sync.md). Accepted direction is distinguished
   from open decisions; these are not implemented capabilities.
-- Historical reports: [failure-containment audit](development/reports/backend-failure-containment-audit.md),
+- Historical reports: [Push verification](development/reports/push-notifications-verification.md), [failure-containment audit](development/reports/backend-failure-containment-audit.md),
   [4.3a verification](development/reports/normal-mutations-verification.md),
   [completed Phase 4 milestones](development/reports/phase-4-implementation.md),
   [former document locations](development/reports/documentation-migration.md).

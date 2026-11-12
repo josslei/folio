@@ -3,6 +3,7 @@
 #include <folio/core/result.hpp>
 #include <filesystem>
 #include <cstddef>
+#include <chrono>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -37,6 +38,12 @@ struct EffectiveConfig {
   LogLevel log_level;
   // Bounded Access concurrency; defaults come from the factory template.
   std::size_t access_workers = 0;
+  std::size_t backend_sessions = 0;
+  std::size_t backend_requests = 0;
+  std::size_t backend_buffered_requests = 0;
+  std::size_t frontend_push_queue_capacity = 0;
+  std::size_t backend_push_queue_capacity = 0;
+  std::chrono::milliseconds push_ack_timeout{0};
 };
 
 enum class ConfigurationErrorCode { SyntaxError, InvalidValue, InvalidPath, IoError };

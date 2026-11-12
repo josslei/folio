@@ -78,12 +78,12 @@ Status distinguishes implemented contracts from agreed future direction. This re
 
 ## D09 — Push events
 
-- **Status:** Decided/Planned.
-- **Decision:** Backend sends events over IPC; Frontend locally dispatches to UI.
+- **Status:** Implemented transport; complete UI handling deferred.
+- **Decision:** One session pairs independent Request and Push/ACK connections. Backend broadcasts small safe invalidations; Frontend ACKs complete receipt independently of UI handling.
 - **Motivation:** React without filesystem polling.
 - **Alternatives considered:** Cross-process callback pointers or Frontend filesystem watchers.
 - **Consequences:** Receiver/event loop integration required.
-- **Open/Deferred:** Payloads, revisions, subscriptions and reconnect delivery.
+- **Open/Deferred:** Full UI result/event application, optional subscriptions/coalescing and reconnection. No replay. See the [Push contract](../contracts/ipc.md#push-notifications-and-session-ownership).
 
 ## D10 — Platform-standard paths
 
@@ -159,7 +159,7 @@ Status distinguishes implemented contracts from agreed future direction. This re
 
 ## D18 — Immutable Catalog views and concurrent Access
 
-- **Status:** Implemented concurrent baseline; Push handoff and later optimizations deferred.
+- **Status:** Implemented concurrent baseline and Push transport handoff; UI integration and later optimizations deferred.
 - **Decision:** Use structurally shared immutable Catalog states, stable query views
   and complete-state publication; borrow stable-reader architecture from search
   engines without adopting their engines or building custom MVCC.

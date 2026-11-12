@@ -299,10 +299,14 @@ CatalogCoordinator::CatalogCoordinator(StoragePaths paths, MetadataCatalog& cata
   }
   {
     std::lock_guard lock(publication_mutex_);
+    const auto previous_status = status_.load();
     marker_cleanup_pending_ = false;
     catalog_ = std::move(candidate);
     status_ = CatalogStatus::Ready;
     load_attempted_ = true;
+    notify_observer([] { return Change{std::monostate{}, false}; });
+    if (previous_status != CatalogStatus::Ready)
+      notify_observer([] { return Change{CatalogStatus::Ready, false}; });
   }
   return std::move(inventory.diagnostics);
 }
@@ -316,7 +320,8 @@ CatalogCoordinator::refresh_all() {
 }
 
 ::folio::core::Result<std::monostate, CoordinatorError>
-CatalogCoordinator::publish_scoped_refresh(MetadataCatalog candidate) {
+CatalogCoordinator::publish_scoped_refresh(MetadataCatalog candidate,
+                                           std::function<void()> published) {
   // Preparation/scan run without this lock. Publication and status are indivisible
   // to Access captures; scheduling excludes other writers and lifecycle finalization.
   std::lock_guard lock(publication_mutex_);
@@ -324,6 +329,14 @@ CatalogCoordinator::publish_scoped_refresh(MetadataCatalog candidate) {
       (status_ != CatalogStatus::Ready && status_ != CatalogStatus::Inconsistent))
     return error(CoordinatorErrorCode::Unavailable, {}, "Catalog session cannot publish Refresh");
   catalog_ = std::move(candidate);
+  if (published) {
+    try {
+      published();
+    } catch (...) {
+      notification_failed();
+    }
+  } else
+    notify_observer([] { return Change{std::monostate{}, false}; });
   return std::monostate{};
 }
 
@@ -413,7 +426,10 @@ CatalogCoordinator::ReadState CatalogCoordinator::read_state() const {
   return {status_.load(), catalog_.read_view()};
 }
 void CatalogCoordinator::mark_needs_refresh() noexcept {
-  if (status_ == CatalogStatus::Ready) status_ = CatalogStatus::Inconsistent;
+  if (status_ == CatalogStatus::Ready) {
+    status_ = CatalogStatus::Inconsistent;
+    notify_observer([] { return Change{CatalogStatus::Inconsistent, true}; });
+  }
 }
 
 } // namespace folio::core::storage

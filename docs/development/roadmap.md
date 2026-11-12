@@ -26,7 +26,7 @@ the design does not authorize code changes, new dependencies or Git operations.
 | Cleanup | Documentation structure/instructions, harness tooling, code documentation and navigation/enforcement checks |
 | Pre-4.3b refactor — implemented baseline | Immutable Catalog views, ownership-only acquisition and concurrent Access with short RequestCoordinator scheduling; one Mutation worker, bounded Loads and integrated conflict/drain verification. Push handoff remains 4.4a. |
 | 4.3b — Consistency Checking & Catalog Refresh | Implemented Backend Consistency Check, unified explicit Scoped/Full Refresh and safe reconciliation; navigation UI/Push remain 4.4 work |
-| 4.4a | Backend Push Events, ordering and recipient rules; keep Mutation final results separate |
+| 4.4a — implemented transport | Paired-session Push/ACK, bounded safe broadcast invalidations, request-time retention, lock cleanup and Report delivery; Mutation final results remain separate; complete UI handling belongs to 4.4b |
 | 4.4b | Functional Frontend integration, UI/IPC worker, bounded reconnection, buffers and outcome presentation; not the full editor/Recovery |
 
 The [approved Consistency Checking & Catalog Refresh design](plans/catalog-refresh.md) keeps Access

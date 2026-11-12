@@ -5,7 +5,7 @@ views, ownership-only Edit Lock acquisition, short request coordination, concurr
 query/Load execution and one sequential Mutation worker. Current guarantees live in
 [IPC](../../contracts/ipc.md), [Access](../../contracts/access.md),
 [Mutations](../../contracts/mutations.md) and [Storage](../../contracts/storage.md).
-Push handoff, caching and other later directions below remain deferred; recording
+Push transport handoff is implemented; UI consumption, caching and other later directions remain deferred; recording
 them does not authorize implementation.
 
 ## Work sequence and scope
@@ -404,7 +404,7 @@ lock every member; inspect concrete conflicts before adding broad reservations.
 
 ## Query results and Push handoff
 
-**Timing:** agreed later design, implemented with Push in 4.4a and Frontend
+**Timing:** Push coverage/retention is implemented in 4.4a; Frontend
 integration in 4.4b. This section does not expand the pre-4.3b refactor scope.
 
 A query uses one coherent captured Catalog view; it does not chase every change
@@ -429,8 +429,12 @@ functionality is approved by this document.
 
 Keep synchronous final-result APIs and one outstanding request per connection.
 Future Push reception must work independently of waiting for those responses,
-with result-before-retained-event ordering. One connection is not synonymous with
-one Frontend process. Separate submission/completion APIs remain an optional open
+with result-before-retained-event ordering. The subsequently approved
+[paired-session design](application.md#paired-push-and-request-connections--implemented)
+uses separate Request and Push connections with dedicated I/O workers under one
+session. Cross-stream arrival order is not guaranteed: receipt ACK remains prompt
+while event application may need Frontend retention; the implemented receiver retains request-time events; 4.4b must serialize UI result/event application.
+One connection is not synonymous with one Frontend process. Separate submission/completion APIs remain an optional open
 decision, not a required part of this refactor.
 
 ## Implementation review gates and deferred work
@@ -446,12 +450,12 @@ or an actual change to these agreed rules.
 | Persistent container and metadata representation | Implementation evaluation: library, immutable values, deterministic ordering and allocation/performance costs |
 | View/update interfaces | Implementation review: exact declarations, common-view callers, Catalog copy/move/adoption and failed-candidate tests |
 | Publication/status boundary | Refactor implementation review: coordinate view acquisition and readiness changes; preserve a future notification integration boundary |
-| Notification handoff | Later Push integration (4.4a/4.4b): registration and ordered delivery without gaps; not a pre-4.3b prerequisite |
+| Push notification handoff | Later Push integration (4.4a/4.4b): registration and ordered delivery without gaps; not a pre-4.3b prerequisite |
 | Runtime execution | Implemented baseline under IPC-06: independent query/Load execution, short in-memory coordination, a configurable bounded Access pool, shared scheduling and memory budgets |
 | Filesystem conflicts | Apply agreed scheduling/ownership rules and queued Loads; verify handling after persistence failure without replacing it with generic Busy |
 | Directory interactions | Inspect existing operations for concrete conflicts; apply the same scheduling rules, raising only previously uncovered semantic cases |
 | View retention | Refactor implementation evaluation: concurrent query limits and retained-memory measurements |
-| Notification retention | Later Push integration: coalescing, bounded state and slow-consumer handling; not a pre-4.3b prerequisite |
+| Push notification retention | Later Push integration: coalescing, bounded state and slow-consumer handling; not a pre-4.3b prerequisite |
 | Lifecycle integration | Implementation review: drain all accepted lanes, retain ownership and end workers before safe finalization |
 | Query extraction | APP-QUERY-SEPARATION remains deferred/open; no separate query engine now |
 | Load forwarding | CAT-LOAD-FORWARDING above; scheduled waiting is the complete baseline |

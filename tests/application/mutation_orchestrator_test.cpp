@@ -1,3 +1,4 @@
+#include "push_fixture.hpp"
 #include "operations/mutation_orchestrator.hpp"
 #include "operations/access_orchestrator.hpp"
 #include "storage/normal_repository_test_hooks.hpp"
@@ -493,26 +494,34 @@ TEST_F(MutationOrchestrator, IpcDisconnectPreservesQueuedOwnerUpdateAndExcludesC
   std::stop_source shutdown;
   bool released = false;
   std::exception_ptr server_exception;
-  ipc::IpcServer server(ownership,
-                        [&](const ipc::OperationRequest& request,
-                            const ipc::Session& session) -> ipc::OperationResponse {
-                          if (const auto* load = std::get_if<ipc::LoadMemoRequest>(&request);
-                              load && load->id == blocked_id) {
-                            entered.set_value();
-                            gate.wait();
-                          }
-                          if (std::holds_alternative<ipc::MutationRequest>(request) ||
-                              std::holds_alternative<ipc::AcquireEditRequest>(request) ||
-                              std::holds_alternative<ipc::ReleaseEditRequest>(request))
-                            return mutations.handle(request, session);
-                          return ipc::AccessOrchestrator{catalog, repository, coordinator}.handle(
-                              request);
-                        });
+  ipc::FatalErrorReporter fatal_errors;
+  ipc::RuntimeLimits limits{std::get<folio::config::EffectiveConfig>(
+      folio::config::configuration_defaults(paths.application))};
+  ipc::RequestCoordinator request_coordinator(
+      limits.requests, limits.access_workers,
+      [&](std::exception_ptr error) { fatal_errors.report(error); },
+      ipc::RequestCoordinator::PrepareOperation{},
+      [&](const ipc::OperationRequest& request,
+          const ipc::Session& session) -> ipc::OperationResponse {
+        if (const auto* load = std::get_if<ipc::LoadMemoRequest>(&request);
+            load && load->id == blocked_id) {
+          entered.set_value();
+          gate.wait();
+        }
+        if (std::holds_alternative<ipc::MutationRequest>(request) ||
+            std::holds_alternative<ipc::AcquireEditRequest>(request) ||
+            std::holds_alternative<ipc::ReleaseEditRequest>(request))
+          return mutations.handle(request, session);
+        return ipc::AccessOrchestrator{catalog, repository, coordinator}.handle(request);
+      });
+  ipc::IpcServer server(request_coordinator, fatal_errors, ownership, "", limits);
   std::thread thread([&] {
     try {
       auto result = server.run(shutdown.get_token());
       EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
-      server.drain_requests();
+      server.stop_admission();
+      request_coordinator.drain();
+      server.wait_for_responses();
       server.close_connections();
     } catch (...) {
       server_exception = std::current_exception();
@@ -539,10 +548,16 @@ TEST_F(MutationOrchestrator, IpcDisconnectPreservesQueuedOwnerUpdateAndExcludesC
     EXPECT_TRUE(std::holds_alternative<std::monostate>(ipc::send_message(
         stream, {ipc::MessageKind::Request, ipc::payload_bytes(bytes)}, Clock::now() + 3s)));
   };
+  std::vector<std::unique_ptr<folio::test::PushPeer>> push_receivers;
   auto connect = [&] {
     auto stream = std::get<ipc::IpcStream>(ipc::IpcStream::connect(settings.endpoint));
-    auto hello = ipc::exchange_message(stream, {ipc::MessageKind::Hello, {}}, Clock::now() + 3s);
+    auto hello = ipc::exchange_message(
+        stream,
+        {ipc::MessageKind::Hello, ipc::payload_bytes(std::get<std::string>(
+                                      ipc::codec::encode(ipc::HelloPayload{ipc::RequestHello{}})))},
+        Clock::now() + 3s);
     EXPECT_EQ(std::get<ipc::Message>(hello).kind, ipc::MessageKind::Ready);
+    push_receivers.push_back(folio::test::pair_push(settings, std::get<ipc::Message>(hello)));
     return stream;
   };
   auto owner = connect(), blocker = connect(), competitor = connect();

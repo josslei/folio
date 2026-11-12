@@ -175,7 +175,17 @@ TEST_F(MessageTransport, PublicReadRejectsInvalidAdmissionOrFinalConfirmation) {
     ASSERT_TRUE(std::holds_alternative<ipc::Message>(
         ipc::receive_message(socket, handshake, std::chrono::steady_clock::now() + 3s)));
     ASSERT_TRUE(std::holds_alternative<std::monostate>(ipc::send_message(
-        socket, {ipc::MessageKind::Ready, {}}, std::chrono::steady_clock::now() + 3s)));
+        socket, {ipc::MessageKind::Ready, ipc::payload_bytes(core::Id::generate().to_string())},
+        std::chrono::steady_clock::now() + 3s)));
+    ASSERT_TRUE(std::holds_alternative<bool>(owner->wait(std::chrono::steady_clock::now() + 3s)));
+    auto push_accept = owner->accept();
+    auto push_socket = std::move(*std::get<std::optional<ipc::IpcStream>>(push_accept));
+    ipc::MessageTransport pairing;
+    auto pair = ipc::receive_message(push_socket, pairing, std::chrono::steady_clock::now() + 3s);
+    ASSERT_TRUE(std::holds_alternative<ipc::Message>(pair));
+    EXPECT_EQ(std::get<ipc::Message>(pair).kind, ipc::MessageKind::Hello);
+    ASSERT_TRUE(std::holds_alternative<std::monostate>(ipc::send_message(
+        push_socket, {ipc::MessageKind::Ready, {}}, std::chrono::steady_clock::now() + 3s)));
     ipc::MessageTransport request;
     auto received = ipc::receive_message(socket, request, std::chrono::steady_clock::now() + 3s);
     ASSERT_TRUE(std::holds_alternative<ipc::Message>(received));

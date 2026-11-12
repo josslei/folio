@@ -36,6 +36,8 @@ std::string diagnostic_message(const BackendDiagnostic& diagnostic);
 
 // Shared resources for handlers; contains no lifecycle control logic.
 struct BackendContext {
+  /// Outlives all worker resources and injected reporting callbacks.
+  FatalErrorReporter fatal_errors;
   // Explicit internal bootstrap input; absent in normal executable startup.
   std::optional<config::StoragePaths> startup_paths;
   std::optional<storage::StoragePaths> paths;
@@ -46,10 +48,11 @@ struct BackendContext {
   std::unique_ptr<CatalogMaintenance> maintenance;
   std::unique_ptr<AccessOrchestrator> access;
   std::unique_ptr<MutationOrchestrator> mutations;
+  std::unique_ptr<RequestCoordinator> request_coordinator;
   std::unique_ptr<IpcServer> runtime;
   // Historical obligation: startup_load succeeded. Current consistency remains
   // Coordinator-owned; finish_session itself rejects unsafe Catalog states.
-  std::size_t access_workers = 4;
+  std::optional<RuntimeLimits> runtime_limits;
   bool initialized = false;
   int exit_code = 0;
   std::vector<BackendDiagnostic> diagnostics;
@@ -65,7 +68,7 @@ BackendActionOutcome Serve(BackendContext& context);
 /// Normal-stop path: closes admission and drains accepted work, retaining streams.
 BackendActionOutcome Stopping(BackendContext& context);
 /// Also drains when failures bypass Stopping; retains diagnostics and usable streams.
-/// Lifecycle notification over IPC is deferred, not implied by this state name.
+/// Sends sanitized fatal shared failures via bounded Push delivery before Finish.
 BackendActionOutcome Report(BackendContext& context);
 /// Settles workers before eligible Catalog finalization, then releases ownership.
 /// Unsafe Catalog state retains the Session Marker rather than certifying success.

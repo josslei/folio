@@ -139,6 +139,22 @@ MutationOrchestrator::MutationOrchestrator(storage::MetadataCatalog& catalog,
                                            storage::CatalogCoordinator& coordinator)
     : catalog_(catalog), repository_(repository), coordinator_(coordinator) {}
 
+void MutationOrchestrator::prune_locks() {
+  for (auto it = locks_.begin(); it != locks_.end();) {
+    if (it->second.expired()) {
+      const auto id = core::Id::parse(it->first);
+      it = locks_.erase(it);
+      if (id && lock_sink_) lock_sink_(*id);
+    } else
+      ++it;
+  }
+}
+void MutationOrchestrator::cleanup_locks() {
+  std::lock_guard lock(ownership_mutex_);
+  prune_locks();
+  std::erase_if(active_mutations_, [](const auto& item) { return item.second.expired(); });
+}
+
 std::optional<ApplicationError>
 MutationOrchestrator::check_lock(const core::Id& id, const Session& session, bool required) {
   const auto active = active_mutations_.find(id.to_string());
@@ -169,14 +185,17 @@ OperationResponse MutationOrchestrator::acquire_edit(const core::Id& id, const S
     return problem(ErrorReason::NotFound, "Entry not found", ErrorCategory::TargetUnavailable);
   // Ownership is independent of authoritative access. A later Load may fail;
   // the caller must explicitly release ownership when abandoning editing.
+  if (!session->released) session->released = [this] { cleanup_locks(); };
+  const bool changed = !locks_.contains(id.to_string());
   locks_.insert_or_assign(id.to_string(), session);
+  if (changed && lock_sink_) lock_sink_(id);
   return std::monostate{};
 }
 
 OperationResponse MutationOrchestrator::release_edit(const core::Id& id, const Session& session) {
   std::lock_guard lock(ownership_mutex_);
   if (auto error = check_lock(id, session, false)) return *error;
-  locks_.erase(id.to_string());
+  if (locks_.erase(id.to_string()) && lock_sink_) lock_sink_(id);
   return std::monostate{};
 }
 
@@ -185,7 +204,7 @@ OperationResponse MutationOrchestrator::handle(const OperationRequest& request,
   // Weak ownership expires only after the worker AND all accepted actions leave.
   {
     std::lock_guard lock(ownership_mutex_);
-    std::erase_if(locks_, [](const auto& item) { return item.second.expired(); });
+    prune_locks();
   }
   if (!session)
     return problem(ErrorReason::UnexpectedFailure, "Missing connection session",
@@ -222,16 +241,21 @@ std::function<OperationResponse()> MutationOrchestrator::prepare(OperationReques
   auto protection = std::shared_ptr<void>(nullptr, [this, key](void*) {
     if (key) {
       std::lock_guard lock(ownership_mutex_);
-      active_mutations_.erase(*key);
+      const bool changed = active_mutations_.erase(*key) && !locks_.contains(*key);
+      if (changed && lock_sink_)
+        if (auto id = core::Id::parse(*key)) lock_sink_(*id);
     }
   });
   if (id) {
     std::lock_guard lock(ownership_mutex_);
-    std::erase_if(locks_, [](const auto& item) { return item.second.expired(); });
+    prune_locks();
     // An existing owner's rights dominate; the worker will return the precise
     // business rejection. No new owner may slip into an unlocked executing mutation.
-    if (!check_lock(*id, session, false))
-      active_mutations_.insert_or_assign(id->to_string(), session);
+    if (!check_lock(*id, session, false)) {
+      const bool changed = !active_mutations_.contains(*key) && !locks_.contains(*key);
+      active_mutations_.insert_or_assign(*key, session);
+      if (changed && lock_sink_) lock_sink_(*id);
+    }
   }
   return [this, request = std::move(request), session = std::move(session),
           protection = std::move(protection)] { return handle(request, session); };
@@ -367,6 +391,7 @@ NormalMutationResponse MutationOrchestrator::mutate(const MutationRequest& reque
                                                     std::conditional_t<todo, core::Todo::Snapshot,
                                                                        core::Log::Snapshot>>>;
           std::optional<Snapshot> snapshot;
+          bool content_changed = create;
           if constexpr (create_directory) {
             if (operation.kind != core::DirectoryKind::Memo &&
                 operation.kind != core::DirectoryKind::Todo)
@@ -409,7 +434,20 @@ NormalMutationResponse MutationOrchestrator::mutate(const MutationRequest& reque
             if constexpr (memo || todo) {
               evidence.source = location(type, snapshot->directory_id);
             }
-            if constexpr (update) apply(*snapshot, operation.fields);
+            if constexpr (update) {
+              if constexpr (todo) {
+                content_changed =
+                    snapshot->notes != operation.fields.notes ||
+                    snapshot->subtasks.size() != operation.fields.subtasks.size() ||
+                    !std::equal(snapshot->subtasks.begin(), snapshot->subtasks.end(),
+                                operation.fields.subtasks.begin(),
+                                [](const auto& a, const auto& b) {
+                                  return a.content == b.content && a.completed == b.completed;
+                                });
+              } else
+                content_changed = snapshot->content != operation.fields.content;
+              apply(*snapshot, operation.fields);
+            }
             if constexpr (std::is_same_v<T, SetTodoStatusRequest>)
               snapshot->status = operation.status;
             // Move uses this Snapshot only for validation; Repository reloads and
@@ -467,19 +505,25 @@ NormalMutationResponse MutationOrchestrator::mutate(const MutationRequest& reque
               return repository_.create_todo(*snapshot, coordinator_.todo_creation_callback(),
                                              coordinator_.creation_check());
             else if constexpr (std::is_same_v<T, MoveMemoRequest>)
-              return repository_.move_memo(id, operation.directory_id, operation.modified,
-                                           coordinator_.memo_update_callback(), locator);
+              return repository_.move_memo(
+                  id, operation.directory_id, operation.modified,
+                  coordinator_.update_callback<core::MemoMetadata>(content_changed), locator);
             else if constexpr (std::is_same_v<T, MoveTodoRequest>)
-              return repository_.move_todo(id, operation.directory_id, operation.modified,
-                                           coordinator_.todo_update_callback(), locator);
+              return repository_.move_todo(
+                  id, operation.directory_id, operation.modified,
+                  coordinator_.update_callback<core::TodoMetadata>(content_changed), locator);
             else if constexpr (memo)
-              return repository_.update_memo(*snapshot, locator,
-                                             coordinator_.memo_update_callback());
+              return repository_.update_memo(
+                  *snapshot, locator,
+                  coordinator_.update_callback<core::MemoMetadata>(content_changed));
             else if constexpr (todo)
-              return repository_.update_todo(*snapshot, locator,
-                                             coordinator_.todo_update_callback());
+              return repository_.update_todo(
+                  *snapshot, locator,
+                  coordinator_.update_callback<core::TodoMetadata>(content_changed));
             else
-              return repository_.update_log(*snapshot, locator, coordinator_.log_update_callback());
+              return repository_.update_log(
+                  *snapshot, locator,
+                  coordinator_.update_callback<core::LogMetadata>(content_changed));
           }();
           if (auto* error = std::get_if<storage::RepositoryMutationError>(&result))
             return {request.mutation_id, mutation_problem(*error, evidence, move)};

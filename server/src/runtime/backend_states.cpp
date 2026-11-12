@@ -22,6 +22,10 @@ BackendActionOutcome Bootstrap(BackendContext& context) {
       return record_backend_failure(context, {Phase::Bootstrap, *error});
     }
     context.paths = std::get<config::StoragePaths>(std::move(validated));
+    auto defaults = config::configuration_defaults(context.paths->application);
+    if (auto* error = std::get_if<config::ConfigurationError>(&defaults))
+      return record_backend_failure(context, {Phase::Bootstrap, *error});
+    context.runtime_limits.emplace(std::get<config::EffectiveConfig>(defaults));
   } else {
     auto resolved = config::load_configuration();
     if (auto* error = std::get_if<config::ConfigurationError>(&resolved)) {
@@ -29,7 +33,7 @@ BackendActionOutcome Bootstrap(BackendContext& context) {
     }
     auto effective = std::get<config::EffectiveConfig>(std::move(resolved));
     logging::set_level(effective.log_level);
-    context.access_workers = effective.access_workers;
+    context.runtime_limits.emplace(effective);
     context.paths.emplace(std::move(effective.paths));
   }
   auto acquired = RepositoryOwnership::acquire(*context.paths);
@@ -73,11 +77,10 @@ BackendActionOutcome Serve(BackendContext& context) {
                                                              *context.coordinator);
   // Lifecycle thread assembles resources. Access preparation/evaluation runs on Access workers;
   // editing control and mutation protection stay on request coordination.
-  RuntimeLimits limits;
-  limits.access_workers = context.access_workers;
-  context.runtime = std::make_unique<IpcServer>(
-      *context.ownership, IpcServer::Handler{}, "", limits,
-      [&](OperationRequest request, Session session) -> IpcServer::PreparedAction {
+  context.request_coordinator = std::make_unique<RequestCoordinator>(
+      context.runtime_limits->requests, context.runtime_limits->access_workers,
+      [&context](std::exception_ptr error) { context.fatal_errors.report(error); },
+      [&](OperationRequest request, Session session) -> RequestCoordinator::OperationAction {
         if (auto* check = std::get_if<CheckConsistencyRequest>(&request))
           return [&context, scope = check->scope] { return context.maintenance->check(scope); };
         if (auto* refresh = std::get_if<RefreshRequest>(&request))
@@ -88,6 +91,63 @@ BackendActionOutcome Serve(BackendContext& context) {
           return context.mutations->prepare(std::move(request), std::move(session));
         return context.access->prepare(std::move(request));
       });
+  context.runtime = std::make_unique<IpcServer>(*context.request_coordinator, context.fatal_errors,
+                                                *context.ownership, "", *context.runtime_limits);
+  auto broadcast = [&context](const PushNotification& event) {
+    if (context.runtime) context.runtime->publish(event);
+  };
+  context.mutations->set_lock_observer([broadcast, &context](const core::Id& id) {
+    try {
+      broadcast(PushNotification{EditLockChangeNotice{id}});
+    } catch (...) {
+      context.fatal_errors.report(std::current_exception());
+    }
+  });
+  context.maintenance->set_refresh_observer([broadcast, &context](const RefreshScope& scope) {
+    try {
+      broadcast(PushNotification{CatalogChangeNotice{scope, true}});
+    } catch (...) {
+      context.fatal_errors.report(std::current_exception());
+    }
+  });
+  context.coordinator->set_change_observer(
+      [broadcast, &context](const storage::CatalogCoordinator::Change& change) {
+        try {
+          if (const auto* record =
+                  std::get_if<storage::CatalogCoordinator::RecordChange>(&change.value)) {
+            const DirectoryRef target = record->directory_id ? DirectoryRef{*record->directory_id}
+                                                             : DirectoryRef{record->type};
+            const bool moved = record->previous_location && *record->previous_location != target;
+            const auto& id = record->id;
+            broadcast(
+                PushNotification{RecordChangeNotice{id, true, change.content || change.uncertain}});
+            broadcast(PushNotification{
+                CatalogChangeNotice{DirectoryScanScope{target, RefreshTraversal::Immediate}}});
+            if (moved)
+              broadcast(PushNotification{CatalogChangeNotice{
+                  DirectoryScanScope{*record->previous_location, RefreshTraversal::Immediate}}});
+          } else if (const auto* directory =
+                         std::get_if<storage::CatalogCoordinator::DirectoryChange>(&change.value)) {
+            const auto type = directory->kind == core::DirectoryKind::Memo ? core::RecordType::Memo
+                                                                           : core::RecordType::Todo;
+            broadcast(PushNotification{
+                CatalogChangeNotice{DirectoryScanScope{type, RefreshTraversal::Immediate}}});
+          } else if (const auto* status = std::get_if<storage::CatalogStatus>(&change.value)) {
+            const auto availability =
+                *status == storage::CatalogStatus::Ready          ? SharedAvailability::Ready
+                : *status == storage::CatalogStatus::Inconsistent ? SharedAvailability::Inconsistent
+                                                                  : SharedAvailability::Unavailable;
+            broadcast(PushNotification{AvailabilityChangeNotice{availability}});
+            // Uncertain authoritative effects may not have reached Catalog publication.
+            if (change.uncertain)
+              broadcast(PushNotification{CatalogChangeNotice{RepositoryScope{}, true}});
+          } else
+            broadcast(PushNotification{CatalogChangeNotice{RepositoryScope{}, true}});
+        } catch (...) {
+          context.fatal_errors.report(std::current_exception());
+        }
+      },
+      [&context] { context.fatal_errors.report(std::current_exception()); });
   auto result = context.runtime->run();
   if (auto* error = std::get_if<IpcError>(&result)) {
     return record_backend_failure(context, {Phase::Serve, *error});
@@ -95,11 +155,23 @@ BackendActionOutcome Serve(BackendContext& context) {
   return BackendActionOutcome::Success;
 }
 
+namespace {
+// Lifecycle owns execution shutdown, including partial IPC initialization failures.
+void drain_backend_requests(BackendContext& context) {
+  if (context.runtime) context.runtime->stop_admission();
+  if (context.request_coordinator) context.request_coordinator->drain();
+  if (context.runtime) context.runtime->wait_for_responses();
+}
+} // namespace
+
 BackendActionOutcome Stopping(BackendContext& context) {
   bool failed = false;
+  if (context.runtime)
+    context.runtime->publish(
+        PushNotification{AvailabilityChangeNotice{SharedAvailability::Stopping}});
+  drain_backend_requests(context);
   if (context.runtime) {
-    context.runtime->drain_requests();
-    for (auto& error : context.runtime->take_failures()) {
+    for (auto& error : context.fatal_errors.take_failures()) {
       std::visit(
           [&](auto& cause) {
             record_backend_failure(context, {Phase::Stopping, std::move(cause)});
@@ -116,22 +188,36 @@ BackendActionOutcome Stopping(BackendContext& context) {
 
 BackendActionOutcome Report(BackendContext& context) {
   // Failures can bypass Stopping. Settle accepted work while preserving streams.
-  if (context.runtime) {
+  if (context.runtime || context.request_coordinator) {
     try {
-      context.runtime->drain_requests();
+      drain_backend_requests(context);
     } catch (...) {
       // Operation exceptions are already contained by the executor. Retain an
       // unexpected preparation failure without skipping the reporting action.
       // Do not claim execution stopped: Finish must retry before finalization.
       record_backend_failure(context, {Phase::Report, std::current_exception()});
     }
-    for (auto& error : context.runtime->take_failures()) {
+    for (auto& error : context.fatal_errors.take_failures()) {
       std::visit(
           [&](auto& cause) { record_backend_failure(context, {Phase::Report, std::move(cause)}); },
           error);
     }
   }
-  // TODO: lifecycle notification to connected Frontends remains deferred.
+  if (context.runtime && !context.diagnostics.empty()) {
+    // Report owns fatal shared-service reporting. Never broadcast raw diagnostics,
+    // Entry paths, parser text or another Frontend's operation failure.
+    context.runtime->publish(PushNotification{AvailabilityChangeNotice{
+        SharedAvailability::Fatal,
+        ApplicationError{
+            ErrorCategory::ApplicationUnavailable,
+            ErrorReason::BackendUnavailable,
+            "The Backend encountered an unrecoverable service failure and is stopping.",
+            {ErrorAction::Reconnect, ErrorAction::Dismiss}}}});
+  }
+
+  // Report is blocking: Finish may close sessions only after delivery completes,
+  // a recipient fails, or the configured delivery timeout expires.
+  if (context.runtime) context.runtime->wait_for_push_delivery();
 
   // Preserve startup rejection where IPC exists. Final reporting to active
   // Frontends and pre-IPC bootstrap delivery await the designer's protocol.
@@ -139,7 +225,11 @@ BackendActionOutcome Report(BackendContext& context) {
     const auto failure = context.diagnostics.empty()
                              ? "Backend startup failed"
                              : diagnostic_message(context.diagnostics.front());
-    IpcServer reporting(*context.ownership, {}, failure);
+    RequestCoordinator reporting_coordinator(
+        context.runtime_limits->requests, context.runtime_limits->access_workers,
+        [&context](std::exception_ptr error) { context.fatal_errors.report(error); });
+    IpcServer reporting(reporting_coordinator, context.fatal_errors, *context.ownership, failure,
+                        *context.runtime_limits);
     auto result = reporting.run();
     if (auto* error = std::get_if<IpcError>(&result)) {
       record_backend_failure(context, {Phase::Report, *error});
@@ -152,10 +242,10 @@ BackendActionOutcome Finish(BackendContext& context) {
   bool failed = false;
   // Also drain when an exception bypassed Stopping. No operation may retain
   // Storage references when explicit, fallible Catalog finalization starts.
+  drain_backend_requests(context);
   if (context.runtime) {
-    context.runtime->drain_requests();
     context.runtime->close_connections();
-    for (auto& error : context.runtime->take_failures()) {
+    for (auto& error : context.fatal_errors.take_failures()) {
       std::visit(
           [&](auto& cause) { record_backend_failure(context, {Phase::Finish, std::move(cause)}); },
           error);
@@ -212,7 +302,7 @@ void retain_backend_notification_failures(BackendContext& context,
     record_backend_failure(context,
                            {failure.phase, failure.notification_error, failure.notification_time});
   }
-  // Notification failures are collected late; restore occurrence order so an
+  // PushNotification failures are collected late; restore occurrence order so an
   // earlier service failure remains primary even if cleanup also failed.
   std::stable_sort(
       context.diagnostics.begin(), context.diagnostics.end(),

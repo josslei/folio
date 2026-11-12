@@ -6,6 +6,25 @@
 #include <algorithm>
 
 namespace folio::application::internal {
+/// Transport state shared by the two session workers, never editing ownership.
+/// Producers enqueue bounded encoded invalidations without performing I/O.
+struct IpcServer::PushDelivery {
+  /// Protects pairing, pending queue and queued wake-source replacement; the Push worker alone owns
+  /// delivery/ACK I/O.
+  std::mutex delivery_mutex;
+  std::condition_variable_any changed;
+  bool paired = false;
+  std::deque<std::string> pending;
+  std::stop_source queued;
+  /// Independent cooperative session termination; safe to signal from either worker.
+  std::stop_source ended;
+  /// Terminates the logical session and wakes both workers; accepted work survives.
+  void close() {
+    ended.request_stop();
+    changed.notify_all();
+  }
+};
+
 namespace {
 using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
@@ -19,14 +38,15 @@ ApplicationError capacity_error() {
 }
 } // namespace
 
-IpcServer::IpcServer(RepositoryOwnership& ownership, Handler handler, std::string startup_failure,
-                     RuntimeLimits limits, Preparer prepare)
-    : ownership_(ownership), handler_(std::move(handler)), prepare_(std::move(prepare)),
+IpcServer::IpcServer(RequestCoordinator& request_coordinator, FatalErrorReporter& fatal_errors,
+                     RepositoryOwnership& ownership, std::string startup_failure,
+                     RuntimeLimits limits)
+    : fatal_error_reporter_(fatal_errors), ownership_(ownership),
       startup_failure_(std::move(startup_failure)), limits_(limits),
-      request_coordinator_(limits.requests, limits.access_workers) {}
+      request_coordinator_(request_coordinator) {}
 
 IpcServer::~IpcServer() {
-  drain_requests();
+  stop_admission();
   close_connections();
 }
 
@@ -34,20 +54,14 @@ void IpcServer::notify() {
   changed_.request_stop();
 }
 
-void IpcServer::failure(Failure error) {
-  std::lock_guard lock(connection_state_mutex_);
-  failures_.push_back(std::move(error));
-  notify();
-}
-
 std::shared_ptr<IpcServer::BufferReservation> IpcServer::reserve_request() {
-  auto count = reservations_.load();
+  auto count = reservations_->load();
   while (count < limits_.buffered_requests) {
-    if (reservations_.compare_exchange_weak(count, count + 1)) {
+    if (reservations_->compare_exchange_weak(count, count + 1)) {
       try {
         return std::make_shared<BufferReservation>(reservations_);
       } catch (...) {
-        --reservations_;
+        --*reservations_;
         throw;
       }
     }
@@ -64,14 +78,71 @@ bool IpcServer::send_rejection(IpcStream& stream, ApplicationError error, std::s
   return false;
 }
 
-void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_token stop) {
+void IpcServer::serve_connection(Connection& connection, IpcStream& stream, std::stop_token stop) {
   // Connection worker: handshake and session registration begin here. This worker
   // owns the stream; Application handlers execute on the request coordinator's executor thread.
+  auto io_stop = stop;
+  auto send = [&](MessageKind kind, std::vector<std::byte> payload = {}) {
+    return std::holds_alternative<std::monostate>(
+        send_message(stream, {kind, std::move(payload)}, Clock::now() + 3s, io_stop));
+  };
+  auto reject_protocol = [&](const std::string& text) {
+    send(MessageKind::Reject, payload_bytes(text));
+  };
+  MessageTransport handshake([](MessageKind kind, std::size_t size) {
+    // Bound role-bearing Hello before allocating its payload.
+    return kind == MessageKind::Hello && size <= 128;
+  });
+  auto hello = receive_message(stream, handshake, Clock::now() + 3s, stop);
+  if (auto* error = std::get_if<IpcError>(&hello)) {
+    if (error->code == IpcErrorCode::Protocol || error->code == IpcErrorCode::Incompatible)
+      reject_protocol(error->message);
+    return;
+  }
+  const auto& first = std::get<Message>(hello);
+  auto decoded_hello = codec::decode<HelloPayload>(payload_text(first.payload));
+  if (!std::holds_alternative<HelloPayload>(decoded_hello)) {
+    reject_protocol("Invalid Hello payload");
+    return;
+  }
+  const auto& role = std::get<HelloPayload>(decoded_hello);
+  if (const auto* push = std::get_if<PushHello>(&role)) {
+    std::shared_ptr<PushDelivery> delivery;
+    {
+      std::lock_guard lock(sessions_mutex_);
+      auto found = pending_push_pairings_.find(push->pairing_token.to_string());
+      if (found != pending_push_pairings_.end()) {
+        delivery = found->second.lock();
+        pending_push_pairings_.erase(found); // Pairing capability is single-use.
+      }
+    }
+    if (!delivery || delivery->ended.stop_requested()) {
+      reject_protocol("Invalid session pairing");
+      return;
+    }
+    connection.delivery = delivery;
+    serve_push_notification_connection(stream, std::move(delivery), stop);
+    return;
+  }
+  if (!startup_failure_.empty()) {
+    reject_protocol(startup_failure_);
+    return;
+  }
+  const auto& message = std::get<Message>(hello);
+  if (message.kind != MessageKind::Hello || !std::holds_alternative<RequestHello>(role)) {
+    reject_protocol("Invalid readiness handshake");
+    return;
+  }
+  serve_request_connection(connection, stream, stop);
+}
+
+void IpcServer::serve_request_connection(Connection& connection, IpcStream& stream,
+                                         std::stop_token stop) {
   std::stop_source reception;
   std::stop_callback closing(stop, [&] { reception.request_stop(); });
   std::stop_callback admission(admission_closed_.get_token(), [&] { reception.request_stop(); });
   const auto receive_stop = reception.get_token();
-  const auto session = std::make_shared<ConnectionSession>();
+  Session session;
   bool registered = false;
   // Registration must be undone on every ordinary return and exception.
   struct Registration {
@@ -84,40 +155,53 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     }
   } registration{*this, registered};
 
+  auto io_stop = stop;
   auto send = [&](MessageKind kind, std::vector<std::byte> payload = {}) {
     return std::holds_alternative<std::monostate>(
-        send_message(stream, {kind, std::move(payload)}, Clock::now() + 3s, stop));
+        send_message(stream, {kind, std::move(payload)}, Clock::now() + 3s, io_stop));
   };
   auto reject_protocol = [&](const std::string& text) {
     send(MessageKind::Reject, payload_bytes(text));
   };
-  MessageTransport handshake([](MessageKind kind, std::size_t size) {
-    // Lifecycle messages have no body. Refuse oversized handshakes before they
-    // can bypass Application request reservations.
-    return kind == MessageKind::Hello && size == 4;
-  });
-  auto hello = receive_message(stream, handshake, Clock::now() + 3s, stop);
-  if (auto* error = std::get_if<IpcError>(&hello)) {
-    if (error->code == IpcErrorCode::Protocol || error->code == IpcErrorCode::Incompatible)
-      reject_protocol(error->message);
-    return;
-  }
-  if (!startup_failure_.empty()) {
-    reject_protocol(startup_failure_);
-    return;
-  }
-  const auto& message = std::get<Message>(hello);
-  if (message.kind != MessageKind::Hello || !message.payload.empty()) {
-    reject_protocol("Invalid readiness handshake");
-    return;
-  }
   {
     std::lock_guard lock(connection_state_mutex_);
     if (stopping_) return;
+    if (active_ >= limits_.connections) return;
     ++active_;
     registered = true;
   }
-  if (!send(MessageKind::Ready)) return;
+  connection.session = std::make_shared<ConnectionSession>();
+  session = connection.session;
+  auto delivery = std::make_shared<PushDelivery>();
+  connection.delivery = delivery;
+  io_stop = delivery->ended.get_token();
+  const auto token = core::Id::generate().to_string();
+  {
+    std::lock_guard lock(sessions_mutex_);
+    std::erase_if(pending_push_pairings_, [](const auto& item) { return item.second.expired(); });
+    pending_push_pairings_[token] = delivery;
+  }
+  bool preserve_for_report = false;
+  struct CloseSession {
+    std::shared_ptr<PushDelivery> delivery;
+    bool& preserve;
+    ~CloseSession() {
+      if (!preserve) delivery->close();
+    }
+  } close_session{delivery, preserve_for_report};
+  std::stop_callback terminate(stop, [&] { delivery->close(); });
+  std::stop_callback peer_failed(delivery->ended.get_token(), [&] { reception.request_stop(); });
+  if (!send(MessageKind::Ready, payload_bytes(token))) return;
+  {
+    std::unique_lock lock(delivery->delivery_mutex);
+    delivery->changed.wait_until(lock, delivery->ended.get_token(), Clock::now() + 3s, [&] {
+      return delivery->paired || delivery->ended.stop_requested();
+    });
+    if (!delivery->paired || delivery->ended.stop_requested()) {
+      delivery->close();
+      return;
+    }
+  }
   {
     std::lock_guard lock(connection_state_mutex_);
     served_ = true;
@@ -125,10 +209,13 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
   }
 
   // Connection worker: each iteration receives at most one outstanding request.
-  while (!stop.stop_requested()) {
+  while (!stop.stop_requested() && !delivery->ended.stop_requested()) {
     {
       std::lock_guard lock(connection_state_mutex_);
-      if (stopping_) return;
+      if (stopping_) {
+        preserve_for_report = true;
+        return;
+      }
     }
     std::shared_ptr<BufferReservation> reservation;
     bool limited = false;
@@ -141,7 +228,12 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     // An idle established connection has no artificial expiry. Once bytes
     // arrive, bounded complete-request reception begins.
     auto ready = stream.wait(false, forever, receive_stop);
-    if (!std::holds_alternative<bool>(ready) || !std::get<bool>(ready)) return;
+    if (!std::holds_alternative<bool>(ready) || !std::get<bool>(ready)) {
+      preserve_for_report = admission_closed_.stop_requested() &&
+                            !delivery->ended.stop_requested() && !stop.stop_requested() &&
+                            std::holds_alternative<bool>(ready);
+      return;
+    }
     auto received = receive_message(stream, input, Clock::now() + 30s, receive_stop);
     if (auto* error = std::get_if<IpcError>(&received)) {
       if (limited)
@@ -183,33 +275,10 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
       std::lock_guard lock(connection_state_mutex_);
       if (!stopping_) {
         auto value = std::get<OperationRequest>(std::move(request));
-        const bool mutation = std::holds_alternative<MutationRequest>(value);
-        const auto plan = prepare_ ? RequestCoordinator::plan(value) : RequestCoordinator::Plan{};
-        ticket = request_coordinator_.admit(
-            plan,
-            [this, value = std::move(value), session, reservation,
-             mutation]() mutable -> RequestCoordinator::Action {
-              // Access worker: prepare business state. Mutation/control preparation
-              // instead runs briefly on request coordination.
-              try {
-                auto action = prepare_ ? prepare_(std::move(value), session)
-                                       : PreparedAction{[this, value = std::move(value), session] {
-                                           return handler_(value, session);
-                                         }};
-                return [this, action = std::move(action), reservation, mutation]() {
-                  // Execution worker (or brief editing control): produce and encode
-                  // the final result without server/queue locks held.
-                  try {
-                    return encode_response(action(), mutation);
-                  } catch (...) {
-                    failure(std::current_exception());
-                    throw;
-                  }
-                };
-              } catch (...) {
-                failure(std::current_exception());
-                throw;
-              }
+        ticket = request_coordinator_.admit_operation(
+            std::move(value), session, reservation,
+            [&fatal_errors = fatal_error_reporter_](OperationResponse response, bool mutation) {
+              return encode_response(fatal_errors, std::move(response), mutation);
             });
         if (ticket) connection.busy = true;
       }
@@ -238,6 +307,8 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     // Wait for execution OR peer data/EOF. The completion signal is not a
     // cancellation request: disconnecting drops delivery, never the queued job.
     std::stop_callback shutdown(stop, [&] { ticket->completed.request_stop(); });
+    std::stop_callback session_failure(delivery->ended.get_token(),
+                                       [&] { ticket->completed.request_stop(); });
     while (!ticket->completed.stop_requested()) {
       auto pending = stream.wait(false, forever, ticket->completed.get_token());
       if (std::holds_alternative<IpcError>(pending)) {
@@ -252,7 +323,7 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
         return;
       }
     }
-    if (stop.stop_requested()) return;
+    if (stop.stop_requested() || delivery->ended.stop_requested()) return;
     std::optional<RequestCoordinator::Result> result;
     {
       std::lock_guard lock(ticket->mutex);
@@ -264,7 +335,7 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
     // Connection worker: deliver the executor's final response after Accepted.
     auto final = std::get<Message>(std::move(*result));
     if (!std::holds_alternative<std::monostate>(
-            send_message(stream, final, Clock::now() + 30s, stop))) {
+            send_message(stream, final, Clock::now() + 30s, delivery->ended.get_token()))) {
       delivery_failure("final response");
       return;
     }
@@ -276,7 +347,120 @@ void IpcServer::connection(Connection& connection, IpcStream& stream, std::stop_
   }
 }
 
-RequestCoordinator::Result IpcServer::encode_response(OperationResponse response, bool mutation) {
+void IpcServer::publish(const PushNotification& notification) {
+  try {
+    // Publication callers serialize changes; this lock also orders independent lock events.
+    auto encoded = codec::encode(notification);
+    if (!std::holds_alternative<std::string>(encoded) ||
+        std::get<std::string>(encoded).size() > max_push_notification_payload_bytes)
+      throw std::logic_error("Invalid Backend notification");
+    std::lock_guard lock(sessions_mutex_);
+    std::erase_if(recipients_, [](const auto& weak) { return weak.expired(); });
+    for (auto& weak : recipients_) {
+      if (auto recipient = weak.lock()) {
+        std::lock_guard queue_lock(recipient->delivery_mutex);
+        if (recipient->ended.stop_requested()) continue;
+        if (recipient->pending.size() >= limits_.pending_push_notification_capacity) {
+          recipient->close(); // No silent loss, coalescing, or unbounded buffering.
+          continue;
+        }
+        recipient->pending.push_back(std::get<std::string>(encoded));
+        recipient->queued.request_stop();
+      }
+    }
+  } catch (...) {
+    // Fatal producer failure belongs to the lifecycle owner. Keep usable Push
+    // connections alive for Report; never alter an authoritative Mutation result.
+    fatal_error_reporter_.report(std::current_exception());
+  }
+}
+
+void IpcServer::serve_push_notification_connection(IpcStream& stream,
+                                                   std::shared_ptr<PushDelivery> delivery,
+                                                   std::stop_token stop) {
+  std::stop_callback closing(stop, [&] { delivery->close(); });
+  struct End {
+    std::shared_ptr<PushDelivery> state;
+    ~End() { state->close(); }
+  } end{delivery};
+  {
+    std::lock_guard lock(sessions_mutex_);
+    recipients_.push_back(delivery); // Coverage precedes readiness and every Access capture.
+  }
+  if (!std::holds_alternative<std::monostate>(send_message(
+          stream, {MessageKind::Ready, {}}, Clock::now() + 3s, delivery->ended.get_token())))
+    return;
+  {
+    std::lock_guard lock(delivery->delivery_mutex);
+    delivery->paired = true;
+    delivery->changed.notify_all();
+  }
+  std::uint64_t sequence = 0;
+  while (!delivery->ended.stop_requested()) {
+    std::optional<std::string> pending;
+    std::stop_token queued;
+    {
+      std::lock_guard lock(delivery->delivery_mutex);
+      delivery->queued = std::stop_source{};
+      queued = delivery->queued.get_token();
+      if (!delivery->pending.empty()) pending = delivery->pending.front();
+    }
+    if (!pending) {
+      std::stop_source wake;
+      std::stop_callback arrived(queued, [&] { wake.request_stop(); });
+      std::stop_callback ended(delivery->ended.get_token(), [&] { wake.request_stop(); });
+      auto ready = stream.wait(false, forever, wake.get_token());
+      if (std::holds_alternative<IpcError>(ready) || std::get<bool>(ready)) return;
+      continue;
+    }
+    if (++sequence == 0) return;
+    auto notification = codec::decode<PushNotification>(*pending);
+    auto bytes = codec::encode(PushEnvelope{sequence, std::get<PushNotification>(notification)});
+    const auto deadline = Clock::now() + limits_.push_timeout;
+    if (!std::holds_alternative<std::monostate>(
+            send_message(stream, {MessageKind::Push, payload_bytes(std::get<std::string>(bytes))},
+                         deadline, delivery->ended.get_token())))
+      return;
+    MessageTransport input([](MessageKind kind, std::size_t size) {
+      return kind == MessageKind::PushAck && size <= max_push_ack_bytes;
+    });
+    auto ack = receive_message(stream, input, deadline, delivery->ended.get_token());
+    if (!std::holds_alternative<Message>(ack)) return;
+    auto receipt = codec::decode<PushReceipt>(payload_text(std::get<Message>(ack).payload));
+    if (!std::holds_alternative<PushReceipt>(receipt) ||
+        std::get<PushReceipt>(receipt).sequence != sequence)
+      return;
+    {
+      std::lock_guard lock(delivery->delivery_mutex);
+      delivery->pending.pop_front();
+      delivery->changed.notify_all();
+    }
+  }
+}
+
+bool IpcServer::wait_for_push_delivery() {
+  const auto deadline = Clock::now() + limits_.push_timeout;
+  std::vector<std::shared_ptr<PushDelivery>> recipients;
+  {
+    std::lock_guard lock(sessions_mutex_);
+    for (auto& weak : recipients_)
+      if (auto recipient = weak.lock()) recipients.push_back(std::move(recipient));
+  }
+  bool delivered = true;
+  for (auto& recipient : recipients) {
+    std::unique_lock lock(recipient->delivery_mutex);
+    recipient->changed.wait_until(lock, recipient->ended.get_token(), deadline,
+                                  [&] { return recipient->pending.empty(); });
+    if (!recipient->pending.empty()) {
+      delivered = false;
+      recipient->close(); // Failed receipt is session-local; never retry or replay.
+    }
+  }
+  return delivered;
+}
+
+RequestCoordinator::Result IpcServer::encode_response(FatalErrorReporter& fatal_errors,
+                                                      OperationResponse response, bool mutation) {
   auto encoded = codec::encode<OperationResponse>(response);
   if (std::holds_alternative<IpcError>(encoded)) {
     if (mutation) {
@@ -293,7 +477,7 @@ RequestCoordinator::Result IpcServer::encode_response(OperationResponse response
                          {ErrorAction::Dismiss}});
   }
   if (auto* error = std::get_if<IpcError>(&encoded)) {
-    failure(*error);
+    fatal_errors.report(*error);
     return *error;
   }
   return Message{MessageKind::Response, payload_bytes(std::get<std::string>(encoded))};
@@ -315,6 +499,7 @@ core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) 
     std::vector<std::unique_ptr<Connection>> finished;
     std::stop_token changed;
     Clock::time_point deadline;
+    const auto fatal_wake = fatal_error_reporter_.wake_token();
     {
       std::lock_guard lock(connection_state_mutex_);
       // Install a fresh signal before testing predicates under the same lock
@@ -328,13 +513,12 @@ core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) 
         } else
           ++it;
       }
-      if (shutdown.stop_requested() || !failures_.empty() || (served_ && active_ == 0) ||
+      auto fatal = fatal_error_reporter_.take_one();
+      if (shutdown.stop_requested() || fatal || (served_ && active_ == 0) ||
           (!served_ && active_ == 0 && Clock::now() >= initial_deadline)) {
         stopping_ = true;
-        request_coordinator_.stop_admission();
-        if (!failures_.empty()) {
-          auto error = std::move(failures_.front());
-          failures_.erase(failures_.begin());
+        if (fatal) {
+          auto error = std::move(*fatal);
           if (auto* ipc = std::get_if<IpcError>(&error)) return *ipc;
           std::rethrow_exception(std::get<std::exception_ptr>(error));
         }
@@ -342,8 +526,13 @@ core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) 
       }
       deadline = served_ ? forever : initial_deadline;
     }
+    // Both signals wake only this wait; reporting holds no connection-state lock.
+    std::stop_source progress;
+    std::stop_callback connection_changed(changed, [&] { progress.request_stop(); });
+    std::stop_callback fatal_changed(fatal_wake, [&] { progress.request_stop(); });
+    changed = progress.get_token();
     finished.clear(); // Join completed workers without holding their mutex.
-    if (connections_.size() < limits_.connections) {
+    if (connections_.size() < limits_.connections * 2) {
       auto accepted = ownership_.accept();
       if (auto* error = std::get_if<IpcError>(&accepted)) return *error;
       if (auto& stream = std::get<std::optional<IpcStream>>(accepted); stream) {
@@ -352,9 +541,9 @@ core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) 
         entry->worker = std::jthread(
             [this, pointer, stream = std::move(*stream)](std::stop_token stop) mutable {
               try {
-                connection(*pointer, stream, stop);
+                serve_connection(*pointer, stream, stop);
               } catch (...) {
-                failure(std::current_exception());
+                fatal_error_reporter_.report(std::current_exception());
               }
               // Preserve a usable stream through Report. Finish wakes this wait;
               // no new requests are received after admission closes.
@@ -362,9 +551,14 @@ core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) 
                 std::unique_lock lock(connection_state_mutex_);
                 pointer->busy = false;
                 workers_changed_.notify_all();
-                if (stopping_ && stream.connected()) {
+                if (stopping_ && stream.connected() && pointer->delivery &&
+                    !pointer->delivery->ended.stop_requested()) {
+                  std::stop_source ended;
+                  std::stop_callback finish(stop, [&] { ended.request_stop(); });
+                  std::stop_callback peer(pointer->delivery->ended.get_token(),
+                                          [&] { ended.request_stop(); });
                   std::condition_variable_any closed;
-                  closed.wait(lock, stop, [] { return false; });
+                  closed.wait(lock, ended.get_token(), [] { return false; });
                 }
               }
               std::lock_guard lock(connection_state_mutex_);
@@ -393,29 +587,17 @@ core::Result<std::monostate, IpcError> IpcServer::run(std::stop_token shutdown) 
   }
 }
 
-std::vector<IpcServer::Failure> IpcServer::take_failures() {
-  std::lock_guard lock(connection_state_mutex_);
-  std::vector<Failure> result;
-  result.swap(failures_);
-  return result;
-}
-
 void IpcServer::stop_admission() {
   {
     std::lock_guard lock(connection_state_mutex_);
     stopping_ = true;
-    request_coordinator_.stop_admission();
     notify();
   }
   admission_closed_.request_stop();
   ownership_.stop_listening();
 }
 
-void IpcServer::drain_requests() {
-  // Lifecycle thread (Stopping/Report): close admission, then join execution
-  // outside the connection-state lock so actions can still publish failures.
-  stop_admission();
-  request_coordinator_.drain();
+void IpcServer::wait_for_responses() {
   // Let bounded final-response delivery settle before Finish closes streams.
   {
     std::unique_lock lock(connection_state_mutex_);

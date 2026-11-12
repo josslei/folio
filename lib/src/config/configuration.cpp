@@ -3,6 +3,7 @@
 #include <folio/io/path.hpp>
 #include "config_template.hpp"
 #include <thread>
+#include <limits>
 #include <chrono>
 #include <vector>
 #include <utility>
@@ -153,7 +154,7 @@ parse_configuration(std::string_view text, const ApplicationPaths& application,
     auto table = toml::parse(text);
     for (const auto& [key, value] : table) {
       if (key != "schema_version" && key != "general" && key != "diagnostics" &&
-          key != "performance")
+          key != "performance" && key != "ipc")
         return invalid_value("Unknown configuration key: " + std::string(key.str()));
     }
     if (table["schema_version"]) {
@@ -202,6 +203,45 @@ parse_configuration(std::string_view text, const ApplicationPaths& application,
       return invalid_value(
           "performance.access_workers must be a positive integer representable as a worker count");
     EffectiveConfig config{{{}, {}, application}, *log_level, static_cast<std::size_t>(*count)};
+    auto* ipc = table["ipc"].as_table();
+    if (table["ipc"] && !ipc) return invalid_value("ipc must be a table");
+    if (ipc) {
+      for (const auto& [key, value] : *ipc)
+        if (key != "frontend_push_queue_capacity" && key != "backend_push_queue_capacity" &&
+            key != "push_ack_timeout_ms" && key != "backend_sessions" &&
+            key != "backend_requests" && key != "backend_buffered_requests")
+          return invalid_value("Unknown ipc setting: " + std::string(key.str()));
+    }
+    for (auto name :
+         {"backend_sessions", "backend_requests", "backend_buffered_requests",
+          "frontend_push_queue_capacity", "backend_push_queue_capacity", "push_ack_timeout_ms"}) {
+      const auto* node = ipc ? ipc->get(name) : nullptr;
+      if (!node && defaults) node = (*defaults)["ipc"][name].node();
+      auto value = node && node->is_integer() ? node->value<int64_t>() : std::nullopt;
+      if (!value || *value < 1 || !std::in_range<std::size_t>(*value))
+        return invalid_value(std::string("ipc.") + name +
+                             " must be a positive representable integer");
+      if (std::string_view(name) == "backend_sessions") {
+        if (*value > std::numeric_limits<std::size_t>::max() / 2)
+          return invalid_value("ipc.backend_sessions exceeds paired connection range");
+        config.backend_sessions = static_cast<std::size_t>(*value);
+      } else if (std::string_view(name) == "backend_requests")
+        config.backend_requests = static_cast<std::size_t>(*value);
+      else if (std::string_view(name) == "backend_buffered_requests")
+        config.backend_buffered_requests = static_cast<std::size_t>(*value);
+      else if (std::string_view(name) == "frontend_push_queue_capacity")
+        config.frontend_push_queue_capacity = static_cast<std::size_t>(*value);
+      else if (std::string_view(name) == "backend_push_queue_capacity")
+        config.backend_push_queue_capacity = static_cast<std::size_t>(*value);
+      else {
+        // Keep deadline arithmetic representable even for unusually large settings.
+        const auto maximum = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::duration::max() / 4)
+                                 .count();
+        if (*value > maximum) return invalid_value("ipc.push_ack_timeout_ms exceeds clock range");
+        config.push_ack_timeout = std::chrono::milliseconds(*value);
+      }
+    }
     for (auto name : {"normal_storage", "vault_storage"}) {
       const toml::node* node = general ? general->get(name) : nullptr;
       const auto* storage = node ? node->as_table() : nullptr;

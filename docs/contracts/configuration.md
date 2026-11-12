@@ -131,3 +131,28 @@ ancestor exception. Storage reuses these configuration-path constraints through
 its existing `validate_storage_paths()` adapter, then enforces Entry layouts,
 locators and persistence safety in its own operations. Errors retain each caller's
 established type. Config has no dependency on private Storage or Application.
+
+## Push delivery resource settings
+
+Optional `[ipc]` settings use factory defaults when omitted:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `backend_sessions` | 64 | Maximum logical sessions (two connections each) |
+| `backend_requests` | 32 | Accepted request capacity |
+| `backend_buffered_requests` | 4 | Maximum-size buffered exchanges |
+| `frontend_push_queue_capacity` | 256 | Received notifications retained per Frontend session |
+| `backend_push_queue_capacity` | 256 | Pending notifications per Backend recipient session |
+| `push_ack_timeout_ms` | 30000 | Backend send plus receipt-ACK deadline in milliseconds |
+
+Capacities and timeout must be positive integers representable by their runtime
+types; timeout also must fit safe steady-clock deadline arithmetic. Overflow
+terminates the affected session rather than dropping notifications. These are
+startup settings, not hot-reloaded. Protocol payload-size bounds remain fixed.
+
+**TODO CONFIG-UI-01 — Deferred Implementation:** decide settings presentation and
+ordinary/advanced classification during settings UI design. No classification or
+separate configuration hierarchy is established now.
+
+Backend `RuntimeLimits` is constructed explicitly from validated configuration;
+it has no independent defaults. Injected-path startup uses the same factory template.

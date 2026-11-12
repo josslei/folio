@@ -7,6 +7,7 @@
 #include "storage/index_codec.hpp"
 #include "storage/normal_repository.hpp"
 
+#include <concepts>
 #include <filesystem>
 #include <atomic>
 #include <mutex>
@@ -64,6 +65,31 @@ enum class SaveOutcome { Saved, SkippedPersisted };
 class CatalogCoordinator {
 public:
   CatalogCoordinator(StoragePaths paths, MetadataCatalog& catalog);
+  /// Sanitized publication facts for the Application notification adapter. Invoked
+  /// under publication_mutex_; observer must not reenter Storage or perform I/O.
+  struct RecordChange {
+    core::Id id;
+    core::RecordType type;
+    std::optional<core::Id> directory_id;
+    // Absent on creation; otherwise the previous Root or Directory.
+    std::optional<std::variant<core::RecordType, core::Id>> previous_location;
+  };
+  struct DirectoryChange {
+    core::Id id;
+    core::DirectoryKind kind;
+  };
+  struct Change {
+    std::variant<RecordChange, DirectoryChange, CatalogStatus, std::monostate> value;
+    bool uncertain = false;
+    bool content = true;
+  };
+  /// Install/remove only with execution drained. Observer exceptions call failed;
+  /// delivery failure never changes persistence/Catalog results. Neither callback may block.
+  void set_change_observer(std::function<void(const Change&)> observer,
+                           std::function<void()> failed = {}) {
+    observer_ = std::move(observer);
+    observer_failed_ = std::move(failed);
+  }
   CatalogCoordinator(const CatalogCoordinator&) = delete;
   CatalogCoordinator& operator=(const CatalogCoordinator&) = delete;
   CatalogCoordinator(CatalogCoordinator&&) = delete;
@@ -83,7 +109,7 @@ public:
   /// through completion; concurrent Access retains immutable views. Scoped publication
   /// preserves readiness and never clears global Inconsistent state.
   [[nodiscard]] ::folio::core::Result<std::monostate, CoordinatorError>
-  publish_scoped_refresh(MetadataCatalog candidate);
+  publish_scoped_refresh(MetadataCatalog candidate, std::function<void()> published = {});
   [[nodiscard]] ::folio::core::Result<SaveOutcome, CoordinatorError> shutdown_save();
   // Backend shutdown entry point: stop work first, then call finish_session().
   // Saves if needed, then durably removes the Marker; failures are retryable.
@@ -131,17 +157,43 @@ public:
     return directory_update_callback_;
   }
 
+  /// Application supplies the known body-change fact after reconstructing current
+  /// authoritative fields. Publication and notification remain one callback boundary.
+  template <class Metadata>
+    requires(std::same_as<Metadata, LogMetadata> || std::same_as<Metadata, MemoMetadata> ||
+             std::same_as<Metadata, TodoMetadata>)
+  MutationResultCallback<Metadata> update_callback(bool content_changed) {
+    return wrap_catalog_update<Metadata>(
+        [this](const Metadata& value) { return catalog_.update_record(value); }, content_changed);
+  }
+
   // Borrowed, read-only UUID check_creation for all four creation operations.
   // Rejects unavailable/inconsistent Catalogs; does not reserve an ID.
   [[nodiscard]] const CreationCheck& creation_check() const noexcept { return creation_check_; }
 
 private:
+  /// PushNotification construction/delivery failures never change an authoritative result.
+  template <class Build> void notify_observer(Build&& build) noexcept {
+    if (!observer_) return;
+    try {
+      observer_(build());
+    } catch (...) {
+      notification_failed();
+    }
+  }
+  void notification_failed() noexcept {
+    try {
+      if (observer_failed_) observer_failed_();
+    } catch (...) {
+    }
+  }
   // Compose metadata updates and failure handling once. Catalog-update failure
   // marks inconsistency here because Repository never recursively calls a failed
   // callback. Failure notifications do not modify metadata or unpersisted state.
   template <class Metadata, class Update>
-  MutationResultCallback<Metadata> wrap_catalog_update(Update update) {
-    return [this, update = std::move(update)](const MutationNotification<Metadata>& notification)
+  MutationResultCallback<Metadata> wrap_catalog_update(Update update, bool content = true) {
+    return [this, update = std::move(update),
+            content](const MutationNotification<Metadata>& notification)
                -> ::folio::core::Result<std::monostate, StorageError> {
       std::lock_guard lock(publication_mutex_);
       if (const auto* failure =
@@ -156,9 +208,47 @@ private:
                             "Catalog session is not Ready",
                             {},
                             false};
+      const auto& incoming = std::get<std::reference_wrapper<const Metadata>>(notification).get();
       try {
+        std::optional<std::variant<core::RecordType, core::Id>> previous;
+        if constexpr (!std::is_same_v<Metadata, DirectoryMetadata>) {
+          if (observer_) {
+            try {
+              if (auto old = catalog_.read_view().find_record(incoming.metadata.id))
+                previous = std::visit(
+                    [](const auto& item) -> std::variant<core::RecordType, core::Id> {
+                      using M = std::decay_t<decltype(item.metadata)>;
+                      if constexpr (std::is_same_v<M, core::LogMetadata>)
+                        return core::RecordType::Log;
+                      else {
+                        if (item.metadata.directory_id) return *item.metadata.directory_id;
+                        return std::is_same_v<M, core::MemoMetadata> ? core::RecordType::Memo
+                                                                     : core::RecordType::Todo;
+                      }
+                    },
+                    *old);
+            } catch (...) {
+              notification_failed();
+            }
+          }
+        }
         auto result = update(std::get<std::reference_wrapper<const Metadata>>(notification).get());
         if (std::holds_alternative<StorageError>(result)) mark_needs_refresh();
+        notify_observer([&] {
+          if constexpr (std::is_same_v<Metadata, DirectoryMetadata>) {
+            return Change{DirectoryChange{incoming.metadata.id, incoming.metadata.kind},
+                          std::holds_alternative<StorageError>(result), content};
+          } else {
+            constexpr auto type = std::is_same_v<Metadata, LogMetadata>    ? core::RecordType::Log
+                                  : std::is_same_v<Metadata, MemoMetadata> ? core::RecordType::Memo
+                                                                           : core::RecordType::Todo;
+            std::optional<core::Id> directory;
+            if constexpr (!std::is_same_v<Metadata, LogMetadata>)
+              directory = incoming.metadata.directory_id;
+            return Change{RecordChange{incoming.metadata.id, type, directory, previous},
+                          std::holds_alternative<StorageError>(result), content};
+          }
+        });
         return result;
       } catch (...) {
         mark_needs_refresh();
@@ -175,6 +265,8 @@ private:
   [[nodiscard]] ::folio::core::Result<std::vector<ExcludedObject>, CoordinatorError> rebuild();
   [[nodiscard]] ::folio::core::Result<bool, CoordinatorError> previous_marker() const;
   [[nodiscard]] ::folio::core::Result<std::monostate, CoordinatorError> establish_marker();
+  std::function<void(const Change&)> observer_;
+  std::function<void()> observer_failed_;
   StoragePaths paths_;
   MetadataCatalog& catalog_;
   /// Protects managed Catalog publication and read_state capture; never held for

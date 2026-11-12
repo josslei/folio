@@ -1,3 +1,4 @@
+#include "push_fixture.hpp"
 #include "backend_connection_handle.hpp"
 #include "process.hpp"
 #include <folio/ipc/application_codec.hpp>
@@ -98,15 +99,20 @@ protected:
     if (auto* message = std::get_if<ipc::Message>(&received)) return std::move(*message);
     return std::nullopt;
   }
+  std::vector<std::unique_ptr<folio::test::PushPeer>> push_receivers;
   ipc::IpcStream raw_connection() {
     auto settings = std::get<ipc::ConnectionSettings>(ipc::connection_settings(paths));
     auto connected = ipc::IpcStream::connect(settings.endpoint);
     if (!std::holds_alternative<ipc::IpcStream>(connected))
       throw std::runtime_error("Raw connection failed");
     auto stream = std::get<ipc::IpcStream>(std::move(connected));
-    if (!send(stream, {ipc::MessageKind::Hello, {}})) throw std::runtime_error("Hello failed");
+    if (!send(stream,
+              {ipc::MessageKind::Hello, ipc::payload_bytes(std::get<std::string>(ipc::codec::encode(
+                                            ipc::HelloPayload{ipc::RequestHello{}})))}))
+      throw std::runtime_error("Hello failed");
     auto ready = receive(stream);
     if (!ready || ready->kind != ipc::MessageKind::Ready) throw std::runtime_error("Ready failed");
+    push_receivers.push_back(folio::test::pair_push(settings, *ready));
     return stream;
   }
   app::BackendConnectionHandle connect() {
@@ -420,5 +426,92 @@ TEST_F(MetadataAccessIntegration, CheckAndRefreshUseExistingConnectionAndKeepBro
   EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.refresh(app::DirectoryScanScope{
       app::DirectoryRef{core::RecordType::Memo}, app::RefreshTraversal::Immediate})));
   EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
+}
+} // namespace
+
+namespace {
+TEST_F(MetadataAccessIntegration, PushReportsMetadataContentMembershipRefreshAndLockChanges) {
+  auto viewer = connect();
+  std::optional<app::BackendConnectionHandle> editor{connect()};
+  auto await = [&](auto matches) {
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    while (folio::test::wait_push_notifications(viewer, deadline)) {
+      for (const auto& notification : viewer.take_push_notifications())
+        if (matches(notification)) return true;
+    }
+    return false;
+  };
+  auto lock_event = [&](const app::PushNotification& value) {
+    const auto* lock = std::get_if<app::EditLockChangeNotice>(&value);
+    return lock && lock->id == memo.id();
+  };
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(editor->acquire_edit(memo.id())));
+  EXPECT_TRUE(await(lock_event));
+  auto title_only = editor->update(app::MutationId::generate(), memo.id(),
+                                   app::MemoEditableFields{"New title", memo.content(), {}}, time);
+  ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::MemoMetadata>>(title_only));
+  EXPECT_TRUE(await([&](const app::PushNotification& value) {
+    const auto* record = std::get_if<app::RecordChangeNotice>(&value);
+    return record && record->id == memo.id() && record->metadata && !record->content;
+  }));
+  auto body = editor->update(app::MutationId::generate(), memo.id(),
+                             app::MemoEditableFields{"New title", "Changed body", {}}, time);
+  ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::MemoMetadata>>(body));
+  EXPECT_TRUE(await([&](const app::PushNotification& value) {
+    const auto* record = std::get_if<app::RecordChangeNotice>(&value);
+    return record && record->id == memo.id() && record->metadata && record->content;
+  }));
+  auto directory = editor->create(app::MutationId::generate(), core::DirectoryKind::Memo, "Folder");
+  ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::DirectoryMetadata>>(directory));
+  auto metadata = std::get<core::DirectoryMetadata>(
+      std::get<app::MutationResponse<core::DirectoryMetadata>>(directory).result);
+  EXPECT_TRUE(await([](const app::PushNotification& value) {
+    const auto* catalog = std::get_if<app::CatalogChangeNotice>(&value);
+    return catalog && !catalog->content;
+  }));
+  auto moved = editor->move(app::MutationId::generate(), memo.id(), metadata.id, time);
+  ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::RecordMetadata>>(moved));
+  EXPECT_TRUE(await([&](const app::PushNotification& value) {
+    const auto* record = std::get_if<app::RecordChangeNotice>(&value);
+    return record && record->id == memo.id() && !record->content;
+  }));
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(editor->release_edit(memo.id())));
+  EXPECT_TRUE(await(lock_event));
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(editor->acquire_edit(memo.id())));
+  EXPECT_TRUE(await(lock_event));
+  editor.reset();
+  EXPECT_TRUE(await(lock_event)); // Prompt cleanup, no unrelated editing request needed.
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(viewer.acquire_edit(memo.id())));
+  EXPECT_TRUE(await(lock_event)); // Initiator also receives its own invalidation.
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(
+      viewer.refresh(app::DirectoryScanScope{metadata.id, app::RefreshTraversal::Immediate})));
+  EXPECT_TRUE(await([&](const app::PushNotification& value) {
+    const auto* catalog = std::get_if<app::CatalogChangeNotice>(&value);
+    if (!catalog || !catalog->content) return false;
+    const auto* scope = std::get_if<app::DirectoryScanScope>(&catalog->scope);
+    return scope && std::holds_alternative<core::Id>(scope->directory) &&
+           std::get<core::Id>(scope->directory) == metadata.id;
+  }));
+}
+TEST_F(MetadataAccessIntegration, RequestErrorsAreNotBroadcastAndReconnectDoesNotReplayPush) {
+  auto viewer = connect();
+  {
+    auto editor = connect();
+    auto missing = editor.load_memo(core::Id::generate());
+    ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(missing));
+    EXPECT_FALSE(
+        folio::test::wait_push_notifications(viewer, std::chrono::steady_clock::now() + 20ms));
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(editor.acquire_edit(memo.id())));
+    EXPECT_TRUE(
+        folio::test::wait_push_notifications(viewer, std::chrono::steady_clock::now() + 3s));
+    viewer.take_push_notifications();
+  }
+  EXPECT_TRUE(folio::test::wait_push_notifications(viewer, std::chrono::steady_clock::now() + 3s));
+  viewer.take_push_notifications();
+  auto reconnected = connect();
+  EXPECT_FALSE(
+      folio::test::wait_push_notifications(reconnected, std::chrono::steady_clock::now() + 20ms));
+  EXPECT_TRUE(reconnected.take_push_notifications().empty());
+  EXPECT_TRUE(std::holds_alternative<core::Memo::Snapshot>(reconnected.load_memo(memo.id())));
 }
 } // namespace

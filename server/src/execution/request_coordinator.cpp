@@ -73,14 +73,39 @@ RequestCoordinator::Plan RequestCoordinator::plan(const OperationRequest& reques
       },
       request);
 }
-RequestCoordinator::RequestCoordinator(std::size_t capacity, std::size_t access_workers)
-    : capacity_(capacity), completed_([&] {
+RequestCoordinator::RequestCoordinator(std::size_t capacity, std::size_t access_workers,
+                                       std::function<void(std::exception_ptr)> fatal_error,
+                                       PrepareOperation prepare_operation,
+                                       ExecuteOperation execute_operation)
+    : prepare_operation_(std::move(prepare_operation)),
+      execute_operation_(std::move(execute_operation)), fatal_error_(std::move(fatal_error)),
+      capacity_(capacity), completed_([&] {
         std::vector<Work> result;
         result.reserve(capacity);
         return result;
       }()),
       access_workers_(checked_workers(access_workers)), access_(access_workers_),
       coordination_([this] { coordinate(); }) {}
+std::shared_ptr<RequestCoordinator::Ticket>
+RequestCoordinator::admit_operation(OperationRequest request, Session session,
+                                    std::shared_ptr<void> reservation,
+                                    std::function<Result(OperationResponse, bool)> encode) {
+  const auto scheduling = prepare_operation_ ? plan(request) : Plan{};
+  const bool mutation = std::holds_alternative<MutationRequest>(request);
+  return admit(scheduling,
+               [this, request = std::move(request), session = std::move(session),
+                reservation = std::move(reservation), encode = std::move(encode),
+                mutation]() mutable -> Action {
+                 auto action = prepare_operation_
+                                   ? prepare_operation_(std::move(request), session)
+                                   : OperationAction{[this, request = std::move(request), session] {
+                                       return execute_operation_(request, session);
+                                     }};
+                 return [action = std::move(action), reservation, encode = std::move(encode),
+                         mutation]() { return encode(action(), mutation); };
+               });
+}
+
 RequestCoordinator::~RequestCoordinator() {
   drain();
 }
@@ -192,6 +217,7 @@ void RequestCoordinator::execute(Work work, Action action) {
     result = action();
   } catch (...) {
     exception = std::current_exception();
+    if (fatal_error_) fatal_error_(exception);
     result = IpcError{IpcErrorCode::IoError, "Backend operation raised an unexpected exception"};
   }
   work.execution->result.emplace(std::move(result));

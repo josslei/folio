@@ -1,17 +1,12 @@
 # Current development status
 
-**Status:** living capability/limitation summary after Phase 4.3b. Update when
+**Status:** living capability/limitation summary after Phase 4.4a. Update when
 capabilities or verification change; milestone reports do not override this page.
-The [Catalog/concurrent Access design](plans/catalog-concurrency.md) is agreed and
-implemented for the pre-4.3b baseline: immutable Catalog views use Immer;
-ownership-only acquisition is separate from Load; RequestCoordinator dispatches
-concurrent queries/Loads and one sequential Mutation worker. The
-[implementation increments and review checkpoints](plans/catalog-concurrency.md#agreed-implementation-sequence)
-are agreed; recording them does not authorize code changes. Complete
-the focused refactor baseline in rounds before returning to remaining 4.3b, not
-every later feature described in the plan. See its
-[implementation timing](plans/catalog-concurrency.md#implementation-timing).
-Push and Frontend integration retain their later roadmap placement. The
+The [Catalog/concurrent Access design](plans/catalog-concurrency.md) and Normal
+Consistency Check/Refresh are implemented. Paired-session Push transport now adds
+independent delivery/ACK, bounded invalidations, request-time retention, Edit Lock
+cleanup notifications and Report-stage fatal availability delivery. Complete UI
+consumption and reconnection remain Phase 4.4b. The
 [cleanup sequence](documentation-harness-plan.md) records preceding harness work.
 
 ## Capability snapshot
@@ -26,9 +21,15 @@ Push and Frontend integration retain their later roadmap placement. The
 | Editing control | Connection-owned Entry Edit Locks with accepted-work lifetime retention |
 | Configuration/Logging/I/O | Shared factory-template Configuration, process spdlog and byte-oriented atomic file operations |
 | Frontend | Welcome TUI and blocking connection API; functional editor and UI/IPC worker integration deferred |
-| Not implemented | Push, persistent Draft/compound Recovery, Delete/Trash, Vault and Git Sync |
+| Push | Paired independent Request/Push connections, receipt ACKs, bounded invalidations and Report delivery; UI consumption deferred |
+| Not implemented | Persistent Draft/compound Recovery, Delete/Trash, Vault and Git Sync |
 
 ## Verification evidence
+
+The [Push verification record](reports/push-notifications-verification.md) records
+451 regular tests passing on macOS Debug, focused repetition and native timing
+limitations. Linux/Windows, ThreadSanitizer and opt-in resource verification are
+not claimed for this change.
 
 The [Catalog maintenance verification record](reports/catalog-maintenance-verification.md)
 records 435 regular tests passing on macOS Debug after Check/Refresh integration.

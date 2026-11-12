@@ -61,7 +61,12 @@ backend_endpoint_path(const config::ApplicationPaths& application_paths) {
 core::Result<ConnectionSettings, IpcError> connection_settings(const config::StoragePaths& paths) {
   auto endpoint = backend_endpoint_path(paths.application);
   if (auto* e = std::get_if<IpcError>(&endpoint)) return *e;
-  return ConnectionSettings{std::get<std::filesystem::path>(endpoint)};
+  auto defaults = config::configuration_defaults(paths.application);
+  if (!std::holds_alternative<config::EffectiveConfig>(defaults))
+    return IpcError{IpcErrorCode::IoError, "Invalid embedded connection defaults"};
+  return ConnectionSettings{
+      std::get<std::filesystem::path>(endpoint),
+      std::get<config::EffectiveConfig>(defaults).frontend_push_queue_capacity};
 }
 
 namespace {
@@ -288,6 +293,8 @@ core::Result<std::optional<Message>, IpcError> decode_message(std::string& buffe
   case MessageKind::Request:
   case MessageKind::Response:
   case MessageKind::Accepted:
+  case MessageKind::Push:
+  case MessageKind::PushAck:
   case MessageKind::Rejected:
     break;
   default:
