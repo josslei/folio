@@ -16,7 +16,7 @@ The public Application contracts do not expose these private Storage results.
 
 - Folio uses independent file-based persistence; there is no database.
 - Persisted Folio Entries are authoritative; the MetadataCatalog and its binary index are rebuildable projections.
-- Every persistent structured format has a version. Newer Folio versions may migrate older formats; older versions need not read newer formats.
+- Entry reading is best-effort in both version directions; reading does not imply safe editing. Release, Entry, Index and IPC versions are independent. See [Entry compatibility](#entry-compatibility-and-version-domains).
 - Storage, Vault, and future Git synchronization are separate concerns. Synchronization algorithms are outside this design phase.
 - Startup supplies effective StoragePaths with `normal_root`, `vault_root` and
   ApplicationPaths for config/data/state/cache/logs/optional runtime explicitly. No storage paths are hard-coded or defaulted by the filesystem layer. The state root is separate from the data roots.
@@ -28,6 +28,97 @@ An Entry is an independently identifiable persistent Folio object. The four curr
 Normal Entries use `logs/`, `memos/`, and `todos/`. Logical Trash is planned, not implemented. Logs stay flat. Memo and Todo may be organized into one level of physical folders corresponding to their logical Directories. Directory is a first-class Entry alongside Log, Memo, and Todo, with organizational behavior. Its stable UUID and UTF-8 logical display name are stored in `.folio-dir.toml`. Folio-managed physical Directory names are ASCII UUIDs (`<uuid>/`); renaming a Directory changes only its logical name and does not change its physical path.
 
 Normal Logs and Memos are Markdown files with TOML front matter delimited by `+++`. Normal Todos and directory metadata are TOML. toml++ is pinned as a Git submodule under `thirdparty/` and is used by the in-memory TOML codec. Encoding and decoding produce/consume text and do not perform file I/O, encryption, or storage operations. Every structured document starts with `schema_version = 1`; unsupported versions are rejected.
+
+### Entry compatibility and version domains
+
+**Approved design principles; only the current behavior below is implemented.**
+Newer Folio should read older Entries, and older Folio should read newer Entries,
+whenever their contents can be interpreted safely. A different schema number alone
+should not necessarily prevent reading. Incompatible structures or semantics may
+be rejected explicitly. This is best-effort bidirectional reading, not universal
+compatibility with arbitrary historical or future formats. Unknown fields are not
+necessarily optional, and familiar field names do not prove unchanged semantics.
+
+Reading compatibility does not imply editing compatibility. Editing must not
+silently destroy unknown or unrepresentable information; an older reader may
+refuse editing a newer Entry. Application Full Editable Fields still apply to
+current authoritative state before Repository full-file replacement. That boundary
+does not preserve information absent from the decoded Snapshot. Read-only
+compatibility and write eligibility must therefore be evaluated separately.
+
+#### Current behavior and audit evidence
+
+The [Entry codec](../../server/src/storage/codec.cpp) encodes integer
+`schema_version = 1`. `check_schema_version()` requires an integer exactly equal
+to 1 for all four Entry types; another integer produces `UnsupportedSchemaVersion`
+before field compatibility is assessed. Missing or mistyped versions fail too.
+Snapshots have no schema number or unknown-field storage. No historical-version
+conversion or general compatibility classification exists.
+
+| Entry | Current read behavior | Decode then re-encode |
+| --- | --- | --- |
+| Log / Memo | `check_markdown_fields()` rejects unknown front-matter fields and extra created/modified/log_date context fields. Known fields and values must validate. | Known state and opaque Markdown body are retained; rejected extensions cannot round-trip. |
+| Todo | `todo_snapshot_from_toml()` reads known fields; unfamiliar table keys, including nested extensions, are not retained. Unknown status, priority, privacy and due-kind values are rejected. | Only represented Snapshot fields are emitted; ignored extensions are lost. |
+| Directory | `directory_snapshot_from_toml()` ignores unfamiliar keys. Missing legacy `kind` is accepted only with explicit trusted Repository module context; conflicting kinds fail. | Ignored extensions are lost; trusted legacy kind becomes explicit. |
+
+Absent optional location/membership/due fields decode as absent; absent Todo
+subtasks decode as an empty collection. Required fields are not generally defaulted.
+Legacy Todo `description` does not supply required `title` and `notes`, even though
+that older layout also used version 1. Thus identical version numbers do not
+establish compatibility either.
+
+Existing [codec tests](../../tests/storage/codec_test.cpp) cover
+`DirectoryLegacyKindRequiresTrustedContext`,
+`PreservesEmptyTodoTitleAndNotesWithoutLegacyDescription`, required-field rejection,
+unknown Markdown fields, invalid enum values and unsupported versions.
+`RoundTripsDefaultTodoAndOmittedOptionals` covers omitted optional Todo values.
+[Rebuild tests](../../tests/storage/catalog_rebuild_test.cpp) also exercise
+unsupported Entry versions. These tests establish limited same-version evolution,
+not general older/newer-schema reading. Historical binaries were not tested.
+
+**Current limitation:** Todo/Directory full-file replacement can discard ignored
+extensions; permissive decoding is not safe round-trip editing. Log/Memo rejection
+protects the checked metadata fields, but is not a general editing-compatibility
+certificate. Neither policy currently fulfills the complete approved compatibility
+goal. Merely removing the version check cannot establish safe semantics or writing.
+
+#### Independent version domains
+
+| Version | Purpose and current source |
+| --- | --- |
+| Folio release | Software release identity; `project(Folio VERSION ...)` in [CMake](../../CMakeLists.txt). |
+| Entry schema | Authoritative long-lived user data; Entry codec above. |
+| Index schema | Rebuildable projection format; [Index codec](../../server/src/storage/index_codec.cpp). |
+| IPC protocol | Runtime communication compatibility; [IPC protocol](ipc.md), currently version 1. |
+
+Their numbers and increments need not match. This policy does not change Index
+validation, IPC compatibility, release numbering, or any persisted schema number.
+
+#### Compatibility follow-up work
+
+- **ENTRY-COMPAT-01 — Deferred Implementation:** separate compatible reading from
+  safe rewrite eligibility, including unknown/unrepresentable fields and nested
+  extensions. Current Snapshot replacement loses ignored information. Revisit in
+  the next focused Entry compatibility change before claiming safe editing of
+  extended formats; preservation versus explicit write refusal needs design.
+- **ENTRY-COMPAT-02 — Open Design Decision:** define which unfamiliar schema
+  versions/structures have safely understood semantics and can be decoded. The
+  current exact-version gate falls short of the approved reading direction, but
+  no supported semantics for other versions are defined. Revisit with concrete
+  fixtures and compatibility rules; retain malformed/unsupported-value validation.
+- **ENTRY-MIG-01 — Deferred Implementation:** historical Entry Migration is
+  required when compatible decoding cannot safely interpret historical data.
+  Design before supporting such schema evolution, including the existing legacy
+  Todo layout. Decide compatibility decoding versus persistent conversion,
+  incompatible-field preservation, and conversion failure recovery. No conversion
+  rule or automatic migration is approved here.
+- **ENTRY-MIG-02 — Deferred Implementation:** Vault-aware Migration must account
+  for protection and access prerequisites. Design with Vault format evolution and
+  Migration; do not infer permission to decrypt or persist plaintext.
+- **ENTRY-COMPAT-03 — Not Guaranteed:** arbitrary cross-version reading, editing
+  every newer Entry with older Folio, and unknown-field round-trip preservation.
+  Add specific guarantees only with implemented codecs/write safeguards and tests;
+  additional compatibility paths become required when actual evolution needs them.
 
 ### Current v1 Codec Scope
 
@@ -355,13 +446,13 @@ future public integration, reconciliation, migration and Vault/Recovery work; th
 are not prerequisites retroactively blocking existing formats:
 
 - Explicit authoritative enumeration and atomic in-memory Catalog reconstruction are available. Startup initialization with authoritative fallback and explicit full Refresh are available; Backend lifecycle wiring is implemented; public Full Refresh, targeted correction policy and navigation consistency checks remain deferred.
-- How unknown fields are preserved or handled during future migration; the current Log/Memo v1 decoder rejects them.
+- Entry compatibility and Migration follow-ups are tracked in [ENTRY-COMPAT / ENTRY-MIG](#compatibility-follow-up-work); do not infer safe editing from successful decoding.
 - Future Vault directory representation and any new locator rules; current Normal layout and safe-relative-locator checks are implemented.
 - How invalid or duplicate Directory metadata is reconciled during filesystem scanning.
 - The transaction journal record format, sub-operation states, recovery decision rules, and platform-specific durability guarantees for atomic replacement.
 - What conditions trigger consistency checks and how callers observe/resolve the explicit recovery state.
 - The complete public-index visibility vocabulary and rules for each privacy level, including Hidden entries and locked/unlocked views.
-- The first migration policy and supported source schema versions.
+- Supported Migration source schemas and conversion policy remain open under ENTRY-MIG-01.
 
 The exact cryptographic parameters, master-key lifecycle, Vault history handling, and cross-device merge remain deferred designs; they are not assumptions of the implemented Normal Storage contract.
 

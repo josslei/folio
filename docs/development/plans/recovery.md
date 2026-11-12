@@ -43,3 +43,13 @@ MutationId and confirmed-versus-unconfirmed result semantics are implemented; se
 Vault-related drafts must be encrypted before durable persistence. A Frontend may hold displayed/edited plaintext but must not possess Vault decryption keys. It must be able to encrypt recovery drafts without decryption capabilities. Mechanism, key distribution, and recovery decryption protocol are deliberately deferred; do not pick a cryptosystem here.
 
 Vault-aware Recovery extends the Normal Journal architecture. Cross-storage operations follow: prepare Normal side → prepare Vault side → both durable → begin coordinated mutation. Do not put sensitive Vault plaintext in an unencrypted Journal. Vault lock state, encrypted candidates, and two-sided failure handling require later design with [Vault](vault.md).
+
+## Entry Migration boundary
+
+[ENTRY-MIG-01/02](../../contracts/storage.md#compatibility-follow-up-work) track
+required historical and Vault-aware Migration. Persistent conversion will need
+explicit data-preservation and failure-recovery rules; those rules are not yet
+designed. Migration is distinct from rebuilding Catalog/Index, replaying an
+unconfirmed Mutation, or restoring a Frontend Draft. Compatible reading may avoid
+conversion, but does not establish safe editing or remove the Migration obligation
+for incompatible historical data.

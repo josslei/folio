@@ -24,6 +24,7 @@ contract owners, code and verification.
 | Browsing, metadata queries or loading content | [Access](contracts/access.md) |
 | Create/Update/Move, locks, failure outcomes or confirmation | [Mutations and editing](contracts/mutations.md), [Storage](contracts/storage.md) |
 | Entry layouts, Catalog/Index consistency or Session Marker | [Storage](contracts/storage.md) |
+| Entry schema compatibility, safe editing or Migration | [Compatibility policy and current audit](contracts/storage.md#entry-compatibility-and-version-domains) |
 | Factory defaults, schema or effective paths | [Configuration](contracts/configuration.md) |
 | Process diagnostics, privacy or logging failures | [Logging](contracts/logging.md) |
 | Generic bytes, paths or atomic publication/durability | [I/O](contracts/io.md) |

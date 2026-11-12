@@ -16,6 +16,16 @@ or a proof against every failure.
 | Peer Access/Mutation orchestrators borrow Storage; Repository plus matching Coordinator callbacks owns persistence/synchronization sequencing. Implemented. | [Orchestration boundary](../contracts/mutations.md#application-orchestration-boundary--reviewed) | [Orchestrators](../../server/include/operations), [mutation tests](../../tests/application/mutation_orchestrator_test.cpp) |
 | Ordinary access uses current known locators, not implicit discovery/Full Refresh. Missing Catalog identity differs from stale authoritative location; usable inconsistent metadata may carry a warning. Implemented. | [Access errors](../contracts/access.md#errors-and-consistency) | [AccessOrchestrator](../../server/src/operations/access_orchestrator.cpp), [integration tests](../../tests/application/metadata_access_integration_test.cpp) |
 
+## Entry compatibility — approved direction, implementation gaps
+
+Best-effort Entry reading applies in both version directions; unfamiliar schema
+numbers alone need not imply unreadability. Safe reading does not authorize a
+lossy rewrite. Release, Entry, Index and IPC versions remain independent.
+[Storage compatibility](../contracts/storage.md#entry-compatibility-and-version-domains)
+owns the current codec audit, limitations and ENTRY-COMPAT / ENTRY-MIG follow-ups.
+Historical Migration is deferred required work, including Vault-aware handling;
+universal compatibility and unknown-field preservation are not implemented guarantees.
+
 ## Consistency Checking and Refresh — implemented Backend contracts
 
 The [4.3b plan](../development/plans/catalog-refresh.md) owns the detailed contract:

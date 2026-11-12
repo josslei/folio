@@ -85,6 +85,18 @@ After the complete application foundations, implement single-repository Normal/V
 
 Resolve concurrent-operation/Recovery coordination, conflict rules, key availability, interrupted-sync recovery, and compatibility before implementation. Completion requires synthetic-repository tests preserving UUID identity and encryption boundaries. See [Git design](plans/git-sync.md).
 
+## Entry compatibility and Migration — required future work
+
+Follow the [Entry compatibility contract](../contracts/storage.md#entry-compatibility-and-version-domains).
+Best-effort bidirectional reading is approved; current codecs still require version
+1 and do not provide general safe round-trip editing of extensions. Address
+ENTRY-COMPAT-01/02 in a focused compatibility change, independently of IPC versions.
+Historical Migration (ENTRY-MIG-01) is required when compatible decoding is
+insufficient, not an optional optimization. Vault-aware Migration (ENTRY-MIG-02)
+requires its access/protection design. Establish concrete supported schemas,
+preservation and conversion-failure recovery before implementing those paths;
+this roadmap does not authorize implementation.
+
 ## Hardening and release — planned
 
 Expand macOS/Linux/Windows filesystem, process, and IPC verification; complete crash/fault, migration/compatibility, performance/resource-limit, and security coverage; and provide packaging/install and user/developer documentation.
