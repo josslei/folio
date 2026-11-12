@@ -998,4 +998,81 @@ TEST_F(NormalRepositoryTest, FailedAtomicUpdatePreservesExistingBytesAndSnapshot
   EXPECT_EQ(std::get<core::Memo::Snapshot>(loaded).title, "Memo café");
 }
 
+TEST_F(NormalRepositoryTest, CompatibleExtensionsLoadButCannotBeRewritten) {
+  const auto log = log_snapshot();
+  const auto memo = memo_snapshot();
+  const auto todo = todo_snapshot();
+  ASSERT_TRUE(operation_succeeded(repository.create_log(log)));
+  ASSERT_TRUE(operation_succeeded(repository.create_memo(memo)));
+  ASSERT_TRUE(operation_succeeded(repository.create_todo(todo)));
+  for (const auto type : {core::RecordType::Log, core::RecordType::Memo, core::RecordType::Todo}) {
+    const auto entry_id = type == core::RecordType::Log    ? log.id
+                          : type == core::RecordType::Memo ? memo.id
+                                                           : todo.id;
+    const auto located = repository.locate_record(type, entry_id);
+    ASSERT_TRUE(std::holds_alternative<fs::path>(located));
+    const auto locator = std::get<fs::path>(located);
+    const auto path = root / locator;
+    auto text = read_bytes(path);
+    // Place the extension in the document's top-level table for either format.
+    text.insert(type == core::RecordType::Todo ? 0 : 4, "future_property = true\n");
+    ASSERT_NO_FATAL_FAILURE(write_bytes(path, text));
+    std::variant<std::monostate, storage::RepositoryMutationError> result;
+    if (type == core::RecordType::Log) {
+      EXPECT_TRUE(
+          std::holds_alternative<core::Log::Snapshot>(repository.load_log(log.id, locator)));
+      result = repository.update_log(log, locator);
+    } else if (type == core::RecordType::Memo) {
+      EXPECT_TRUE(
+          std::holds_alternative<core::Memo::Snapshot>(repository.load_memo(memo.id, locator)));
+      result = repository.update_memo(memo, locator);
+      expect_error_code(repository.move_memo(memo.id, std::nullopt, modified(), {}, locator),
+                        storage::StorageErrorCode::WriteProtected);
+    } else {
+      EXPECT_TRUE(
+          std::holds_alternative<core::Todo::Snapshot>(repository.load_todo(todo.id, locator)));
+      result = repository.update_todo(todo, locator);
+      expect_error_code(repository.move_todo(todo.id, std::nullopt, modified(), {}, locator),
+                        storage::StorageErrorCode::WriteProtected);
+    }
+    expect_error_code(result, storage::StorageErrorCode::WriteProtected);
+    const auto& error = std::get<storage::RepositoryMutationError>(result);
+    EXPECT_EQ(error.stage, storage::MutationFailureStage::BeforeAuthoritativeChange);
+    EXPECT_EQ(error.evidence.write, storage::PersistenceObservation::NotAttempted);
+    EXPECT_EQ(read_bytes(path), text);
+  }
+}
+
+TEST_F(NormalRepositoryTest, DirectoryExtensionProtectsRenameAndPreservesBytes) {
+  const core::Directory::Snapshot directory{core::Id::generate(), core::DirectoryKind::Memo,
+                                            "Work"};
+  ASSERT_TRUE(operation_succeeded(repository.create_directory(directory.kind, directory)));
+  const auto path = root / "memos" / directory.id.to_string() / ".folio-dir.toml";
+  const auto text = "future_property = true\n" + read_bytes(path);
+  ASSERT_NO_FATAL_FAILURE(write_bytes(path, text));
+  EXPECT_TRUE(std::holds_alternative<core::Directory::Snapshot>(
+      repository.load_directory(directory.kind, directory.id)));
+  expect_error_code(repository.rename_directory(directory.kind, directory.id, "New name"),
+                    storage::StorageErrorCode::WriteProtected);
+  EXPECT_EQ(read_bytes(path), text);
+}
+
+TEST_F(NormalRepositoryTest, DifferentVersionWithSupportedFieldsCanBeLoadedAndUpdated) {
+  auto memo = memo_snapshot();
+  ASSERT_TRUE(operation_succeeded(repository.create_memo(memo)));
+  const auto located = repository.locate_record(core::RecordType::Memo, memo.id);
+  ASSERT_TRUE(std::holds_alternative<fs::path>(located));
+  const auto locator = std::get<fs::path>(located);
+  const auto path = root / locator;
+  auto text = read_bytes(path);
+  const auto version = text.find("schema_version = 1");
+  ASSERT_NE(version, std::string::npos);
+  text.replace(version, std::string{"schema_version = 1"}.size(), "schema_version = 2");
+  ASSERT_NO_FATAL_FAILURE(write_bytes(path, text));
+  EXPECT_TRUE(std::holds_alternative<core::Memo::Snapshot>(repository.load_memo(memo.id, locator)));
+  memo.title = "Updated";
+  ASSERT_TRUE(operation_succeeded(repository.update_memo(memo, locator)));
+  EXPECT_NE(read_bytes(path).find("schema_version = 1"), std::string::npos);
+}
+
 } // namespace

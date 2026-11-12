@@ -237,7 +237,9 @@ void pack_tags(Packer& p, const std::vector<Tag>& tags) {
     pack_string(p, tag.value);
 }
 void pack_directory(Packer& p, const DirectoryMetadata& d) {
-  p.pack_map(4);
+  p.pack_map(5);
+  pack_key(p, "read_only");
+  p.pack(d.read_only);
   pack_key(p, "id");
   pack_string(p, d.metadata.id.to_string());
   pack_key(p, "kind");
@@ -254,11 +256,14 @@ void pack_entry(Packer& p, const RecordMetadata& e) {
         constexpr bool log = std::is_same_v<T, LogMetadata>;
         constexpr bool memo = std::is_same_v<T, MemoMetadata>;
         if constexpr (log)
-          p.pack_map(9);
+          p.pack_map(10);
         else if constexpr (memo)
-          p.pack_map(value.metadata.directory_id ? 9 : 8);
+          p.pack_map(value.metadata.directory_id ? 10 : 9);
         else
-          p.pack_map(9 + (value.metadata.directory_id ? 1 : 0) + (value.metadata.due_date ? 1 : 0));
+          p.pack_map(10 + (value.metadata.directory_id ? 1 : 0) +
+                     (value.metadata.due_date ? 1 : 0));
+        pack_key(p, "read_only");
+        p.pack(value.read_only);
         pack_key(p, "created");
         pack_timestamp(p, value.metadata.created);
         if constexpr (!log)
@@ -652,6 +657,14 @@ void reject_irrelevant(const Object& object, std::initializer_list<std::string_v
       fail(IndexCodecErrorCode::InvalidMetadata, std::string(path) + "." + std::string(name),
            "Field is not valid for this Entry type");
 }
+// Missing assessment means an older cache: reject it so startup reconstructs
+// compatibility from authoritative files rather than silently granting writes.
+bool read_only_of(const Object& object, std::string_view path) {
+  const auto& value = field(object, "read_only", path);
+  require(value.type == msgpack::type::BOOLEAN, IndexCodecErrorCode::InvalidMetadata,
+          std::string(path) + ".read_only", "Expected compatibility flag");
+  return value.via.boolean;
+}
 DirectoryMetadata directory_of(const Object& object, std::string_view path) {
   as_map(object, path);
   const auto id = id_of(field(object, "id", path), std::string(path) + ".id");
@@ -659,7 +672,7 @@ DirectoryMetadata directory_of(const Object& object, std::string_view path) {
   const auto relative_path =
       path_of(field(object, "relative_path", path), std::string(path) + ".relative_path");
   const auto name = string_of(field(object, "name", path), std::string(path) + ".name");
-  return {{id, kind, name}, relative_path};
+  return {{id, kind, name}, relative_path, read_only_of(object, path)};
 }
 RecordMetadata entry_of(const Object& object, std::string_view path) {
   as_map(object, path);
@@ -679,7 +692,8 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
         {id, privacy, created, modified, title,
          tags_of(field(object, "tags", path), std::string(path) + ".tags"),
          date_context_of(field(object, "log_date", path), std::string(path) + ".log_date")},
-        relative_path};
+        relative_path,
+        read_only_of(object, path)};
   }
   if (type == "Memo") {
     reject_irrelevant(object, {"due_date", "log_date", "priority", "status"}, path);
@@ -689,7 +703,8 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
     return MemoMetadata{{id, privacy, created, modified, title,
                          tags_of(field(object, "tags", path), std::string(path) + ".tags"),
                          directory_id},
-                        relative_path};
+                        relative_path,
+                        read_only_of(object, path)};
   }
   if (type == "Todo") {
     reject_irrelevant(object, {"log_date", "tags"}, path);
@@ -704,7 +719,8 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
          status_of(field(object, "status", path), std::string(path) + ".status"),
          priority_of(field(object, "priority", path), std::string(path) + ".priority"), due_date,
          directory_id},
-        relative_path};
+        relative_path,
+        read_only_of(object, path)};
   }
   fail(IndexCodecErrorCode::InvalidMetadata, std::string(path) + ".type", "Invalid Entry type");
 }

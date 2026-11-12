@@ -27,60 +27,93 @@ An Entry is an independently identifiable persistent Folio object. The four curr
 
 Normal Entries use `logs/`, `memos/`, and `todos/`. Logical Trash is planned, not implemented. Logs stay flat. Memo and Todo may be organized into one level of physical folders corresponding to their logical Directories. Directory is a first-class Entry alongside Log, Memo, and Todo, with organizational behavior. Its stable UUID and UTF-8 logical display name are stored in `.folio-dir.toml`. Folio-managed physical Directory names are ASCII UUIDs (`<uuid>/`); renaming a Directory changes only its logical name and does not change its physical path.
 
-Normal Logs and Memos are Markdown files with TOML front matter delimited by `+++`. Normal Todos and directory metadata are TOML. toml++ is pinned as a Git submodule under `thirdparty/` and is used by the in-memory TOML codec. Encoding and decoding produce/consume text and do not perform file I/O, encryption, or storage operations. Every structured document starts with `schema_version = 1`; unsupported versions are rejected.
+Normal Logs and Memos are Markdown files with TOML front matter delimited by `+++`. Normal Todos and directory metadata are TOML. toml++ is pinned as a Git submodule under `thirdparty/` and is used by the in-memory TOML codec. Encoding and decoding produce/consume text and do not perform file I/O, encryption, or storage operations. New Entry documents emit `schema_version = 1`; reads validate a positive integer version and the supported field structure as described below.
 
 ### Entry compatibility and version domains
 
-**Approved design principles; only the current behavior below is implemented.**
+**Approved policy; codec classification and Repository write protection implemented.**
 Newer Folio should read older Entries, and older Folio should read newer Entries,
-whenever their contents can be interpreted safely. A different schema number alone
-should not necessarily prevent reading. Incompatible structures or semantics may
-be rejected explicitly. This is best-effort bidirectional reading, not universal
-compatibility with arbitrary historical or future formats. Unknown fields are not
-necessarily optional, and familiar field names do not prove unchanged semantics.
+whenever their contents can be interpreted safely. Version numbers cannot bypass
+field validation. This is best-effort compatibility, not proof that arbitrary
+future schemas preserve the meaning of familiar fields.
 
-Reading compatibility does not imply editing compatibility. Editing must not
-silently destroy unknown or unrepresentable information; an older reader may
-refuse editing a newer Entry. Application Full Editable Fields still apply to
-current authoritative state before Repository full-file replacement. That boundary
-does not preserve information absent from the decoded Snapshot. Read-only
-compatibility and write eligibility must therefore be evaluated separately.
-
-#### Current behavior and audit evidence
-
-The [Entry codec](../../server/src/storage/codec.cpp) encodes integer
-`schema_version = 1`. `check_schema_version()` requires an integer exactly equal
-to 1 for all four Entry types; another integer produces `UnsupportedSchemaVersion`
-before field compatibility is assessed. Missing or mistyped versions fail too.
-Snapshots have no schema number or unknown-field storage. No historical-version
-conversion or general compatibility classification exists.
-
-| Entry | Current read behavior | Decode then re-encode |
+| Classification | Validated document | Managed behavior |
 | --- | --- | --- |
-| Log / Memo | `check_markdown_fields()` rejects unknown front-matter fields and extra created/modified/log_date context fields. Known fields and values must validate. | Known state and opaque Markdown body are retained; rejected extensions cannot round-trip. |
-| Todo | `todo_snapshot_from_toml()` reads known fields; unfamiliar table keys, including nested extensions, are not retained. Unknown status, priority, privacy and due-kind values are rejected. | Only represented Snapshot fields are emitted; ignored extensions are lost. |
-| Directory | `directory_snapshot_from_toml()` ignores unfamiliar keys. Missing legacy `kind` is accepted only with explicit trusted Repository module context; conflicting kinds fail. | Ignored extensions are lost; trusted legacy kind becomes explicit. |
+| Fully compatible | Required known fields and values validate; no unknown properties, regardless of version difference | Read, Catalog projection and writing |
+| Compatible | Known fields validate, but additional properties are unrecognized | Read and Catalog projection; reject authoritative rewriting |
+| Incompatible | Required fields missing, known field types/values invalid, or malformed framing/TOML/version | Reject typed loading; do not invent Catalog metadata |
 
-Absent optional location/membership/due fields decode as absent; absent Todo
-subtasks decode as an empty collection. Required fields are not generally defaulted.
-Legacy Todo `description` does not supply required `title` and `notes`, even though
-that older layout also used version 1. Thus identical version numbers do not
-establish compatibility either.
+Known optional omissions retain their existing defaults. Nested contexts, due
+values and every subtask are included in the structural assessment. A matching
+version does not authorize dropping extensions. `schema_version` remains a required
+positive integer; unfamiliar positive numbers alone are not errors.
 
-Existing [codec tests](../../tests/storage/codec_test.cpp) cover
-`DirectoryLegacyKindRequiresTrustedContext`,
-`PreservesEmptyTodoTitleAndNotesWithoutLegacyDescription`, required-field rejection,
-unknown Markdown fields, invalid enum values and unsupported versions.
-`RoundTripsDefaultTodoAndOmittedOptionals` covers omitted optional Todo values.
-[Rebuild tests](../../tests/storage/catalog_rebuild_test.cpp) also exercise
-unsupported Entry versions. These tests establish limited same-version evolution,
-not general older/newer-schema reading. Historical binaries were not tested.
+#### Current implementation and verification
 
-**Current limitation:** Todo/Directory full-file replacement can discard ignored
-extensions; permissive decoding is not safe round-trip editing. Log/Memo rejection
-protects the checked metadata fields, but is not a general editing-compatibility
-certificate. Neither policy currently fulfills the complete approved compatibility
-goal. Merely removing the version check cannot establish safe semantics or writing.
+The [Entry codec](../../server/src/storage/codec.cpp) decodes all known fields
+and return `Result<core::Annotated<Snapshot, EntryCompatibility>, CodecError>`. There is no compatibility output
+parameter on Entry decoders. The `.annotation` assessment records the source version and first unknown field path; it is private
+Storage information, not a Core Snapshot property. Structural inspection compares
+the source against metadata/TOML generated from the validated Snapshot; it does
+not serialize the Record body or compare version numbers to establish writability.
+
+All four decoders accept extensions for reading. Unknown fields are not preserved
+in Snapshots or subsequent encoding. `NormalRepository` therefore assesses the
+actual source document before Update, Move (including same-location requests),
+and Directory Rename, rejecting extensions with `StorageErrorCode::WriteProtected`
+before any authoritative write. Application maps this to `EntryWriteProtected`
+and the existing `NotApplied` failure/evidence contract. Immediate Todo changes
+reuse the same protected Update path. Create emits the current schema.
+Fully compatible documents with another version can be replaced in the current
+schema; this is an ordinary supported rewrite, not a Migration mechanism.
+
+Legacy Directory metadata without `kind` still requires trusted Repository module
+context. Legacy Todo `description` still cannot replace required `title` and
+`notes`; no conversion rule is invented. Markdown bodies remain opaque; a
+front-matter `content` extension does not shadow the body and makes rewriting
+ineligible.
+
+[Codec tests](../../tests/storage/codec_test.cpp) exercise version differences,
+known-field failures and nested extensions. [Repository tests](../../tests/storage/normal_repository_test.cpp)
+verify readable extensions cannot be rewritten and authoritative bytes remain
+unchanged. [Application tests](../../tests/application/mutation_orchestrator_test.cpp)
+cover `EntryWriteProtected`, NotApplied and IPC error encoding.
+[Scan tests](../../tests/storage/catalog_rebuild_test.cpp) verify readable extended
+Entries still supply validated Catalog metadata.
+
+**Incompatible exceptions:** Folio manages only decodable Entries. Incompatible
+files must remain untouched and their location/problem must be reported, rather
+than fabricated into Catalog metadata or exposed through a new raw-read API.
+Current Repository scan errors already carry the offending path and diagnostic;
+malformed managed Entries still fail the scan, preserving existing candidate
+publication guarantees. Continuing with omissions, incompatible Directory members
+and user-facing diagnostic presentation are tracked below, not silently decided.
+
+#### Backend-owned compatibility and Frontend presentation
+
+`Located<Metadata>` carries a private `read_only` flag alongside the locator.
+Authoritative scans populate it for Records and Directories; immutable Catalog
+views retain it, and scoped/full reconciliation publishes it with the candidate.
+The Index persists the flag. Older Index entries without an assessment are rejected
+through existing cache validation/startup fallback, so restart rebuilds from Entry
+files rather than silently treating unassessed data as writable. The Index remains
+schema 1; its cache representation now requires `read_only` for every Entry.
+
+Public Record Loads return `Annotated<Snapshot>` with an
+`EntryReadOnly` warning when the captured Catalog assessment prohibits editing.
+Core Snapshots remain unchanged. Frontends use the warning to disable editing;
+Mutation requests contain no compatibility assertion. MutationOrchestrator checks
+the current Backend-owned Catalog assessment before filesystem work. Standalone
+Repository rewriting retains its source-document safeguard, using its existing
+read rather than performing a separate compatibility read.
+
+Runtime external modification is severe unsupported misuse, not ordinary
+concurrency Folio attempts to accommodate. Cached compatibility assumes Entry
+files are not externally changed during the Backend session. Explicit Refresh
+re-establishes the projection; no per-request scan, filesystem watch or freshness
+probe is added. Historical binaries were not tested, and matching structure does
+not prove unchanged semantics across arbitrary future formats. Partial-file
+reading remains future Storage optimization work, not part of this change.
 
 #### Independent version domains
 
@@ -96,16 +129,20 @@ validation, IPC compatibility, release numbering, or any persisted schema number
 
 #### Compatibility follow-up work
 
-- **ENTRY-COMPAT-01 — Deferred Implementation:** separate compatible reading from
-  safe rewrite eligibility, including unknown/unrepresentable fields and nested
-  extensions. Current Snapshot replacement loses ignored information. Revisit in
-  the next focused Entry compatibility change before claiming safe editing of
-  extended formats; preservation versus explicit write refusal needs design.
-- **ENTRY-COMPAT-02 — Open Design Decision:** define which unfamiliar schema
-  versions/structures have safely understood semantics and can be decoded. The
-  current exact-version gate falls short of the approved reading direction, but
-  no supported semantics for other versions are defined. Revisit with concrete
-  fixtures and compatibility rules; retain malformed/unsupported-value validation.
+- **ENTRY-COMPAT-01 — Deferred Implementation:** complete Frontend read-only UI
+  integration. Backend-owned Catalog assessment, Index persistence, Load warnings
+  and pre-filesystem Mutation rejection are implemented. Consume `EntryReadOnly`
+  to disable editing during Frontend integration; changing a local warning must
+  never grant Backend write permission. Unknown-field preservation is not implemented.
+- **ENTRY-COMPAT-02 — Not Guaranteed:** familiar field structures cannot prove
+  unchanged semantics in arbitrary future versions. Current classification follows
+  validated field compatibility; introduce specific additional decoders only when
+  real schema evolution requires them and semantics are defined and tested.
+- **ENTRY-COMPAT-04 — Open Design Decision:** scan publication after incompatible
+  file exclusions, and handling members of an incompatible Directory. Existing
+  scans fail on malformed managed Entries. Approve Catalog readiness/publication
+  and diagnostic presentation before changing that behavior; no raw-reading API
+  or silent partial success is authorized by compatible decoding.
 - **ENTRY-MIG-01 — Deferred Implementation:** historical Entry Migration is
   required when compatible decoding cannot safely interpret historical data.
   Design before supporting such schema evolution, including the existing legacy
@@ -132,7 +169,7 @@ Only the Todo title is projected into metadata for text queries and title sortin
 
 ### Log and Memo Markdown v1
 
-Both front-matter schemas require `schema_version = 1`, `id`, `privacy`, `title`, `tags` (an ordered string array, possibly empty), `created`, and `modified`. Log additionally requires `log_date`; Memo permits an optional `directory_id`. Time/date contexts preserve their value, timezone, and optional location using the common codecs. `content` occurs exclusively in the Markdown body and is forbidden in front matter. Unknown fields, including extra fields inside contexts, are rejected rather than discarded. Missing fields, invalid values, malformed TOML, and unsupported versions produce recoverable codec errors.
+Both front-matter schemas require a positive integer `schema_version`, `id`, `privacy`, `title`, `tags` (an ordered string array, possibly empty), `created`, and `modified`. Log additionally requires `log_date`; Memo permits an optional `directory_id`. Time/date contexts preserve their value, timezone, and optional location using the common codecs. `content` occurs exclusively in the Markdown body. Unknown front-matter fields, including a `content` extension or extra fields inside contexts, are readable but make rewriting ineligible. Missing required fields, invalid known values, malformed TOML and invalid version representations produce recoverable codec errors.
 
 The opening delimiter must be `+++` at byte zero, followed by LF or CRLF. The first subsequent line containing exactly `+++`, terminated by LF or CRLF, closes front matter. That entire delimiter line, including its line ending, is framing; the body begins immediately afterward. No blank separator line is inserted or removed. A closing delimiter without a line ending is invalid, including for empty content. LF and CRLF framing may be mixed; bare CR framing, a BOM, delimiter whitespace, and a preamble are not accepted.
 

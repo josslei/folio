@@ -10,6 +10,7 @@
 
 #include <toml++/toml.hpp>
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <optional>
@@ -32,6 +33,14 @@ struct CodecError {
   std::string message;
 };
 
+/// Assessment of a successfully decoded document, independent of Core state.
+/// Unknown fields are readable but cannot safely survive Snapshot replacement.
+struct EntryCompatibility {
+  std::int64_t source_version = 1;
+  std::optional<std::string> unknown_field;
+  [[nodiscard]] bool writable() const { return !unknown_field; }
+};
+
 [[nodiscard]] toml::value<std::string> to_toml(const Id& id);
 [[nodiscard]] toml::value<std::string> to_toml(const Tag& tag);
 [[nodiscard]] toml::value<std::string> to_toml(Privacy privacy);
@@ -50,11 +59,12 @@ timestamp_context_from_toml(const toml::node& node);
 date_context_from_toml(const toml::node& node);
 [[nodiscard]] ::folio::core::Result<DueDate, CodecError> due_date_from_toml(const toml::node& node);
 
-[[nodiscard]] ::folio::core::Result<Todo::Snapshot, CodecError>
+[[nodiscard]] ::folio::core::Result<core::Annotated<Todo::Snapshot, EntryCompatibility>, CodecError>
 todo_snapshot_from_toml(const toml::table& table);
 // Legacy documents lacking kind require a trusted module context. A present
 // kind must agree with that context when one is supplied.
-[[nodiscard]] ::folio::core::Result<Directory::Snapshot, CodecError>
+[[nodiscard]] ::folio::core::Result<core::Annotated<Directory::Snapshot, EntryCompatibility>,
+                                    CodecError>
 directory_snapshot_from_toml(const toml::table& table,
                              std::optional<DirectoryKind> trusted_legacy_kind = std::nullopt);
 
@@ -68,9 +78,9 @@ serialize_toml(const toml::table& table);
 serialize_markdown(const Log::Snapshot& snapshot);
 [[nodiscard]] ::folio::core::Result<std::string, CodecError>
 serialize_markdown(const Memo::Snapshot& snapshot);
-[[nodiscard]] ::folio::core::Result<Log::Snapshot, CodecError>
+[[nodiscard]] ::folio::core::Result<core::Annotated<Log::Snapshot, EntryCompatibility>, CodecError>
 log_snapshot_from_markdown(std::string_view text);
-[[nodiscard]] ::folio::core::Result<Memo::Snapshot, CodecError>
+[[nodiscard]] ::folio::core::Result<core::Annotated<Memo::Snapshot, EntryCompatibility>, CodecError>
 memo_snapshot_from_markdown(std::string_view text);
 
 } // namespace folio::core::storage::codec

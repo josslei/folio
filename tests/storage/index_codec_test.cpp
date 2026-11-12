@@ -228,20 +228,20 @@ std::string encoded_catalog() {
   return value_of(encoded);
 }
 
-TEST(IndexCodecTest, LocatedMetadataPreservesExactSchemaOneWireEncoding) {
+TEST(IndexCodecTest, LocatedMetadataPersistsCompatibilityAlongsideLocator) {
   const auto record_id = id("27183823-2574-4bfd-b411-99ed177d3e43");
   const auto created = context(timestamp_at(std::chrono::seconds{1}), "UTC", std::nullopt);
   storage::MetadataCatalog catalog;
   ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.insert_record(storage::MemoMetadata{
       {record_id, core::Privacy::Normal, created, created, "Memo", {}, std::nullopt},
       "memos/actual.md"})));
-  // Independent schema-v1 fixture: Located<T> is only an in-memory wrapper;
-  // it must not introduce a metadata envelope or reorder persisted map fields.
+  // Compatibility belongs to the rebuildable cache, not authoritative Core metadata.
   const WireValue timestamp{WireValue::Map{{"nanoseconds", WireValue{std::uint64_t{0}}},
                                            {"seconds", WireValue{std::int64_t{1}}},
                                            {"timezone", WireValue{std::string{"UTC"}}}}};
   const WireValue record{
-      WireValue::Map{{"created", timestamp},
+      WireValue::Map{{"read_only", WireValue{false}},
+                     {"created", timestamp},
                      {"id", WireValue{record_id.to_string()}},
                      {"modified", timestamp},
                      {"privacy", WireValue{std::string{"Normal"}}},
@@ -263,6 +263,26 @@ TEST(IndexCodecTest, LocatedMetadataPreservesExactSchemaOneWireEncoding) {
   const auto& located = std::get<storage::MemoMetadata>(*restored);
   EXPECT_EQ(located.metadata.title, "Memo");
   EXPECT_EQ(located.relative_path, fs::path{"memos/actual.md"});
+}
+
+TEST(IndexCodecTest, ReadOnlySurvivesRestartAndOlderCachesRequireRebuild) {
+  auto source = make_catalog();
+  auto view = source.read_view();
+  auto record = view.find_record(id("27183823-2574-4bfd-b411-99ed177d3e43"));
+  ASSERT_TRUE(record);
+  std::visit([](auto& value) { value.read_only = true; }, *record);
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(source.update_record(*record)));
+  auto encoded = codec::encode_index(source);
+  ASSERT_TRUE(std::holds_alternative<std::string>(encoded));
+  auto decoded = codec::decode_index(value_of(encoded));
+  ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(decoded));
+  auto restored =
+      value_of(decoded).read_view().find_record(id("27183823-2574-4bfd-b411-99ed177d3e43"));
+  ASSERT_TRUE(restored);
+  EXPECT_TRUE(std::visit([](const auto& value) { return value.read_only; }, *restored));
+  auto wire = unpack_wire(value_of(encoded));
+  erase_field(entry(wire), "read_only");
+  EXPECT_TRUE(std::holds_alternative<codec::IndexCodecError>(codec::decode_index(pack_wire(wire))));
 }
 
 TEST(IndexCodecTest, RoundTripsAllMetadataFieldsAndRestoresPersistedMembership) {

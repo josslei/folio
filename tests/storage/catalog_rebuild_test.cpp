@@ -337,7 +337,7 @@ TEST_F(CatalogRebuildTest, DirectorySchemaKindAndIdentityErrorsAreFatal) {
       repository.create_directory(core::DirectoryKind::Memo, md)));
   const auto metadata = root / "memos" / md.id.to_string() / ".folio-dir.toml";
   const auto original = bytes(metadata);
-  ASSERT_NO_FATAL_FAILURE(replace_in_file(metadata, "schema_version = 1", "schema_version = 2"));
+  ASSERT_NO_FATAL_FAILURE(replace_in_file(metadata, "schema_version = 1", "schema_version = 0"));
   error_code(repository.scan(), storage::StorageErrorCode::CodecError);
   ASSERT_NO_FATAL_FAILURE(write(metadata, original));
   ASSERT_NO_FATAL_FAILURE(replace_in_file(metadata, "kind = 'Memo'", "kind = 'Todo'"));
@@ -368,7 +368,7 @@ TEST_F(CatalogRebuildTest, EntrySchemaAndPhysicalDirectoryMembershipAreValidated
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto log_path = root / std::get<fs::path>(locator);
   const auto original = bytes(log_path);
-  ASSERT_NO_FATAL_FAILURE(replace_in_file(log_path, "schema_version = 1", "schema_version = 2"));
+  ASSERT_NO_FATAL_FAILURE(replace_in_file(log_path, "schema_version = 1", "schema_version = 0"));
   error_code(repository.scan(), storage::StorageErrorCode::CodecError);
   ASSERT_NO_FATAL_FAILURE(write(log_path, original));
   const auto md = memo_directory();
@@ -543,6 +543,26 @@ TEST_F(CatalogRebuildTest, ScanRejectsCrossCategoryIdentityInEitherDiscoveryOrde
     EXPECT_EQ(bytes(path), content);
     fs::remove_all(root);
   }
+}
+
+TEST_F(CatalogRebuildTest, ReadableExtensionsAndUnfamiliarVersionsRemainCatalogable) {
+  storage::NormalRepository repository{root};
+  const auto snapshot = memo();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(snapshot)));
+  const auto located = repository.locate_record(core::RecordType::Memo, snapshot.id);
+  ASSERT_TRUE(std::holds_alternative<fs::path>(located));
+  const auto path = root / std::get<fs::path>(located);
+  ASSERT_NO_FATAL_FAILURE(replace_in_file(path, "schema_version = 1", "schema_version = 2"));
+  auto text = bytes(path);
+  text.insert(4, "future_property = true\n");
+  ASSERT_NO_FATAL_FAILURE(write(path, text));
+  const auto scanned = repository.scan();
+  ASSERT_TRUE(std::holds_alternative<storage::NormalRepositoryScanResult>(scanned));
+  const auto& result = std::get<storage::NormalRepositoryScanResult>(scanned);
+  ASSERT_EQ(result.memos.size(), 1);
+  EXPECT_EQ(result.memos.front().metadata.id, snapshot.id);
+  EXPECT_TRUE(result.diagnostics.empty());
+  EXPECT_TRUE(result.memos.front().read_only);
 }
 
 } // namespace

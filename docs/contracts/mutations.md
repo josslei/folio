@@ -17,6 +17,12 @@ Preserve known facts and Draft content; no status alone authorizes replay. Check
 current state and ownership before writes, then reuse the existing persistence and
 Catalog synchronization path. Exact contracts and mappings follow below.
 
+Repository replacement paths also enforce [Entry write eligibility](storage.md#entry-compatibility-and-version-domains).
+MutationOrchestrator checks the current Catalog read-only assessment before
+filesystem work; Frontend claims cannot override it. A readable Entry with
+unrecognized properties returns `EntryWriteProtected` with
+`NotApplied` before persistence. Matching schema numbers do not bypass this check.
+
 ## Application Operation taxonomy — Approved
 
 ```text

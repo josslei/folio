@@ -72,9 +72,9 @@ std::optional<CodecError> check_schema_version(const toml::table& table) {
   if (const auto* failure = std::get_if<CodecError>(&result)) {
     return *failure;
   }
-  if (std::get<std::int64_t>(result) != 1) {
+  if (std::get<std::int64_t>(result) < 1) {
     return error(CodecErrorCode::UnsupportedSchemaVersion, "schema_version",
-                 "Only schema version 1 is supported");
+                 "Expected a positive schema version");
   }
   return std::nullopt;
 }
@@ -243,47 +243,41 @@ read_location(const toml::table& table) {
   return std::optional<std::string>{*value};
 }
 
-std::optional<CodecError> check_fields(const toml::table& table,
-                                       std::initializer_list<std::string_view> allowed,
-                                       std::string_view prefix = {}) {
-  for (const auto& [key, value] : table) {
-    bool known = false;
-    for (const auto name : allowed) {
-      if (key.str() == name) {
-        known = true;
-        break;
-      }
+// Compare supported structure, not version numbers or field values. Decoding
+// validates all known values first. Inspect every nested table/array so a full
+// replacement cannot silently discard extensions inside contexts or subtasks.
+std::optional<std::string> unknown_field(const toml::node& source, const toml::node& known,
+                                         std::string path = {}) {
+  if (const auto* table = source.as_table()) {
+    const auto* expected = known.as_table();
+    if (!expected) return path;
+    for (const auto& [key, value] : *table) {
+      const auto child =
+          path.empty() ? std::string{key.str()} : path + "." + std::string{key.str()};
+      const auto* supported = expected->get(key.str());
+      if (!supported) return child;
+      if (auto extra = unknown_field(value, *supported, child)) return extra;
     }
-    if (!known) {
-      auto path = std::string{prefix};
-      if (!path.empty()) path += '.';
-      path += key.str();
-      return error(CodecErrorCode::UnknownField, std::move(path), "Unknown field");
+  } else if (const auto* array = source.as_array()) {
+    const auto* expected = known.as_array();
+    if (!expected) return path;
+    for (std::size_t i = 0; i < array->size(); ++i) {
+      if (i < expected->size()) {
+        if (auto extra =
+                unknown_field((*array)[i], (*expected)[i], path + "[" + std::to_string(i) + "]"))
+          return extra;
+      }
     }
   }
   return std::nullopt;
 }
 
-// These stricter field checks apply only to Markdown metadata, leaving the
-// existing common-value and Todo/Directory decoders unchanged.
-std::optional<CodecError> check_markdown_fields(const toml::table& table, bool is_log) {
-  if (const auto failure = check_schema_version(table)) return failure;
-  const auto failure = is_log ? check_fields(table, {"schema_version", "id", "created", "modified",
-                                                     "title", "tags", "privacy", "log_date"})
-                              : check_fields(table, {"schema_version", "id", "created", "modified",
-                                                     "title", "tags", "privacy", "directory_id"});
-  if (failure) return failure;
-  for (const auto key : {"created", "modified", "log_date"}) {
-    const auto* node = table.get(key);
-    if (node && node->is_table()) {
-      const auto context_failure =
-          std::string_view{key} == "log_date"
-              ? check_fields(*node->as_table(), {"date", "timezone", "location"}, key)
-              : check_fields(*node->as_table(), {"timestamp", "timezone", "location"}, key);
-      if (context_failure) return context_failure;
-    }
-  }
-  return std::nullopt;
+EntryCompatibility assess(const toml::table& source, toml::table known) {
+  // An explicitly empty subtasks array is a known field even though the encoder
+  // omits it. Other optional fields that are present are emitted by the encoder.
+  if (source.contains("subtasks") && known.contains("status") && !known.contains("subtasks"))
+    known.insert("subtasks", toml::array{});
+  return {*source["schema_version"].value<std::int64_t>(), unknown_field(source, known)};
 }
 
 template <class T>
@@ -633,7 +627,7 @@ timestamp_context_from_toml(const toml::node& node) {
   return error(CodecErrorCode::InvalidField, "due.kind", "Expected Date or Datetime");
 }
 
-::folio::core::Result<Todo::Snapshot, CodecError>
+::folio::core::Result<core::Annotated<Todo::Snapshot, EntryCompatibility>, CodecError>
 todo_snapshot_from_toml(const toml::table& table) {
   if (const auto failure = check_schema_version(table)) return *failure;
 
@@ -754,10 +748,11 @@ todo_snapshot_from_toml(const toml::table& table) {
   } catch (const std::exception& exception) {
     return error(CodecErrorCode::InvalidField, "", exception.what());
   }
-  return snapshot;
+  auto compatibility = assess(table, to_toml(snapshot));
+  return core::Annotated{std::move(snapshot), std::move(compatibility)};
 }
 
-::folio::core::Result<Directory::Snapshot, CodecError>
+::folio::core::Result<core::Annotated<Directory::Snapshot, EntryCompatibility>, CodecError>
 directory_snapshot_from_toml(const toml::table& table,
                              std::optional<DirectoryKind> trusted_legacy_kind) {
   if (const auto failure = check_schema_version(table)) return *failure;
@@ -793,8 +788,10 @@ directory_snapshot_from_toml(const toml::table& table,
   } else {
     return error(CodecErrorCode::MissingField, "kind", "Required field is missing");
   }
-  return Directory::Snapshot{std::get<Id>(std::move(id_result)), kind,
-                             std::get<std::string>(std::move(name_result))};
+  Directory::Snapshot snapshot{std::get<Id>(std::move(id_result)), kind,
+                               std::get<std::string>(std::move(name_result))};
+  auto compatibility = assess(table, to_toml(snapshot));
+  return core::Annotated{std::move(snapshot), std::move(compatibility)};
 }
 
 ::folio::core::Result<std::string, CodecError> serialize_toml(const toml::table& table) {
@@ -846,14 +843,15 @@ directory_snapshot_from_toml(const toml::table& table,
   }
 }
 
-::folio::core::Result<Log::Snapshot, CodecError> log_snapshot_from_markdown(std::string_view text) {
+::folio::core::Result<core::Annotated<Log::Snapshot, EntryCompatibility>, CodecError>
+log_snapshot_from_markdown(std::string_view text) {
   auto parts_result = split_markdown(text);
   if (const auto* failure = result_error(parts_result)) return *failure;
   const auto parts = std::get<MarkdownParts>(parts_result);
   auto table_result = parse_toml(parts.metadata);
   if (const auto* failure = result_error(table_result)) return *failure;
   const auto& table = std::get<toml::table>(table_result);
-  if (const auto failure = check_markdown_fields(table, true)) return *failure;
+  if (const auto failure = check_schema_version(table)) return *failure;
   auto metadata_result = read_markdown_metadata(table);
   if (const auto* failure = result_error(metadata_result)) return *failure;
   auto date_result = read_field(table, "log_date", date_context_from_toml);
@@ -869,10 +867,16 @@ directory_snapshot_from_toml(const toml::table& table,
   } catch (const std::exception& exception) {
     return error(CodecErrorCode::InvalidField, "", exception.what());
   }
-  return snapshot;
+  {
+    auto known = markdown_metadata(snapshot.id, snapshot.created, snapshot.modified, snapshot.title,
+                                   snapshot.tags, snapshot.privacy);
+    known.insert("log_date", to_toml(snapshot.log_date));
+    auto compatibility = assess(table, std::move(known));
+    return core::Annotated{std::move(snapshot), std::move(compatibility)};
+  }
 }
 
-::folio::core::Result<Memo::Snapshot, CodecError>
+::folio::core::Result<core::Annotated<Memo::Snapshot, EntryCompatibility>, CodecError>
 memo_snapshot_from_markdown(std::string_view text) {
   auto parts_result = split_markdown(text);
   if (const auto* failure = result_error(parts_result)) return *failure;
@@ -880,7 +884,7 @@ memo_snapshot_from_markdown(std::string_view text) {
   auto table_result = parse_toml(parts.metadata);
   if (const auto* failure = result_error(table_result)) return *failure;
   const auto& table = std::get<toml::table>(table_result);
-  if (const auto failure = check_markdown_fields(table, false)) return *failure;
+  if (const auto failure = check_schema_version(table)) return *failure;
   auto metadata_result = read_markdown_metadata(table);
   if (const auto* failure = result_error(metadata_result)) return *failure;
   std::optional<Id> directory_id;
@@ -899,7 +903,13 @@ memo_snapshot_from_markdown(std::string_view text) {
   } catch (const std::exception& exception) {
     return error(CodecErrorCode::InvalidField, "", exception.what());
   }
-  return snapshot;
+  {
+    auto known = markdown_metadata(snapshot.id, snapshot.created, snapshot.modified, snapshot.title,
+                                   snapshot.tags, snapshot.privacy);
+    if (snapshot.directory_id) known.insert("directory_id", to_toml(*snapshot.directory_id));
+    auto compatibility = assess(table, std::move(known));
+    return core::Annotated{std::move(snapshot), std::move(compatibility)};
+  }
 }
 
 } // namespace folio::core::storage::codec

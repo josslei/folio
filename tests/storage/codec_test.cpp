@@ -18,8 +18,24 @@ namespace {
 using namespace folio::core;
 namespace codec = folio::core::storage::codec;
 
-template <typename T> const T& value_of(const ::folio::core::Result<T, codec::CodecError>& result) {
-  return std::get<T>(result);
+template <typename T>
+decltype(auto) value_of(const ::folio::core::Result<T, codec::CodecError>& result) {
+  if constexpr (requires { std::get<T>(result).annotation; })
+    return (std::get<T>(result).value);
+  else
+    return (std::get<T>(result));
+}
+
+// Existing value assertions focus on the Snapshot; compatibility assertions also
+// inspect the annotation returned by the same decode.
+template <class T>
+Result<T, codec::CodecError> assessed(
+    const Result<folio::core::Annotated<T, codec::EntryCompatibility>, codec::CodecError>& result,
+    codec::EntryCompatibility& compatibility) {
+  if (const auto* error = std::get_if<codec::CodecError>(&result)) return *error;
+  const auto& entry = std::get<folio::core::Annotated<T, codec::EntryCompatibility>>(result);
+  compatibility = entry.annotation;
+  return entry.value;
 }
 
 template <typename T> bool is_error(const ::folio::core::Result<T, codec::CodecError>& result) {
@@ -457,7 +473,7 @@ TEST(CoreCodecErrorTest, RejectsInvalidDateTimestampAndSchemaVersion) {
 
   Todo todo("Versioned", "", sample_timestamp_context(std::nullopt));
   auto unsupported = codec::to_toml(todo.snapshot());
-  unsupported.insert_or_assign("schema_version", 999);
+  unsupported.insert_or_assign("schema_version", 0);
   EXPECT_TRUE(is_error(codec::todo_snapshot_from_toml(unsupported)));
 
   auto wrong_type = codec::to_toml(todo.snapshot());
@@ -488,7 +504,7 @@ TEST(CoreCodecErrorTest, RejectsInvalidDateTimestampAndSchemaVersion) {
   EXPECT_TRUE(is_error(codec::todo_snapshot_from_toml(invalid_due_kind)));
 
   auto directory = codec::to_toml(Directory(DirectoryKind::Memo, "Projects").snapshot());
-  directory.insert_or_assign("schema_version", 2);
+  directory.insert_or_assign("schema_version", 0);
   EXPECT_TRUE(is_error(codec::directory_snapshot_from_toml(directory)));
 }
 
@@ -798,7 +814,7 @@ TEST(CoreCodecMarkdownErrorTest, RejectsCoercibleNonIntegerSchemaVersions) {
   }
 }
 
-TEST(CoreCodecMarkdownErrorTest, RejectsUnknownFieldsAndContentMetadata) {
+TEST(CoreCodecMarkdownErrorTest, ReadsUnknownFieldsWithoutShadowingContent) {
   for (const bool is_log : {true, false}) {
     const std::vector<std::string> extras{
         "unknown = 42\n",
@@ -825,8 +841,19 @@ TEST(CoreCodecMarkdownErrorTest, RejectsUnknownFieldsAndContentMetadata) {
       }
       const auto text = codec::serialize_toml(table);
       ASSERT_FALSE(is_error(text));
-      expect_markdown_error(is_log, "+++\n" + value_of(text) + "\n+++\nbody",
-                            codec::CodecErrorCode::UnknownField);
+      codec::EntryCompatibility compatibility;
+      const auto document = "+++\n" + value_of(text) + "\n+++\nbody";
+      if (is_log) {
+        const auto decoded = assessed(codec::log_snapshot_from_markdown(document), compatibility);
+        ASSERT_FALSE(is_error(decoded));
+        EXPECT_EQ(value_of(decoded).content, "body");
+      } else {
+        const auto decoded = assessed(codec::memo_snapshot_from_markdown(document), compatibility);
+        ASSERT_FALSE(is_error(decoded));
+        EXPECT_EQ(value_of(decoded).content, "body");
+      }
+      EXPECT_FALSE(compatibility.writable());
+      EXPECT_TRUE(compatibility.unknown_field.has_value());
     }
   }
 }
@@ -848,7 +875,7 @@ TEST(CoreCodecMarkdownErrorTest, RejectsInvalidMetadataValuesAndContextFields) {
       expect_markdown_error(is_log, "+++\n" + value_of(text) + "\n+++\n",
                             codec::CodecErrorCode::InvalidField);
     }
-    for (const int version : {0, 2, 999}) {
+    for (const int version : {0, -1}) {
       auto table = value_of(fixture);
       table.insert_or_assign("schema_version", version);
       const auto text = codec::serialize_toml(table);
@@ -942,6 +969,65 @@ TEST(CoreCodecMarkdownErrorTest, EncodingInvalidSnapshotsReturnsErrors) {
   memo.modified.timezone.clear();
   EXPECT_TRUE(is_error(codec::serialize_markdown(log)));
   EXPECT_TRUE(is_error(codec::serialize_markdown(memo)));
+}
+
+TEST(CoreCodecCompatibilityTest, DifferentVersionsWithSupportedFieldsRemainWritable) {
+  for (const int version : {1, 2, 999}) {
+    codec::EntryCompatibility compatibility;
+    auto todo = codec::to_toml(Todo("Task", "", sample_timestamp_context(std::nullopt)).snapshot());
+    todo.insert_or_assign("schema_version", version);
+    ASSERT_FALSE(is_error(assessed(codec::todo_snapshot_from_toml(todo), compatibility)));
+    EXPECT_EQ(compatibility.source_version, version);
+    EXPECT_TRUE(compatibility.writable());
+    auto directory = codec::to_toml(Directory::Snapshot{sample_id(), DirectoryKind::Memo, "Work"});
+    directory.insert_or_assign("schema_version", version);
+    ASSERT_FALSE(is_error(
+        assessed(codec::directory_snapshot_from_toml(directory, std::nullopt), compatibility)));
+    EXPECT_TRUE(compatibility.writable());
+    for (const bool is_log : {true, false}) {
+      auto metadata = markdown_metadata(is_log);
+      metadata.replace(0, std::string_view{"schema_version = 1"}.size(),
+                       "schema_version = " + std::to_string(version));
+      const auto document = "+++\n" + metadata + "+++\nbody";
+      if (is_log)
+        ASSERT_FALSE(
+            is_error(assessed(codec::log_snapshot_from_markdown(document), compatibility)));
+      else
+        ASSERT_FALSE(
+            is_error(assessed(codec::memo_snapshot_from_markdown(document), compatibility)));
+      EXPECT_EQ(compatibility.source_version, version);
+      EXPECT_TRUE(compatibility.writable());
+    }
+  }
+}
+
+TEST(CoreCodecCompatibilityTest, TodoAndDirectoryExtensionsAreReadOnlyAndKnownValuesStillValidate) {
+  auto todo = codec::to_toml(Todo("Task", "", sample_timestamp_context(std::nullopt)).snapshot());
+  for (const int version : {1, 2}) {
+    for (const bool nested : {false, true}) {
+      auto extended = todo;
+      extended.insert_or_assign("schema_version", version);
+      if (nested)
+        extended.get_as<toml::table>("modified")->insert("future", true);
+      else
+        extended.insert("future", true);
+      codec::EntryCompatibility compatibility;
+      ASSERT_FALSE(is_error(assessed(codec::todo_snapshot_from_toml(extended), compatibility)));
+      EXPECT_FALSE(compatibility.writable());
+      extended.insert_or_assign("status", "UnknownStatus");
+      EXPECT_TRUE(is_error(assessed(codec::todo_snapshot_from_toml(extended), compatibility)));
+    }
+  }
+  todo.insert("subtasks", toml::array{toml::table{
+                              {"content", "item"}, {"completed", false}, {"future", true}}});
+  codec::EntryCompatibility compatibility;
+  ASSERT_FALSE(is_error(assessed(codec::todo_snapshot_from_toml(todo), compatibility)));
+  EXPECT_EQ(compatibility.unknown_field, "subtasks[0].future");
+  auto directory = codec::to_toml(Directory::Snapshot{sample_id(), DirectoryKind::Memo, "Work"});
+  directory.insert("future", true);
+  ASSERT_FALSE(is_error(
+      assessed(codec::directory_snapshot_from_toml(directory, std::nullopt), compatibility)));
+  EXPECT_FALSE(compatibility.writable());
 }
 
 } // namespace

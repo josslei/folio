@@ -45,7 +45,7 @@ bool equal(const std::optional<core::DueDate>& a, const std::optional<core::DueD
 }
 template <class T> bool common_equal(const T& a, const T& b) {
   return a.metadata.id == b.metadata.id && a.relative_path == b.relative_path &&
-         a.metadata.privacy == b.metadata.privacy &&
+         a.read_only == b.read_only && a.metadata.privacy == b.metadata.privacy &&
          equal(a.metadata.created, b.metadata.created) &&
          equal(a.metadata.modified, b.metadata.modified) && a.metadata.title == b.metadata.title;
 }
@@ -70,7 +70,8 @@ bool equal(const RecordMetadata& a, const RecordMetadata& b) {
 }
 bool equal(const DirectoryMetadata& a, const DirectoryMetadata& b) {
   return a.metadata.id == b.metadata.id && a.metadata.kind == b.metadata.kind &&
-         a.relative_path == b.relative_path && a.metadata.name == b.metadata.name;
+         a.relative_path == b.relative_path && a.read_only == b.read_only &&
+         a.metadata.name == b.metadata.name;
 }
 
 bool valid_utf8(std::string_view text) {

@@ -10,6 +10,10 @@ namespace folio::core::storage {
 template <class Metadata> struct Located {
   Metadata metadata;
   std::filesystem::path relative_path;
+  /// Backend-owned scan assessment, persisted in Index and published with metadata.
+  /// Valid under the no-runtime-external-modification contract; never supplied
+  /// or overridden by a Frontend Mutation request.
+  bool read_only = false;
 };
 
 } // namespace folio::core::storage

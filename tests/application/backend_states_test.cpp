@@ -115,7 +115,7 @@ TEST_F(BackendStates, AcceptedWorkDrainsBeforeCatalogFinalizationAndOwnershipRel
   std::jthread lifecycle, frontend;
   bool released = false;
   std::optional<BackendConnectionHandle> handle;
-  std::optional<ApplicationResult<core::Memo::Snapshot>> response;
+  std::optional<AccessResult<Annotated<core::Memo::Snapshot>>> response;
   BackendActionOutcome stopped{}, finished{};
   struct Cleanup {
     std::function<void()> action;

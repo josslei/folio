@@ -109,11 +109,11 @@ resolution and never silently repairs authoritative files.
   or `DirectoryScanScope` (a logical `DirectoryRef` plus Immediate/Recursive
   `RefreshTraversal`). Repository scope always reconstructs the complete Catalog
   and has no traversal field. Logs and user Directories have no recursive children.
-- Check returns `ApplicationResult<ConsistencyCheckResult>`: the two successful
+- Check returns `AccessResult<ConsistencyCheckResult>`: the two successful
   observations are `NoAnomalyDetected` and `AnomalyDetected`; inability to complete
   is an ApplicationError. Membership counts use immutable reverse indices without
   copying/filtering Record metadata; the physical count is raw iteration.
-- Refresh returns `ApplicationResult<std::monostate>`. `FullRefreshRequired`
+- Refresh returns `AccessResult<std::monostate>`. `FullRefreshRequired`
   identifies scoped identity/location ambiguity; `ErrorAction::Refresh` is an
   explicit user choice, never automatic execution. Stale Loads advertise it.
 - Repository `scan(type, directory, recursive)` reuses the full-scan parser/validation path;

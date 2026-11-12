@@ -20,6 +20,10 @@ ApplicationError repository_problem(const storage::RepositoryError& error) {
         using T = std::decay_t<decltype(cause)>;
         if constexpr (std::is_same_v<T, storage::StorageError>) {
           switch (cause.code) {
+          case storage::StorageErrorCode::WriteProtected:
+            return problem(ErrorReason::EntryWriteProtected,
+                           "Entry is readable but contains information this Folio cannot preserve",
+                           ErrorCategory::AuthoritativeDataProblem);
           case storage::StorageErrorCode::PostPersistFailure:
             return problem(ErrorReason::CatalogSynchronizationFailed,
                            "Authoritative operation completed but Catalog synchronization failed",
@@ -343,6 +347,9 @@ NormalMutationResponse MutationOrchestrator::mutate(const MutationRequest& reque
                 return reject(problem(
                     view.contains_entry(id) ? ErrorReason::WrongRecordType : ErrorReason::NotFound,
                     "Requested Directory is unavailable", ErrorCategory::TargetUnavailable));
+              if (dir_metadata->read_only)
+                return reject(problem(ErrorReason::EntryWriteProtected, "Entry is read-only",
+                                      ErrorCategory::AuthoritativeDataProblem));
               if (dir_metadata->relative_path != directory_path(dir_metadata->metadata))
                 return reject(problem(ErrorReason::StaleLocation,
                                       "Directory location disagrees with Catalog",
@@ -362,6 +369,9 @@ NormalMutationResponse MutationOrchestrator::mutate(const MutationRequest& reque
                 return reject(problem(
                     view.contains_entry(id) ? ErrorReason::WrongRecordType : ErrorReason::NotFound,
                     "Requested Record is unavailable", ErrorCategory::TargetUnavailable));
+              if (std::visit([](const auto& value) { return value.read_only; }, *metadata))
+                return reject(problem(ErrorReason::EntryWriteProtected, "Entry is read-only",
+                                      ErrorCategory::AuthoritativeDataProblem));
               if (storage::record_type(*metadata) != type)
                 return reject(problem(ErrorReason::WrongRecordType, "Wrong Record type"));
               locator =
@@ -507,23 +517,23 @@ NormalMutationResponse MutationOrchestrator::mutate(const MutationRequest& reque
             else if constexpr (std::is_same_v<T, MoveMemoRequest>)
               return repository_.move_memo(
                   id, operation.directory_id, operation.modified,
-                  coordinator_.update_callback<core::MemoMetadata>(content_changed), locator);
+                  coordinator_.update_callback<storage::MemoMetadata>(content_changed), locator);
             else if constexpr (std::is_same_v<T, MoveTodoRequest>)
               return repository_.move_todo(
                   id, operation.directory_id, operation.modified,
-                  coordinator_.update_callback<core::TodoMetadata>(content_changed), locator);
+                  coordinator_.update_callback<storage::TodoMetadata>(content_changed), locator);
             else if constexpr (memo)
               return repository_.update_memo(
                   *snapshot, locator,
-                  coordinator_.update_callback<core::MemoMetadata>(content_changed));
+                  coordinator_.update_callback<storage::MemoMetadata>(content_changed));
             else if constexpr (todo)
               return repository_.update_todo(
                   *snapshot, locator,
-                  coordinator_.update_callback<core::TodoMetadata>(content_changed));
+                  coordinator_.update_callback<storage::TodoMetadata>(content_changed));
             else
               return repository_.update_log(
                   *snapshot, locator,
-                  coordinator_.update_callback<core::LogMetadata>(content_changed));
+                  coordinator_.update_callback<storage::LogMetadata>(content_changed));
           }();
           if (auto* error = std::get_if<storage::RepositoryMutationError>(&result))
             return {request.mutation_id, mutation_problem(*error, evidence, move)};

@@ -41,7 +41,8 @@ enum class ErrorReason {
   LockConflict,
   EditLockRequired,
   CatalogSynchronizationFailed,
-  FullRefreshRequired
+  FullRefreshRequired,
+  EntryWriteProtected
 };
 
 // Presentation choices, not automatic retries or guarantees of success.
@@ -59,7 +60,7 @@ struct ApplicationError {
   std::vector<ErrorAction> available_actions;
 };
 
-enum class WarningReason { CatalogInconsistent };
+enum class WarningReason { CatalogInconsistent, EntryReadOnly };
 
 struct ApplicationWarning {
   WarningReason reason;
@@ -67,11 +68,9 @@ struct ApplicationWarning {
   std::vector<ErrorAction> available_actions;
 };
 
-template <class T> struct ApplicationResponse {
-  T value;
-  std::vector<ApplicationWarning> warnings;
-};
+/// Successful Access data accompanied by Application warnings.
+template <class T> using Annotated = core::Annotated<T, std::vector<ApplicationWarning>>;
 
-template <class T> using ApplicationResult = core::Result<T, ApplicationError>;
+template <class T> using AccessResult = core::Result<T, ApplicationError>;
 
 } // namespace folio::application

@@ -88,9 +88,11 @@ Resolve concurrent-operation/Recovery coordination, conflict rules, key availabi
 ## Entry compatibility and Migration — required future work
 
 Follow the [Entry compatibility contract](../contracts/storage.md#entry-compatibility-and-version-domains).
-Best-effort bidirectional reading is approved; current codecs still require version
-1 and do not provide general safe round-trip editing of extensions. Address
-ENTRY-COMPAT-01/02 in a focused compatibility change, independently of IPC versions.
+Field-based bidirectional decoding and Repository write protection are implemented;
+unknown properties remain readable but cannot be rewritten. The Catalog and Index
+retain the Backend assessment, and Load responses expose read-only warnings.
+ENTRY-COMPAT-01 tracks complete Frontend UI integration; ENTRY-COMPAT-04 tracks incompatible-file scan policy.
+These are independent of IPC versions.
 Historical Migration (ENTRY-MIG-01) is required when compatible decoding is
 insufficient, not an optional optimization. Vault-aware Migration (ENTRY-MIG-02)
 requires its access/protection design. Establish concrete supported schemas,

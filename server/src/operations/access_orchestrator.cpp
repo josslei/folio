@@ -159,7 +159,7 @@ OperationResponse query_records(RecordQuery query, const storage::MetadataCatalo
   std::vector<core::RecordMetadata> records;
   for (const auto& metadata : catalog.query(native))
     records.push_back(project(metadata));
-  return ApplicationResponse<std::vector<core::RecordMetadata>>{std::move(records), warnings};
+  return Annotated<std::vector<core::RecordMetadata>>{std::move(records), warnings};
 }
 
 ApplicationError map_load_error(const storage::StorageError& failure) {
@@ -224,7 +224,8 @@ std::function<OperationResponse()> prepare_load(const Request& request,
   if (storage::record_type(*metadata) != type)
     return [] { return OperationResponse{wrong_type()}; };
   const auto locator = std::visit([](const auto& value) { return value.relative_path; }, *metadata);
-  return [id = request.id, locator, &repository]() -> OperationResponse {
+  const bool read_only = std::visit([](const auto& value) { return value.read_only; }, *metadata);
+  return [id = request.id, locator, read_only, &repository]() -> OperationResponse {
     auto loaded = [&] {
       if constexpr (std::is_same_v<Request, LoadLogRequest>)
         return repository.load_log(id, locator);
@@ -234,13 +235,18 @@ std::function<OperationResponse()> prepare_load(const Request& request,
         return repository.load_todo(id, locator);
     }();
     return std::visit(
-        [](auto&& value) -> OperationResponse {
+        [read_only](auto&& value) -> OperationResponse {
           using T = std::decay_t<decltype(value)>;
           if constexpr (std::is_same_v<T, storage::StorageError> ||
                         std::is_same_v<T, io::FileError>) {
             return map_load_error(value);
           } else {
-            return std::move(value);
+            std::vector<ApplicationWarning> warnings;
+            if (read_only)
+              warnings.push_back({WarningReason::EntryReadOnly,
+                                  "Entry contains unsupported properties and cannot be edited",
+                                  {ErrorAction::Dismiss}});
+            return Annotated<T>{std::move(value), std::move(warnings)};
           }
         },
         std::move(loaded));
@@ -254,13 +260,13 @@ OperationResponse browse(RecordQuery query, const storage::MetadataCatalogView& 
   if (auto* failure = std::get_if<ApplicationError>(&response)) return *failure;
   BrowseResult result;
   result.records =
-      std::move(std::get<ApplicationResponse<std::vector<core::RecordMetadata>>>(response).value);
+      std::move(std::get<Annotated<std::vector<core::RecordMetadata>>>(response).value);
   if (root_type && *root_type != core::RecordType::Log) {
     result.directories =
         list_directories(catalog, *root_type == core::RecordType::Memo ? core::DirectoryKind::Memo
                                                                        : core::DirectoryKind::Todo);
   }
-  return ApplicationResponse<BrowseResult>{std::move(result), warnings};
+  return Annotated<BrowseResult>{std::move(result), warnings};
 }
 
 OperationResponse dispatch(const OperationRequest& request,
@@ -274,7 +280,7 @@ OperationResponse dispatch(const OperationRequest& request,
           return query_records(value.query, catalog, warnings);
         } else if constexpr (std::is_same_v<R, ListDirectoriesRequest>) {
           if (static_cast<unsigned>(value.kind) > 1) return invalid_query("Invalid Directory kind");
-          return ApplicationResponse<std::vector<core::DirectoryMetadata>>{
+          return Annotated<std::vector<core::DirectoryMetadata>>{
               list_directories(catalog, value.kind), warnings};
         } else if constexpr (std::is_same_v<R, BrowseRequest>) {
           RecordQuery query;

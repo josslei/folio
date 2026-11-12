@@ -34,6 +34,7 @@ enum class StorageErrorCode {
   CatalogUnavailable,
   OperationFailure,
   CodecError,
+  WriteProtected,
   IdentityMismatch,
   DuplicateId,
   StaleLocator,

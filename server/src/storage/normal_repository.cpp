@@ -259,19 +259,26 @@ StorageResult<std::string> encode(const Snapshot& snapshot, const fs::path& path
 
 template <class Snapshot>
 StorageResult<Snapshot> decode(std::string_view text, const fs::path& path,
-                               std::optional<DirectoryKind> trusted_legacy_kind = std::nullopt) {
+                               std::optional<DirectoryKind> trusted_legacy_kind = std::nullopt,
+                               codec::EntryCompatibility* compatibility = nullptr) {
   if constexpr (std::is_same_v<Snapshot, core::Log::Snapshot>) {
     auto decoded = codec::log_snapshot_from_markdown(text);
     if (auto* problem = std::get_if<codec::CodecError>(&decoded)) {
       return codec_failure(path, *problem);
     }
-    return std::get<Snapshot>(std::move(decoded));
+    auto entry =
+        std::get<folio::core::Annotated<Snapshot, codec::EntryCompatibility>>(std::move(decoded));
+    if (compatibility) *compatibility = std::move(entry.annotation);
+    return std::move(entry.value);
   } else if constexpr (std::is_same_v<Snapshot, core::Memo::Snapshot>) {
     auto decoded = codec::memo_snapshot_from_markdown(text);
     if (auto* problem = std::get_if<codec::CodecError>(&decoded)) {
       return codec_failure(path, *problem);
     }
-    return std::get<Snapshot>(std::move(decoded));
+    auto entry =
+        std::get<folio::core::Annotated<Snapshot, codec::EntryCompatibility>>(std::move(decoded));
+    if (compatibility) *compatibility = std::move(entry.annotation);
+    return std::move(entry.value);
   } else {
     auto parsed = codec::parse_toml(text);
     if (auto* problem = std::get_if<codec::CodecError>(&parsed)) {
@@ -282,14 +289,20 @@ StorageResult<Snapshot> decode(std::string_view text, const fs::path& path,
       if (auto* problem = std::get_if<codec::CodecError>(&decoded)) {
         return codec_failure(path, *problem);
       }
-      return std::get<Snapshot>(std::move(decoded));
+      auto entry =
+          std::get<folio::core::Annotated<Snapshot, codec::EntryCompatibility>>(std::move(decoded));
+      if (compatibility) *compatibility = std::move(entry.annotation);
+      return std::move(entry.value);
     } else {
       auto decoded =
           codec::directory_snapshot_from_toml(std::get<toml::table>(parsed), trusted_legacy_kind);
       if (auto* problem = std::get_if<codec::CodecError>(&decoded)) {
         return codec_failure(path, *problem);
       }
-      return std::get<Snapshot>(std::move(decoded));
+      auto entry =
+          std::get<folio::core::Annotated<Snapshot, codec::EntryCompatibility>>(std::move(decoded));
+      if (compatibility) *compatibility = std::move(entry.annotation);
+      return std::move(entry.value);
     }
   }
 }
@@ -322,10 +335,13 @@ struct Match {
 };
 
 template <class Snapshot>
-StorageResult<Snapshot> load_at(const fs::path& root, RecordType type, const fs::path& path);
+StorageResult<Snapshot> load_at(const fs::path& root, RecordType type, const fs::path& path,
+                                bool require_writable = false,
+                                codec::EntryCompatibility* assessment = nullptr);
 
-StorageResult<core::Directory::Snapshot> load_directory_at(const fs::path& root, DirectoryKind kind,
-                                                           const core::Id& id);
+StorageResult<core::Directory::Snapshot>
+load_directory_at(const fs::path& root, DirectoryKind kind, const core::Id& id,
+                  bool require_writable = false, codec::EntryCompatibility* assessment = nullptr);
 
 StorageResult<core::Id> checked_entry_id(const fs::path& root, RecordType type,
                                          const fs::path& path);
@@ -439,7 +455,9 @@ StorageResult<std::monostate> unique_id(const fs::path& root, const core::Id& id
 }
 
 StorageResult<core::Directory::Snapshot> load_directory_at(const fs::path& root, DirectoryKind kind,
-                                                           const core::Id& id) {
+                                                           const core::Id& id,
+                                                           bool require_writable,
+                                                           codec::EntryCompatibility* assessment) {
   const auto folder = root / module_name(record_type(kind)) / id.to_string();
   if (auto checked = safe_path(root, folder); failure(checked)) return *failure(checked);
   std::error_code ec;
@@ -449,8 +467,15 @@ StorageResult<core::Directory::Snapshot> load_directory_at(const fs::path& root,
   const auto metadata = folder / ".folio-dir.toml";
   auto text = read_text(root, metadata);
   if (failure(text)) return *failure(text);
-  auto snapshot = decode<core::Directory::Snapshot>(std::get<std::string>(text), metadata, kind);
+  codec::EntryCompatibility compatibility;
+  auto snapshot = decode<core::Directory::Snapshot>(
+      std::get<std::string>(text), metadata, kind,
+      (require_writable || assessment) ? &compatibility : nullptr);
   if (failure(snapshot)) return *failure(snapshot);
+  if (assessment) *assessment = compatibility;
+  if (require_writable && !compatibility.writable())
+    return fail(StorageErrorCode::WriteProtected, metadata,
+                "Entry contains unrecognized fields: " + *compatibility.unknown_field);
   if (std::get<core::Directory::Snapshot>(snapshot).id != id) {
     return fail(StorageErrorCode::IdentityMismatch, metadata,
                 "Directory metadata ID does not match its folder");
@@ -463,15 +488,22 @@ StorageResult<core::Directory::Snapshot> load_directory_at(const fs::path& root,
 }
 
 template <class Snapshot>
-StorageResult<Snapshot> load_at(const fs::path& root, RecordType type, const fs::path& path) {
+StorageResult<Snapshot> load_at(const fs::path& root, RecordType type, const fs::path& path,
+                                bool require_writable, codec::EntryCompatibility* assessment) {
   const auto extension = type == RecordType::Todo ? ".toml" : ".md";
   if (path.extension() != extension || path.filename() == ".folio-dir.toml") {
     return fail(io::FileErrorCode::InvalidPath, path, "Path is not a formal entry file");
   }
   auto text = read_text(root, path);
   if (failure(text)) return *failure(text);
-  auto snapshot = decode<Snapshot>(std::get<std::string>(text), path);
+  codec::EntryCompatibility compatibility;
+  auto snapshot = decode<Snapshot>(std::get<std::string>(text), path, std::nullopt,
+                                   (require_writable || assessment) ? &compatibility : nullptr);
+  if (!failure(snapshot) && require_writable && !compatibility.writable())
+    return fail(StorageErrorCode::WriteProtected, path,
+                "Entry contains unrecognized fields: " + *compatibility.unknown_field);
   if (failure(snapshot)) return *failure(snapshot);
+  if (assessment) *assessment = compatibility;
   const auto& value = std::get<Snapshot>(snapshot);
   if (value.privacy != core::Privacy::Normal) {
     return fail(io::FileErrorCode::InvalidPath, path, "Non-Normal entry in Normal repository");
@@ -738,7 +770,7 @@ update_record(const fs::path& root, RecordType type, const Snapshot& snapshot,
   auto path = resolve_entry_path(root, type, snapshot.id, relative_path);
   if (failure(path)) return *failure(path);
   const auto& destination = std::get<fs::path>(path);
-  auto existing = load_at<Snapshot>(root, type, destination);
+  auto existing = load_at<Snapshot>(root, type, destination, true);
   if (failure(existing)) {
     const auto problem = *failure(existing);
     if (relative_path && problem.path() == destination &&
@@ -809,7 +841,7 @@ move_entry(const fs::path& root, RecordType type, const core::Id& id,
   auto source = resolve_entry_path(root, type, id, relative_path);
   if (failure(source)) return *failure(source);
   const auto old_path = std::get<fs::path>(source);
-  auto loaded = load_at<Snapshot>(root, type, old_path);
+  auto loaded = load_at<Snapshot>(root, type, old_path, true);
   if (failure(loaded)) {
     const auto problem = *failure(loaded);
     if (relative_path && problem.path() == old_path &&
@@ -1008,7 +1040,7 @@ NormalRepository::rename_directory(DirectoryKind kind, const core::Id& id, std::
         if (!valid_kind(kind)) {
           return fail(StorageErrorCode::InvalidRecordType, root_, "Invalid Directory kind");
         }
-        auto prior = load_directory_at(root_, kind, id);
+        auto prior = load_directory_at(root_, kind, id, true);
         if (failure(prior)) return *failure(prior);
         const auto folder = root_ / module_name(record_type(kind)) / id.to_string();
         const auto metadata = folder / ".folio-dir.toml";
@@ -1191,8 +1223,9 @@ NormalRepository::scan(std::optional<RecordType> scan_type, std::optional<core::
             return fail(io::FileErrorCode::InvalidPath, path, "Formal Entry is not a regular file");
           if (auto checked = safe_path(root_, path); failure(checked)) return *failure(checked);
           const auto relative = path.lexically_relative(root_);
+          codec::EntryCompatibility compatibility;
           if (type == RecordType::Log) {
-            auto loaded = load_at<core::Log::Snapshot>(root_, type, path);
+            auto loaded = load_at<core::Log::Snapshot>(root_, type, path, false, &compatibility);
             if (failure(loaded)) return *failure(loaded);
             auto value = std::get<core::Log::Snapshot>(std::move(loaded));
             if (!entry_ids.insert(value.id.to_string()).second)
@@ -1200,9 +1233,10 @@ NormalRepository::scan(std::optional<RecordType> scan_type, std::optional<core::
             inventory.logs.push_back(
                 {{value.id, value.privacy, std::move(value.created), std::move(value.modified),
                   std::move(value.title), std::move(value.tags), std::move(value.log_date)},
-                 relative});
+                 relative,
+                 !compatibility.writable()});
           } else if (type == RecordType::Memo) {
-            auto loaded = load_at<core::Memo::Snapshot>(root_, type, path);
+            auto loaded = load_at<core::Memo::Snapshot>(root_, type, path, false, &compatibility);
             if (failure(loaded)) return *failure(loaded);
             auto value = std::get<core::Memo::Snapshot>(std::move(loaded));
             if (!entry_ids.insert(value.id.to_string()).second)
@@ -1210,9 +1244,10 @@ NormalRepository::scan(std::optional<RecordType> scan_type, std::optional<core::
             inventory.memos.push_back(
                 {{value.id, value.privacy, std::move(value.created), std::move(value.modified),
                   std::move(value.title), std::move(value.tags), std::move(value.directory_id)},
-                 relative});
+                 relative,
+                 !compatibility.writable()});
           } else {
-            auto loaded = load_at<core::Todo::Snapshot>(root_, type, path);
+            auto loaded = load_at<core::Todo::Snapshot>(root_, type, path, false, &compatibility);
             if (failure(loaded)) return *failure(loaded);
             auto value = std::get<core::Todo::Snapshot>(std::move(loaded));
             if (!entry_ids.insert(value.id.to_string()).second)
@@ -1221,7 +1256,8 @@ NormalRepository::scan(std::optional<RecordType> scan_type, std::optional<core::
                 {{value.id, value.privacy, std::move(value.created), std::move(value.modified),
                   std::move(value.title), value.status, value.priority, std::move(value.due_date),
                   std::move(value.directory_id)},
-                 relative});
+                 relative,
+                 !compatibility.writable()});
           }
         } else {
           note(path, "Unrelated object was not parsed");
@@ -1250,12 +1286,15 @@ NormalRepository::scan(std::optional<RecordType> scan_type, std::optional<core::
     if (scan_type && type != *scan_type) continue;
     if (directory_id) {
       const auto kind = type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo;
-      auto loaded = load_directory_at(root_, kind, *directory_id);
+      codec::EntryCompatibility compatibility;
+      auto loaded = load_directory_at(root_, kind, *directory_id, false, &compatibility);
       if (failure(loaded)) return *failure(loaded);
       auto value = std::get<core::Directory::Snapshot>(std::move(loaded));
       entry_ids.insert(value.id.to_string());
       const auto folder = root_ / module_name(type) / directory_id->to_string();
-      inventory.directories.push_back(metadata_from(value, folder.lexically_relative(root_)));
+      auto metadata = metadata_from(value, folder.lexically_relative(root_));
+      metadata.read_only = !compatibility.writable();
+      inventory.directories.push_back(std::move(metadata));
       if (auto visited = visit_files(type, folder, true); failure(visited))
         return *failure(visited);
       continue;
@@ -1288,12 +1327,15 @@ NormalRepository::scan(std::optional<RecordType> scan_type, std::optional<core::
           note(folder, "Unrelated folder was not traversed");
         } else {
           const auto kind = type == RecordType::Memo ? DirectoryKind::Memo : DirectoryKind::Todo;
-          auto loaded = load_directory_at(root_, kind, *folder_id);
+          codec::EntryCompatibility compatibility;
+          auto loaded = load_directory_at(root_, kind, *folder_id, false, &compatibility);
           if (failure(loaded)) return *failure(loaded);
           auto value = std::get<core::Directory::Snapshot>(std::move(loaded));
           if (!entry_ids.insert(value.id.to_string()).second)
             return fail(StorageErrorCode::DuplicateId, folder, "Duplicate stored Entry UUID");
-          inventory.directories.push_back(metadata_from(value, folder.lexically_relative(root_)));
+          auto metadata = metadata_from(value, folder.lexically_relative(root_));
+          metadata.read_only = !compatibility.writable();
+          inventory.directories.push_back(std::move(metadata));
           if (recursive) {
             if (auto visited = visit_files(type, folder, true); failure(visited))
               return *failure(visited);

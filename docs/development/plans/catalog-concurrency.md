@@ -356,7 +356,7 @@ The revised ownership-only contract is:
   rights and do not prevent acquisition.
 
 `BackendConnectionHandle::acquire_edit(id)` returns
-`ApplicationResult<std::monostate>` through the shared IPC protocol. This split is
+`AccessResult<std::monostate>` through the shared IPC protocol. This split is
 implemented together with the concurrent coordination described below.
 
 Concurrent Loads may proceed. A conflicting Move/Mutation and Load must be ordered

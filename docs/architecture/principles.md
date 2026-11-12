@@ -19,8 +19,9 @@ or a proof against every failure.
 ## Entry compatibility — approved direction, implementation gaps
 
 Best-effort Entry reading applies in both version directions; unfamiliar schema
-numbers alone need not imply unreadability. Safe reading does not authorize a
-lossy rewrite. Release, Entry, Index and IPC versions remain independent.
+numbers alone need not imply unreadability. Known fields are always validated; unknown properties permit reading but block
+rewriting. Compatible field structures can be read and written despite a version
+difference. Safe reading does not authorize a lossy rewrite. Release, Entry, Index and IPC versions remain independent.
 [Storage compatibility](../contracts/storage.md#entry-compatibility-and-version-domains)
 owns the current codec audit, limitations and ENTRY-COMPAT / ENTRY-MIG follow-ups.
 Historical Migration is deferred required work, including Vault-aware handling;

@@ -144,24 +144,23 @@ TEST_F(MetadataAccessIntegration, OneBrowseOperationHandlesRootsAndUserDirectori
 
   auto connection = connect();
   auto root = connection.browse(core::RecordType::Memo);
-  ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<app::BrowseResult>>(root));
-  const auto& root_contents = std::get<app::ApplicationResponse<app::BrowseResult>>(root).value;
+  ASSERT_TRUE(std::holds_alternative<app::Annotated<app::BrowseResult>>(root));
+  const auto& root_contents = std::get<app::Annotated<app::BrowseResult>>(root).value;
   ASSERT_EQ(root_contents.records.size(), 1u);
   ASSERT_EQ(root_contents.directories.size(), 1u);
   EXPECT_EQ(std::get<core::MemoMetadata>(root_contents.records[0]).id, memo.id());
   EXPECT_EQ(root_contents.directories[0].id, directory.id());
 
   auto nested = connection.browse(directory.id(), {app::MetadataSort::Title, true});
-  ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<app::BrowseResult>>(nested));
-  const auto& contents = std::get<app::ApplicationResponse<app::BrowseResult>>(nested).value;
+  ASSERT_TRUE(std::holds_alternative<app::Annotated<app::BrowseResult>>(nested));
+  const auto& contents = std::get<app::Annotated<app::BrowseResult>>(nested).value;
   ASSERT_EQ(contents.records.size(), 1u);
   EXPECT_EQ(std::get<core::MemoMetadata>(contents.records[0]).id, member.id());
   EXPECT_TRUE(contents.directories.empty());
 
   auto logs = connection.browse(core::RecordType::Log);
-  ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<app::BrowseResult>>(logs));
-  EXPECT_TRUE(
-      std::get<app::ApplicationResponse<app::BrowseResult>>(logs).value.directories.empty());
+  ASSERT_TRUE(std::holds_alternative<app::Annotated<app::BrowseResult>>(logs));
+  EXPECT_TRUE(std::get<app::Annotated<app::BrowseResult>>(logs).value.directories.empty());
   auto missing = connection.browse(core::Id::generate());
   ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(missing));
   EXPECT_EQ(std::get<app::ApplicationError>(missing).reason, app::ErrorReason::NotFound);
@@ -181,14 +180,17 @@ TEST_F(MetadataAccessIntegration, LargeContentAndMetadataMessagesAllowTwoPeersAn
     ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(second_result));
     auto& second = std::get<app::BackendConnectionHandle>(second_result);
     auto loaded = first.load_memo(memo.id());
-    ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(loaded));
-    EXPECT_EQ(std::get<core::Memo::Snapshot>(loaded).content, memo.content());
-    EXPECT_EQ(std::get<core::Memo::Snapshot>(loaded).title, changed.title);
+    ASSERT_TRUE(
+        std::holds_alternative<folio::application::Annotated<core::Memo::Snapshot>>(loaded));
+    EXPECT_EQ(std::get<folio::application::Annotated<core::Memo::Snapshot>>(loaded).value.content,
+              memo.content());
+    EXPECT_EQ(std::get<folio::application::Annotated<core::Memo::Snapshot>>(loaded).value.title,
+              changed.title);
     auto metadata = second.query_records();
-    ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(
-        metadata));
+    ASSERT_TRUE(
+        std::holds_alternative<app::Annotated<std::vector<core::RecordMetadata>>>(metadata));
     const auto& records =
-        std::get<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(metadata).value;
+        std::get<app::Annotated<std::vector<core::RecordMetadata>>>(metadata).value;
     ASSERT_EQ(records.size(), 1u);
     EXPECT_EQ(std::get<core::MemoMetadata>(records[0]).title, changed.title);
     EXPECT_TRUE(std::holds_alternative<std::monostate>(first.ping()));
@@ -220,7 +222,8 @@ TEST_F(MetadataAccessIntegration,
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   // Malformed external content must not affect the already-cached metadata or a targeted load.
   std::ofstream(paths.normal_root / "memos/unrelated.md") << "malformed external Record";
-  EXPECT_TRUE(std::holds_alternative<core::Memo::Snapshot>(connection.load_memo(memo.id())));
+  EXPECT_TRUE(std::holds_alternative<folio::application::Annotated<core::Memo::Snapshot>>(
+      connection.load_memo(memo.id())));
   fs::remove(paths.normal_root / std::get<fs::path>(locator));
   auto stale = connection.load_memo(memo.id());
   ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(stale));
@@ -229,9 +232,8 @@ TEST_F(MetadataAccessIntegration,
   EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
   // Request-specific failures must not be broadcast or terminate other sessions.
   auto browsed = other.browse(core::RecordType::Memo);
-  ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<app::BrowseResult>>(browsed));
-  EXPECT_EQ(std::get<app::ApplicationResponse<app::BrowseResult>>(browsed).value.records.size(),
-            1u);
+  ASSERT_TRUE(std::holds_alternative<app::Annotated<app::BrowseResult>>(browsed));
+  EXPECT_EQ(std::get<app::Annotated<app::BrowseResult>>(browsed).value.records.size(), 1u);
   EXPECT_TRUE(std::holds_alternative<std::monostate>(other.ping()));
 }
 TEST_F(MetadataAccessIntegration, LargeQueryRequestUsesOneMessageAndConnectionRemainsUsable) {
@@ -240,17 +242,15 @@ TEST_F(MetadataAccessIntegration, LargeQueryRequestUsesOneMessageAndConnectionRe
   query.type = core::RecordType::Memo;
   query.filters.title_contains = std::string(150000, 'z');
   auto result = connection.query_records(query);
-  ASSERT_TRUE(
-      std::holds_alternative<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(result));
-  EXPECT_TRUE(
-      std::get<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(result).value.empty());
+  ASSERT_TRUE(std::holds_alternative<app::Annotated<std::vector<core::RecordMetadata>>>(result));
+  EXPECT_TRUE(std::get<app::Annotated<std::vector<core::RecordMetadata>>>(result).value.empty());
   EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
-  EXPECT_TRUE(std::holds_alternative<core::Memo::Snapshot>(connection.load_memo(memo.id())));
+  EXPECT_TRUE(std::holds_alternative<folio::application::Annotated<core::Memo::Snapshot>>(
+      connection.load_memo(memo.id())));
   EXPECT_TRUE(
       std::holds_alternative<app::ApplicationError>(connection.load_log(core::Id::generate())));
-  EXPECT_TRUE(
-      std::holds_alternative<app::ApplicationResponse<std::vector<core::DirectoryMetadata>>>(
-          connection.list_directories(core::DirectoryKind::Memo)));
+  EXPECT_TRUE(std::holds_alternative<app::Annotated<std::vector<core::DirectoryMetadata>>>(
+      connection.list_directories(core::DirectoryKind::Memo)));
 }
 
 TEST_F(MetadataAccessIntegration, PartialRequestWaitsForCompletionWithoutBlockingOtherConnections) {
@@ -275,8 +275,8 @@ TEST_F(MetadataAccessIntegration, PartialRequestWaitsForCompletionWithoutBlockin
   EXPECT_EQ(response->kind, ipc::MessageKind::Response);
   auto decoded = ipc::codec::decode<ipc::OperationResponse>(ipc::payload_text(response->payload));
   ASSERT_TRUE(std::holds_alternative<ipc::OperationResponse>(decoded));
-  EXPECT_TRUE(
-      std::holds_alternative<core::Memo::Snapshot>(std::get<ipc::OperationResponse>(decoded)));
+  EXPECT_TRUE(std::holds_alternative<folio::application::Annotated<core::Memo::Snapshot>>(
+      std::get<ipc::OperationResponse>(decoded)));
 }
 
 TEST_F(MetadataAccessIntegration,
@@ -342,8 +342,10 @@ TEST_F(MetadataAccessIntegration,
     auto editing = first.acquire_edit(record.id);
     ASSERT_TRUE(std::holds_alternative<std::monostate>(editing));
     auto editable = first.load_memo(record.id);
-    ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(editable));
-    EXPECT_EQ(std::get<core::Memo::Snapshot>(editable).content, "original body");
+    ASSERT_TRUE(
+        std::holds_alternative<folio::application::Annotated<core::Memo::Snapshot>>(editable));
+    EXPECT_EQ(std::get<folio::application::Annotated<core::Memo::Snapshot>>(editable).value.content,
+              "original body");
     auto denied = second.move(app::MutationId::generate(), record.id, directory.id, time);
     ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::RecordMetadata>>(denied));
     auto rejected = std::get<app::MutationFailure>(
@@ -369,8 +371,9 @@ TEST_F(MetadataAccessIntegration,
     ASSERT_TRUE(std::holds_alternative<core::MemoMetadata>(
         std::get<app::MutationResponse<core::MemoMetadata>>(updated).result));
     auto loaded = second.load_memo(record.id);
-    ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(loaded));
-    auto state = std::get<core::Memo::Snapshot>(loaded);
+    ASSERT_TRUE(
+        std::holds_alternative<folio::application::Annotated<core::Memo::Snapshot>>(loaded));
+    auto state = std::get<folio::application::Annotated<core::Memo::Snapshot>>(loaded).value;
     EXPECT_EQ(state.directory_id, directory.id);
     EXPECT_EQ(state.content.size(), 100u * 1024u);
     EXPECT_EQ(state.created.timestamp, time.timestamp);
@@ -388,8 +391,8 @@ TEST_F(MetadataAccessIntegration,
     EXPECT_TRUE(std::holds_alternative<core::DirectoryMetadata>(
         std::get<app::MutationResponse<core::DirectoryMetadata>>(renamed).result));
     auto root = second.browse(directory.id);
-    ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<app::BrowseResult>>(root));
-    EXPECT_EQ(std::get<app::ApplicationResponse<app::BrowseResult>>(root).value.records.size(), 1u);
+    ASSERT_TRUE(std::holds_alternative<app::Annotated<app::BrowseResult>>(root));
+    EXPECT_EQ(std::get<app::Annotated<app::BrowseResult>>(root).value.records.size(), 1u);
   }
   ASSERT_TRUE(until([&] { return all_exited(); }));
   EXPECT_FALSE(fs::exists(paths.application.state / "session.marker"));
@@ -410,10 +413,11 @@ TEST_F(MetadataAccessIntegration, CheckAndRefreshUseExistingConnectionAndKeepBro
   ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(loaded));
   EXPECT_EQ(std::get<app::ApplicationError>(loaded).reason, app::ErrorReason::StaleLocation);
   auto browse = connection.browse(core::RecordType::Memo);
-  ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<app::BrowseResult>>(browse));
-  EXPECT_EQ(std::get<app::ApplicationResponse<app::BrowseResult>>(browse).value.records.size(), 1u);
+  ASSERT_TRUE(std::holds_alternative<app::Annotated<app::BrowseResult>>(browse));
+  EXPECT_EQ(std::get<app::Annotated<app::BrowseResult>>(browse).value.records.size(), 1u);
   EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.refresh()));
-  EXPECT_TRUE(std::holds_alternative<core::Memo::Snapshot>(connection.load_memo(memo.id())));
+  EXPECT_TRUE(std::holds_alternative<folio::application::Annotated<core::Memo::Snapshot>>(
+      connection.load_memo(memo.id())));
   std::ofstream(paths.normal_root / "memos" / "extra.txt") << "extra";
   EXPECT_EQ(
       std::get<app::ConsistencyCheckResult>(connection.check_consistency(core::RecordType::Memo)),
@@ -512,6 +516,7 @@ TEST_F(MetadataAccessIntegration, RequestErrorsAreNotBroadcastAndReconnectDoesNo
   EXPECT_FALSE(
       folio::test::wait_push_notifications(reconnected, std::chrono::steady_clock::now() + 20ms));
   EXPECT_TRUE(reconnected.take_push_notifications().empty());
-  EXPECT_TRUE(std::holds_alternative<core::Memo::Snapshot>(reconnected.load_memo(memo.id())));
+  EXPECT_TRUE(std::holds_alternative<folio::application::Annotated<core::Memo::Snapshot>>(
+      reconnected.load_memo(memo.id())));
 }
 } // namespace

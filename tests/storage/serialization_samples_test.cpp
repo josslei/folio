@@ -45,7 +45,9 @@ void export_markdown(const std::string& filename, const typename Model::Snapshot
   const auto& text = std::get<std::string>(encoded);
   const auto decoded = decode(text);
   ASSERT_TRUE(succeeded(decoded));
-  const auto restored = Model::restore(std::get<typename Model::Snapshot>(decoded));
+  const auto restored = Model::restore(
+      std::get<folio::core::Annotated<typename Model::Snapshot, codec::EntryCompatibility>>(decoded)
+          .value);
   const auto reencoded = codec::serialize_markdown(restored.snapshot());
   ASSERT_TRUE(succeeded(reencoded));
   EXPECT_EQ(std::get<std::string>(reencoded), text);
@@ -63,7 +65,9 @@ void export_toml(const std::string& filename, const typename Model::Snapshot& sn
   ASSERT_TRUE(succeeded(parsed));
   const auto decoded = decode(std::get<toml::table>(parsed));
   ASSERT_TRUE(succeeded(decoded));
-  const auto restored = Model::restore(std::get<typename Model::Snapshot>(decoded));
+  const auto restored = Model::restore(
+      std::get<folio::core::Annotated<typename Model::Snapshot, codec::EntryCompatibility>>(decoded)
+          .value);
   const auto reencoded = codec::serialize_toml(codec::to_toml(restored.snapshot()));
   ASSERT_TRUE(succeeded(reencoded));
   EXPECT_EQ(std::get<std::string>(reencoded), text);
@@ -114,9 +118,11 @@ TEST(CoreCodecSamplesTest, GeneratesSerializedExamples) {
   const Memo::Snapshot memo{*memo_id,      created,        modified,
                             "研究メモ",    body,           {{"ideas"}, {"読書"}},
                             *directory_id, Privacy::Hidden};
-  ASSERT_NO_FATAL_FAILURE(export_markdown<Log>("log.md", log, codec::log_snapshot_from_markdown));
-  ASSERT_NO_FATAL_FAILURE(
-      export_markdown<Memo>("memo.md", memo, codec::memo_snapshot_from_markdown));
+  ASSERT_NO_FATAL_FAILURE(export_markdown<Log>(
+      "log.md", log, [](const auto& value) { return codec::log_snapshot_from_markdown(value); }));
+  ASSERT_NO_FATAL_FAILURE(export_markdown<Memo>("memo.md", memo, [](const auto& value) {
+    return codec::memo_snapshot_from_markdown(value);
+  }));
 
   const Todo::Snapshot todo_date{*todo_id,
                                  created,
@@ -150,12 +156,15 @@ TEST(CoreCodecSamplesTest, GeneratesSerializedExamples) {
   for (const auto* key : {"due", "directory_id", "subtasks"}) {
     EXPECT_FALSE(minimal_table.contains(key));
   }
+  ASSERT_NO_FATAL_FAILURE(export_toml<Todo>("todo-date.toml", todo_date, [](const auto& value) {
+    return codec::todo_snapshot_from_toml(value);
+  }));
   ASSERT_NO_FATAL_FAILURE(
-      export_toml<Todo>("todo-date.toml", todo_date, codec::todo_snapshot_from_toml));
-  ASSERT_NO_FATAL_FAILURE(
-      export_toml<Todo>("todo-datetime.toml", todo_datetime, codec::todo_snapshot_from_toml));
-  ASSERT_NO_FATAL_FAILURE(
-      export_toml<Todo>("todo-minimal.toml", minimal, codec::todo_snapshot_from_toml));
+      export_toml<Todo>("todo-datetime.toml", todo_datetime,
+                        [](const auto& value) { return codec::todo_snapshot_from_toml(value); }));
+  ASSERT_NO_FATAL_FAILURE(export_toml<Todo>("todo-minimal.toml", minimal, [](const auto& value) {
+    return codec::todo_snapshot_from_toml(value);
+  }));
   ASSERT_NO_FATAL_FAILURE(export_toml<Directory>(
       "directory.toml", Directory::Snapshot{*directory_id, DirectoryKind::Memo, "研究資料 — café"},
       [](const toml::table& table) { return codec::directory_snapshot_from_toml(table); }));

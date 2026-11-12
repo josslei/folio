@@ -108,6 +108,52 @@ protected:
   }
 };
 
+TEST_F(MutationOrchestrator, CompatibleReadOnlyEntryReturnsNotAppliedAndEncodesItsReason) {
+  const auto record = memo();
+  acquire(record.id);
+  const auto located = std::get<storage::MemoMetadata>(*catalog.read_view().find_record(record.id));
+  const auto path = paths.normal_root / located.relative_path;
+  std::ifstream input(path, std::ios::binary);
+  std::string bytes{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+  input.close();
+  bytes.insert(4, "future_property = true\n");
+  {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output << bytes;
+  }
+  ASSERT_TRUE(
+      std::holds_alternative<std::vector<storage::ExcludedObject>>(coordinator.refresh_all()));
+  const auto assessed = catalog.read_view().find_record(record.id);
+  ASSERT_TRUE(assessed);
+  EXPECT_TRUE(std::get<storage::MemoMetadata>(*assessed).read_only);
+  ipc::AccessOrchestrator access{catalog, repository, coordinator};
+  const auto loaded = access.handle(ipc::LoadMemoRequest{record.id});
+  ASSERT_TRUE(std::holds_alternative<app::Annotated<core::Memo::Snapshot>>(loaded));
+  const auto& warnings = std::get<app::Annotated<core::Memo::Snapshot>>(loaded).annotation;
+  ASSERT_EQ(warnings.size(), 1);
+  EXPECT_EQ(warnings.front().reason, app::WarningReason::EntryReadOnly);
+  // Prove that rejection uses Catalog state before attempting a filesystem read.
+  const auto saved_path = path.string() + ".held";
+  fs::rename(path, saved_path);
+  const auto result = call(ipc::UpdateMemoRequest{record.id, {"new", "new body", {}}, modified});
+  ASSERT_TRUE(std::holds_alternative<app::MutationFailure>(result.result));
+  const auto& failure = std::get<app::MutationFailure>(result.result);
+  EXPECT_EQ(failure.error.reason, app::ErrorReason::EntryWriteProtected);
+  EXPECT_EQ(failure.status, app::AuthoritativeChangeStatus::NotApplied);
+  EXPECT_EQ(coordinator.read_state().status, storage::CatalogStatus::Ready);
+  const auto wire = ipc::codec::encode(result);
+  ASSERT_TRUE(std::holds_alternative<std::string>(wire));
+  const auto decoded = ipc::codec::decode<ipc::NormalMutationResponse>(std::get<std::string>(wire));
+  ASSERT_TRUE(std::holds_alternative<ipc::NormalMutationResponse>(decoded));
+  EXPECT_EQ(std::get<app::MutationFailure>(std::get<ipc::NormalMutationResponse>(decoded).result)
+                .error.reason,
+            app::ErrorReason::EntryWriteProtected);
+  fs::rename(saved_path, path);
+  std::ifstream after(path, std::ios::binary);
+  EXPECT_EQ((std::string{std::istreambuf_iterator<char>{after}, std::istreambuf_iterator<char>{}}),
+            bytes);
+}
+
 TEST_F(MutationOrchestrator, CreateAllKindsUsesBackendIdsAndPreservesBothFrontendContexts) {
   auto a = memo(), b = memo();
   EXPECT_NE(a.id, b.id);
@@ -253,7 +299,7 @@ TEST_F(MutationOrchestrator, PrerequisitesRejectBeforeWritingAndAcquisitionDoesN
   auto stale = failed(app::internal::MoveMemoRequest{record.id, {}, modified});
   EXPECT_EQ(stale.error.reason, app::ErrorReason::StaleLocation);
   EXPECT_EQ(stale.status, app::AuthoritativeChangeStatus::NotApplied);
-  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+  EXPECT_EQ(coordinator.read_state().status, storage::CatalogStatus::Ready);
 }
 
 TEST_F(MutationOrchestrator, AcquisitionChecksCatalogAndOwnershipWithoutAuthoritativeAccess) {
@@ -293,7 +339,7 @@ TEST_F(MutationOrchestrator, BeforePublicationAndPublishedUncertainFailuresRemai
       failed(app::internal::UpdateMemoRequest{record.id, {"title", "body", {}}, modified});
   EXPECT_EQ(before.status, app::AuthoritativeChangeStatus::NotApplied);
   EXPECT_EQ(before.evidence.steps[0].observation, app::StepObservation::NotCompleted);
-  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+  EXPECT_EQ(coordinator.read_state().status, storage::CatalogStatus::Ready);
   storage::internal::repository_test_hooks.write =
       [](const fs::path& path, std::string_view bytes,
          bool) -> storage::StorageResult<std::monostate> {
@@ -587,9 +633,10 @@ TEST_F(MutationOrchestrator, IpcDisconnectPreservesQueuedOwnerUpdateAndExcludesC
             app::ErrorReason::LockConflict);
   send(competitor, ipc::LoadMemoRequest{record.id});
   EXPECT_EQ(receive(competitor).kind, ipc::MessageKind::Accepted);
-  const auto loaded = std::get<core::Memo::Snapshot>(std::get<ipc::OperationResponse>(
-      ipc::codec::decode<ipc::OperationResponse>(ipc::payload_text(receive(competitor).payload))));
-  EXPECT_EQ(loaded.content, "after disconnect");
+  const auto loaded = std::get<app::Annotated<core::Memo::Snapshot>>(
+      std::get<ipc::OperationResponse>(ipc::codec::decode<ipc::OperationResponse>(
+          ipc::payload_text(receive(competitor).payload))));
+  EXPECT_EQ(loaded.value.content, "after disconnect");
   send(competitor, ipc::AcquireEditRequest{record.id});
   EXPECT_EQ(receive(competitor).kind, ipc::MessageKind::Accepted);
   EXPECT_TRUE(std::holds_alternative<std::monostate>(std::get<ipc::OperationResponse>(
@@ -664,7 +711,7 @@ TEST_F(MutationOrchestrator, AuthoritativeMetadataDisagreementRejectsWithoutImpl
   EXPECT_EQ(
       std::get<core::Memo::Snapshot>(repository.load_memo(record.id, located.relative_path)).title,
       external.title);
-  EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
+  EXPECT_EQ(coordinator.read_state().status, storage::CatalogStatus::Ready);
 }
 
 TEST_F(MutationOrchestrator, UnifiedMoveResolvesTypeAndRejectsIncompatibleTargets) {

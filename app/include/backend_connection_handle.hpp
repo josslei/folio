@@ -45,34 +45,35 @@ public:
 
   /// Browses a logical Root (RecordType) or Directory UUID using Catalog metadata.
   /// Roots return immediate Records and Directories; Logs have no Directories.
-  ApplicationResult<ApplicationResponse<BrowseResult>> browse(DirectoryRef dir,
-                                                              RecordOrder order = {});
-  ApplicationResult<ApplicationResponse<std::vector<core::RecordMetadata>>>
+  AccessResult<Annotated<BrowseResult>> browse(DirectoryRef dir, RecordOrder order = {});
+  AccessResult<Annotated<std::vector<core::RecordMetadata>>>
   query_records(const RecordQuery& query = {});
-  ApplicationResult<ApplicationResponse<std::vector<core::DirectoryMetadata>>>
+  AccessResult<Annotated<std::vector<core::DirectoryMetadata>>>
   list_directories(core::DirectoryKind kind);
   /// Compares the selected location with Catalog using a low-cost heuristic.
   /// Does not refresh or repair; errors are distinct from detected anomalies.
   /// Automatic navigation Check: one attempt per scope per Backend session.
   /// Repeated calls return its historical outcome, including failures; not a fresh check.
-  ApplicationResult<ConsistencyCheckResult> check_consistency(DirectoryRef scope);
+  AccessResult<ConsistencyCheckResult> check_consistency(DirectoryRef scope);
   /// Explicitly reconciles the selected Catalog scope without modifying Entries.
   /// Full Refresh requests share pending/running execution; success is not Recovery.
-  ApplicationResult<std::monostate> refresh(RefreshScope scope = {});
+  AccessResult<std::monostate> refresh(RefreshScope scope = {});
   /// Loads complete authoritative content through the current Catalog locator.
   /// Typed loads reject mismatched types and stale locations without a full scan.
   /// Read-only loading does not acquire editing rights.
-  ApplicationResult<core::Log::Snapshot> load_log(const core::Id& id);
-  ApplicationResult<core::Memo::Snapshot> load_memo(const core::Id& id);
-  ApplicationResult<core::Todo::Snapshot> load_todo(const core::Id& id);
+  /// Load current data; EntryReadOnly warnings prohibit editing in the Frontend.
+  /// Backend independently enforces its own Catalog assessment on Mutations.
+  AccessResult<Annotated<core::Log::Snapshot>> load_log(const core::Id& id);
+  AccessResult<Annotated<core::Memo::Snapshot>> load_memo(const core::Id& id);
+  AccessResult<Annotated<core::Todo::Snapshot>> load_todo(const core::Id& id);
   /// Acquires editing ownership using only in-memory Catalog/ownership state.
   /// Same-owner reacquisition succeeds; another owner returns LockConflict.
   /// Load separately after acquisition to obtain current authoritative content.
   /// A failed Load retains ownership until release or connection cleanup.
   /// Accepted work retains the session token through disconnection.
-  ApplicationResult<std::monostate> acquire_edit(const core::Id& id);
+  AccessResult<std::monostate> acquire_edit(const core::Id& id);
   /// Releases this connection's editing ownership; cannot release another owner's.
-  ApplicationResult<std::monostate> release_edit(const core::Id& id);
+  AccessResult<std::monostate> release_edit(const core::Id& id);
   /// Create overloads generate Entry UUIDs in the Backend. The Frontend supplies
   /// MutationId and timestamp contexts; success returns synchronized metadata.
   /// MutationResult distinguishes confirmed failure from missing confirmation.

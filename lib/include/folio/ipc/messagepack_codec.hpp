@@ -96,8 +96,8 @@ FIELDS(MutationFailure, v.error, v.status, v.evidence)
 template <class T> auto fields(const InclusiveRange<T>& v) {
   return std::tie(v.from, v.through);
 }
-template <class T> auto fields(const ApplicationResponse<T>& v) {
-  return std::tie(v.value, v.warnings);
+template <class T> auto fields(const Annotated<T>& v) {
+  return std::tie(v.value, v.annotation);
 }
 
 template <class T> auto fields(const MutationResponse<T>& v) {
@@ -174,7 +174,7 @@ constexpr auto last(ConsistencyCheckResult) {
   return ConsistencyCheckResult::AnomalyDetected;
 }
 constexpr auto last(ErrorReason) {
-  return ErrorReason::FullRefreshRequired;
+  return ErrorReason::EntryWriteProtected;
 }
 constexpr auto last(ErrorAction) {
   return ErrorAction::Refresh;
@@ -189,7 +189,7 @@ constexpr auto last(StepObservation) {
   return StepObservation::Unknown;
 }
 constexpr auto last(WarningReason) {
-  return WarningReason::CatalogInconsistent;
+  return WarningReason::EntryReadOnly;
 }
 
 inline void array_size(const Object& o, std::size_t size) {

@@ -138,10 +138,9 @@ using OperationRequest =
                  ReleaseEditRequest, CheckConsistencyRequest, RefreshRequest>;
 
 using OperationResponse =
-    std::variant<ApplicationResponse<BrowseResult>,
-                 ApplicationResponse<std::vector<core::RecordMetadata>>,
-                 ApplicationResponse<std::vector<core::DirectoryMetadata>>, core::Log::Snapshot,
-                 core::Memo::Snapshot, core::Todo::Snapshot, ApplicationError,
+    std::variant<Annotated<BrowseResult>, Annotated<std::vector<core::RecordMetadata>>,
+                 Annotated<std::vector<core::DirectoryMetadata>>, Annotated<core::Log::Snapshot>,
+                 Annotated<core::Memo::Snapshot>, Annotated<core::Todo::Snapshot>, ApplicationError,
                  NormalMutationResponse, std::monostate, ConsistencyCheckResult>;
 
 /// Push delivery identity is connection-local, unrelated to Application requests/MutationId.

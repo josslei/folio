@@ -192,9 +192,9 @@ using Clock = std::chrono::steady_clock;
 // Public operations are serial on a connection. Only transport/protocol failures
 // invalidate it; confirmed Application failures leave the connection usable.
 template <class Value, class Receiver>
-ApplicationResult<Value> invoke_operation(IpcStream& stream, Receiver& receiver,
-                                          OperationRequest request,
-                                          SubmissionState* submission = nullptr) {
+AccessResult<Value> invoke_operation(IpcStream& stream, Receiver& receiver,
+                                     OperationRequest request,
+                                     SubmissionState* submission = nullptr) {
   receiver.request_started();
   struct RequestBarrier {
     Receiver& receiver;
@@ -207,7 +207,7 @@ ApplicationResult<Value> invoke_operation(IpcStream& stream, Receiver& receiver,
                             "The Application request exceeds the resource limit.",
                             {ErrorAction::Dismiss}};
   const auto& payload = std::get<std::string>(encoded);
-  auto fail = [&](IpcError error) -> ApplicationResult<Value> {
+  auto fail = [&](IpcError error) -> AccessResult<Value> {
     receiver.close();
     stream = IpcStream{};
     return operation_connection_error(error);
@@ -395,53 +395,55 @@ core::Result<BackendConnectionHandle, IpcError> connect_or_start_backend() {
     return IpcError{IpcErrorCode::IoError, problem->message, problem->system_error};
   return connect_or_start_backend(std::get<ConnectionSettings>(configured), launch_backend);
 }
-ApplicationResult<ConsistencyCheckResult>
+AccessResult<ConsistencyCheckResult>
 BackendConnectionHandle::check_consistency(DirectoryRef scope) {
   return invoke_operation<ConsistencyCheckResult>(request_stream_, *push_notification_receiver_,
                                                   CheckConsistencyRequest{std::move(scope)});
 }
-ApplicationResult<std::monostate> BackendConnectionHandle::refresh(RefreshScope scope) {
+AccessResult<std::monostate> BackendConnectionHandle::refresh(RefreshScope scope) {
   return invoke_operation<std::monostate>(request_stream_, *push_notification_receiver_,
                                           RefreshRequest{std::move(scope)});
 }
-ApplicationResult<ApplicationResponse<BrowseResult>>
-BackendConnectionHandle::browse(DirectoryRef dir, RecordOrder order) {
-  return invoke_operation<ApplicationResponse<BrowseResult>>(
-      request_stream_, *push_notification_receiver_, BrowseRequest{std::move(dir), order});
+AccessResult<Annotated<BrowseResult>> BackendConnectionHandle::browse(DirectoryRef dir,
+                                                                      RecordOrder order) {
+  return invoke_operation<Annotated<BrowseResult>>(request_stream_, *push_notification_receiver_,
+                                                   BrowseRequest{std::move(dir), order});
 }
 
-ApplicationResult<ApplicationResponse<std::vector<core::RecordMetadata>>>
+AccessResult<Annotated<std::vector<core::RecordMetadata>>>
 BackendConnectionHandle::query_records(const RecordQuery& query) {
-  return invoke_operation<ApplicationResponse<std::vector<core::RecordMetadata>>>(
+  return invoke_operation<Annotated<std::vector<core::RecordMetadata>>>(
       request_stream_, *push_notification_receiver_, QueryRecordsRequest{query});
 }
 
-ApplicationResult<ApplicationResponse<std::vector<core::DirectoryMetadata>>>
+AccessResult<Annotated<std::vector<core::DirectoryMetadata>>>
 BackendConnectionHandle::list_directories(core::DirectoryKind kind) {
-  return invoke_operation<ApplicationResponse<std::vector<core::DirectoryMetadata>>>(
+  return invoke_operation<Annotated<std::vector<core::DirectoryMetadata>>>(
       request_stream_, *push_notification_receiver_, ListDirectoriesRequest{kind});
 }
 
-ApplicationResult<core::Log::Snapshot> BackendConnectionHandle::load_log(const core::Id& id) {
-  return invoke_operation<core::Log::Snapshot>(request_stream_, *push_notification_receiver_,
-                                               LoadLogRequest{id});
+AccessResult<Annotated<core::Log::Snapshot>> BackendConnectionHandle::load_log(const core::Id& id) {
+  return invoke_operation<Annotated<core::Log::Snapshot>>(
+      request_stream_, *push_notification_receiver_, LoadLogRequest{id});
 }
 
-ApplicationResult<core::Memo::Snapshot> BackendConnectionHandle::load_memo(const core::Id& id) {
-  return invoke_operation<core::Memo::Snapshot>(request_stream_, *push_notification_receiver_,
-                                                LoadMemoRequest{id});
+AccessResult<Annotated<core::Memo::Snapshot>>
+BackendConnectionHandle::load_memo(const core::Id& id) {
+  return invoke_operation<Annotated<core::Memo::Snapshot>>(
+      request_stream_, *push_notification_receiver_, LoadMemoRequest{id});
 }
 
-ApplicationResult<core::Todo::Snapshot> BackendConnectionHandle::load_todo(const core::Id& id) {
-  return invoke_operation<core::Todo::Snapshot>(request_stream_, *push_notification_receiver_,
-                                                LoadTodoRequest{id});
+AccessResult<Annotated<core::Todo::Snapshot>>
+BackendConnectionHandle::load_todo(const core::Id& id) {
+  return invoke_operation<Annotated<core::Todo::Snapshot>>(
+      request_stream_, *push_notification_receiver_, LoadTodoRequest{id});
 }
 
-ApplicationResult<std::monostate> BackendConnectionHandle::acquire_edit(const core::Id& id) {
+AccessResult<std::monostate> BackendConnectionHandle::acquire_edit(const core::Id& id) {
   return invoke_operation<std::monostate>(request_stream_, *push_notification_receiver_,
                                           AcquireEditRequest{id});
 }
-ApplicationResult<std::monostate> BackendConnectionHandle::release_edit(const core::Id& id) {
+AccessResult<std::monostate> BackendConnectionHandle::release_edit(const core::Id& id) {
   return invoke_operation<std::monostate>(request_stream_, *push_notification_receiver_,
                                           ReleaseEditRequest{id});
 }

@@ -16,7 +16,10 @@ access point remains `BackendConnectionHandle`. Phase 4.3a adds concrete Normal
 Mutation payloads/dispatch and Edit Lock requests to that same OperationRequest and
 OperationResponse architecture; existing Query tags and payload arrays are unchanged.
 
-The existing read payload arrays and alternative tags are unchanged. The former
+Record Load alternative tags are retained, but their payloads now use
+`Annotated<Snapshot>` (value plus warnings), exposing Backend-owned
+`EntryReadOnly` status without adding compatibility claims to Mutation requests.
+Protocol version remains 1; pre-release peers must use the same current schema. The former
 `access_codec` implementation is now `application_codec`, backed by one shared
 private `messagepack_codec.hpp`. The shared codec handles Core identifiers,
 metadata, Snapshots, logical locations and Application errors alongside MutationId,

@@ -119,7 +119,8 @@ public:
 
   /// Replaces the complete serialized Snapshot at the current authoritative path.
   /// Reads and validates existing identity/membership first; changing membership
-  /// requires Move. A supplied stale locator never triggers fallback discovery.
+  /// requires Move. Readable unknown fields reject rewriting before persistence.
+  /// A supplied stale locator never triggers fallback discovery.
   /// Use the matching Coordinator callback in managed Backend execution.
   [[nodiscard]] ::folio::core::Result<std::monostate, RepositoryMutationError>
   update_log(const core::Log::Snapshot& snapshot,
@@ -142,6 +143,7 @@ public:
   // Global conflicts are detected by explicit discovery/full reconstruction.
   [[nodiscard]] StorageResult<core::Directory::Snapshot> load_directory(DirectoryKind kind,
                                                                         const core::Id& id) const;
+  /// Rejects readable metadata extensions before replacement to preserve unknown fields.
   [[nodiscard]] ::folio::core::Result<std::monostate, RepositoryMutationError>
   rename_directory(DirectoryKind kind, const core::Id& id, std::string name,
                    const MutationResultCallback<DirectoryMetadata>& on_result = {});
@@ -149,6 +151,7 @@ public:
   /// Moves using destination creation followed by source removal, not a single
   /// atomic rename. Preserves editable fields and applies supplied membership and
   /// modified context; failure may leave durable partial effects or uncertainty.
+  /// Unknown source properties reject the Mutation before destination creation.
   /// Supplied source locators use direct UUID validation; omission requests
   /// discovery. Managed callers supply the current Catalog locator and callback.
   /// Stale supplied locators never fall back. See docs/contracts/mutations.md.

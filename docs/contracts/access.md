@@ -5,7 +5,7 @@ Mutation result and Mutation ID contracts are documented separately in
 
 Implemented for Normal Entries. Frontends use `BackendConnectionHandle` through
 IPC; they never own a Catalog or pass physical Entry locators. Business methods
-return `ApplicationResult<T>`, without private Storage or transport errors.
+return `AccessResult<T>`, without private Storage or transport errors.
 
 ## Principles and invariants
 
@@ -24,8 +24,15 @@ Logical Root navigation does not expose filesystem paths or fabricate identities
 - `load_log/memo/todo(Id)`: complete existing Core Snapshot, at its current
   Catalog locator; no implicit discovery or Refresh.
 
+Loads accept [compatible Entry extensions](storage.md#entry-compatibility-and-version-domains),
+but readable does not imply writable. Public Load returns `Annotated<Snapshot>`; `EntryReadOnly` warns that
+the Backend-owned Catalog assessment prohibits editing. Complete UI handling is
+tracked as ENTRY-COMPAT-01.
+
 BrowseResult has separate `records` and `directories` vectors. All metadata
-responses use `ApplicationResponse<T>` with a value and warnings. Public metadata
+responses use `Annotated<T>` with `.value` and warnings in `.annotation`.
+This Application alias specializes `core::Annotated<T, Annotation>` with
+`std::vector<ApplicationWarning>`; Storage supplies its own compatibility annotation. Public metadata
 contains no filesystem locator or Record body. Core owns the shared RecordType
 and the canonical metadata structs in `folio/core/metadata.hpp`. Storage pairs
 those values with private locator information using `Located<Metadata>`;

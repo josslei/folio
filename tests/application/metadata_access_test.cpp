@@ -67,32 +67,32 @@ protected:
 };
 
 TEST_F(MetadataAccess, RootDirectoryAndAllScopesStayDistinct) {
-  auto browse = value<app::ApplicationResponse<app::BrowseResult>>(
-      access::BrowseRequest{core::RecordType::Memo, {}});
+  auto browse =
+      value<app::Annotated<app::BrowseResult>>(access::BrowseRequest{core::RecordType::Memo, {}});
   ASSERT_EQ(browse.value.records.size(), 1u);
   EXPECT_EQ(std::get<core::MemoMetadata>(browse.value.records[0]).id, root.id());
   ASSERT_EQ(browse.value.directories.size(), 1u);
   EXPECT_EQ(browse.value.directories[0].id, directory.id());
   auto contents =
-      value<app::ApplicationResponse<app::BrowseResult>>(access::BrowseRequest{directory.id(), {}});
+      value<app::Annotated<app::BrowseResult>>(access::BrowseRequest{directory.id(), {}});
   ASSERT_EQ(contents.value.records.size(), 1u);
   EXPECT_EQ(std::get<core::MemoMetadata>(contents.value.records[0]).id, member.id());
   EXPECT_TRUE(contents.value.directories.empty());
   app::RecordQuery query;
-  EXPECT_EQ(value<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(
-                access::QueryRecordsRequest{query})
-                .value.size(),
-            4u);
+  EXPECT_EQ(
+      value<app::Annotated<std::vector<core::RecordMetadata>>>(access::QueryRecordsRequest{query})
+          .value.size(),
+      4u);
   query.scope = app::RootScope{};
-  EXPECT_EQ(value<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(
-                access::QueryRecordsRequest{query})
-                .value.size(),
-            3u);
+  EXPECT_EQ(
+      value<app::Annotated<std::vector<core::RecordMetadata>>>(access::QueryRecordsRequest{query})
+          .value.size(),
+      3u);
   query.scope = app::DirectoryScope{directory.id()};
-  EXPECT_EQ(value<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(
-                access::QueryRecordsRequest{query})
-                .value.size(),
-            1u);
+  EXPECT_EQ(
+      value<app::Annotated<std::vector<core::RecordMetadata>>>(access::QueryRecordsRequest{query})
+          .value.size(),
+      1u);
 }
 
 TEST_F(MetadataAccess, DirectoriesSortByNameThenUuidAndStayTyped) {
@@ -103,7 +103,7 @@ TEST_F(MetadataAccess, DirectoriesSortByNameThenUuidAndStayTyped) {
     ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_directory(
         item->kind(), item->snapshot(), coordinator.directory_creation_callback(),
         coordinator.creation_check())));
-  auto listed = value<app::ApplicationResponse<std::vector<core::DirectoryMetadata>>>(
+  auto listed = value<app::Annotated<std::vector<core::DirectoryMetadata>>>(
       access::ListDirectoriesRequest{core::DirectoryKind::Memo});
   ASSERT_EQ(listed.value.size(), 3u);
   EXPECT_EQ(listed.value[0].id, earlier.id());
@@ -117,14 +117,14 @@ TEST_F(MetadataAccess, FiltersAndOrderingUseMetadataOnly) {
   query.type = core::RecordType::Memo;
   query.filters.title_contains = "ALP";
   query.filters.tag = core::Tag{"work"};
-  auto found = value<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(
-      access::QueryRecordsRequest{query});
+  auto found =
+      value<app::Annotated<std::vector<core::RecordMetadata>>>(access::QueryRecordsRequest{query});
   ASSERT_EQ(found.value.size(), 1u);
   EXPECT_EQ(std::get<core::MemoMetadata>(found.value[0]).id, root.id());
   query.filters = {};
   query.order = {app::MetadataSort::Title, true};
-  auto sorted = value<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(
-      access::QueryRecordsRequest{query});
+  auto sorted =
+      value<app::Annotated<std::vector<core::RecordMetadata>>>(access::QueryRecordsRequest{query});
   ASSERT_EQ(sorted.value.size(), 2u);
   EXPECT_EQ(std::get<core::MemoMetadata>(sorted.value[0]).title, "Beta");
   EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
@@ -163,10 +163,17 @@ TEST_F(MetadataAccess, RejectsInvalidEnumsRangesDatesAndIncompatibleScope) {
 }
 
 TEST_F(MetadataAccess, CompleteTypedLoadsAndMissingWrongTypeStaleAreDistinct) {
-  EXPECT_EQ(value<core::Log::Snapshot>(access::LoadLogRequest{log.id()}).content, "log-body");
-  EXPECT_EQ(value<core::Memo::Snapshot>(access::LoadMemoRequest{member.id()}).content,
+  EXPECT_EQ(
+      value<folio::application::Annotated<core::Log::Snapshot>>(access::LoadLogRequest{log.id()})
+          .value.content,
+      "log-body");
+  EXPECT_EQ(value<folio::application::Annotated<core::Memo::Snapshot>>(
+                access::LoadMemoRequest{member.id()})
+                .value.content,
             "member-body");
-  auto task = value<core::Todo::Snapshot>(access::LoadTodoRequest{todo.id()});
+  auto task =
+      value<folio::application::Annotated<core::Todo::Snapshot>>(access::LoadTodoRequest{todo.id()})
+          .value;
   EXPECT_EQ(task.notes, "notes");
   ASSERT_EQ(task.subtasks.size(), 1u);
   EXPECT_EQ(task.subtasks[0].content, "subtask");
@@ -183,12 +190,14 @@ TEST_F(MetadataAccess, CompleteTypedLoadsAndMissingWrongTypeStaleAreDistinct) {
 
 TEST_F(MetadataAccess, TargetedReadsIgnoreUnrelatedMalformedFilesAndDoNotWriteIndex) {
   std::ofstream(paths.normal_root / "memos/unrelated.md") << "not a Folio Record";
-  EXPECT_EQ(value<core::Memo::Snapshot>(access::LoadMemoRequest{member.id()}).content,
+  EXPECT_EQ(value<folio::application::Annotated<core::Memo::Snapshot>>(
+                access::LoadMemoRequest{member.id()})
+                .value.content,
             "member-body");
-  EXPECT_EQ(value<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(
-                access::QueryRecordsRequest{{}})
-                .value.size(),
-            4u);
+  EXPECT_EQ(
+      value<app::Annotated<std::vector<core::RecordMetadata>>>(access::QueryRecordsRequest{{}})
+          .value.size(),
+      4u);
   EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
   EXPECT_TRUE(catalog.unpersisted());
 }
@@ -198,10 +207,10 @@ TEST_F(MetadataAccess, InconsistentCatalogProducesWarningAndUnavailableIsAnError
       storage::MutationFailureStage::AuthoritativeStateMayHaveChanged,
       folio::io::FileError{folio::io::FileErrorCode::IoError, {}, "synthetic failure", {}, true}};
   coordinator.memo_update_callback()(std::cref(failure));
-  auto result = value<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(
-      access::QueryRecordsRequest{{}});
-  ASSERT_EQ(result.warnings.size(), 1u);
-  EXPECT_EQ(result.warnings[0].reason, app::WarningReason::CatalogInconsistent);
+  auto result =
+      value<app::Annotated<std::vector<core::RecordMetadata>>>(access::QueryRecordsRequest{{}});
+  ASSERT_EQ(result.annotation.size(), 1u);
+  EXPECT_EQ(result.annotation[0].reason, app::WarningReason::CatalogInconsistent);
   storage::MetadataCatalog unloaded;
   storage::CatalogCoordinator not_started{paths, unloaded};
   auto unavailable = access::AccessOrchestrator{unloaded, repository, not_started}.handle(
@@ -219,12 +228,14 @@ TEST_F(MetadataAccess, MalformedRecordFailureDoesNotPoisonOtherReadsOrFinalizeSe
   const auto failure = value<app::ApplicationError>(access::LoadMemoRequest{root.id()});
   EXPECT_EQ(failure.reason, app::ErrorReason::InvalidData);
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
-  EXPECT_EQ(value<core::Memo::Snapshot>(access::LoadMemoRequest{member.id()}).content,
+  EXPECT_EQ(value<folio::application::Annotated<core::Memo::Snapshot>>(
+                access::LoadMemoRequest{member.id()})
+                .value.content,
             "member-body");
-  EXPECT_EQ(value<app::ApplicationResponse<std::vector<core::RecordMetadata>>>(
-                access::QueryRecordsRequest{{}})
-                .value.size(),
-            4u);
+  EXPECT_EQ(
+      value<app::Annotated<std::vector<core::RecordMetadata>>>(access::QueryRecordsRequest{{}})
+          .value.size(),
+      4u);
   EXPECT_TRUE(fs::exists(paths.application.state / "session.marker"));
   EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
 }

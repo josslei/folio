@@ -120,7 +120,7 @@ TEST_F(CatalogMaintenance, FailedScanPreservesCatalogAndAccess) {
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_TRUE(catalog.read_view().contains_entry(root.id()));
   ipc::AccessOrchestrator access{catalog, repository, coordinator};
-  EXPECT_TRUE(std::holds_alternative<app::ApplicationResponse<app::BrowseResult>>(
+  EXPECT_TRUE(std::holds_alternative<app::Annotated<app::BrowseResult>>(
       access.handle(ipc::BrowseRequest{core::RecordType::Memo, {}})));
 }
 TEST_F(CatalogMaintenance, ScopedRefreshCannotClearInconsistentButFullCan) {
@@ -147,8 +147,8 @@ TEST_F(CatalogMaintenance, OldPreparedLoadRemainsFailedAfterSuccessfulRefresh) {
   auto result = old_load();
   ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(result));
   EXPECT_EQ(std::get<app::ApplicationError>(result).reason, app::ErrorReason::StaleLocation);
-  EXPECT_TRUE(
-      std::holds_alternative<core::Memo::Snapshot>(access.handle(ipc::LoadMemoRequest{root.id()})));
+  EXPECT_TRUE(std::holds_alternative<folio::application::Annotated<core::Memo::Snapshot>>(
+      access.handle(ipc::LoadMemoRequest{root.id()})));
 }
 TEST_F(CatalogMaintenance, RecursiveRootRemovesMembersButPreservesOtherModules) {
   core::Todo todo{"Task", "notes", time};

@@ -329,13 +329,12 @@ TEST_F(ConcurrentOperations, PreparedQueryUsesOneOldViewWhileNewQuerySeesPublish
   auto next = submit(coordinator, ipc::BrowseRequest{core::RecordType::Memo, {}}, fresh);
   EXPECT_TRUE(finished(next));
   coordinator.drain();
-  EXPECT_EQ(
-      std::get<core::MemoMetadata>(
-          std::get<app::ApplicationResponse<app::BrowseResult>>(old_result).value.records.at(0))
-          .title,
-      "original");
   EXPECT_EQ(std::get<core::MemoMetadata>(
-                std::get<app::ApplicationResponse<app::BrowseResult>>(fresh).value.records.at(0))
+                std::get<app::Annotated<app::BrowseResult>>(old_result).value.records.at(0))
+                .title,
+            "original");
+  EXPECT_EQ(std::get<core::MemoMetadata>(
+                std::get<app::Annotated<app::BrowseResult>>(fresh).value.records.at(0))
                 .title,
             "changed");
 }
@@ -368,9 +367,12 @@ TEST_F(ConcurrentOperations, LoadMoveLoadUsesFreshLocatorWithoutDiscoveryOrBusy)
   EXPECT_TRUE(finished(first));
   EXPECT_TRUE(finished(move));
   EXPECT_TRUE(finished(last));
-  EXPECT_FALSE(std::get<core::Memo::Snapshot>(before).directory_id);
-  EXPECT_EQ(std::get<core::Memo::Snapshot>(after).directory_id, directory.id);
-  EXPECT_EQ(std::get<core::Memo::Snapshot>(after).content, memo.content);
+  EXPECT_FALSE(
+      std::get<folio::application::Annotated<core::Memo::Snapshot>>(before).value.directory_id);
+  EXPECT_EQ(std::get<folio::application::Annotated<core::Memo::Snapshot>>(after).value.directory_id,
+            directory.id);
+  EXPECT_EQ(std::get<folio::application::Annotated<core::Memo::Snapshot>>(after).value.content,
+            memo.content);
 }
 
 TEST_F(ConcurrentOperations, ImmediateMutationProtectsOwnershipButDoesNotBlockOtherEntryControl) {
@@ -432,7 +434,7 @@ TEST_F(ConcurrentOperations,
   auto failure =
       std::get<app::MutationFailure>(std::get<ipc::NormalMutationResponse>(failed).result);
   EXPECT_EQ(failure.status, app::AuthoritativeChangeStatus::Applied);
-  EXPECT_EQ(std::get<app::ApplicationResponse<app::BrowseResult>>(queried).warnings.size(), 1u);
+  EXPECT_EQ(std::get<app::Annotated<app::BrowseResult>>(queried).annotation.size(), 1u);
   EXPECT_EQ(std::get<storage::MemoMetadata>(*old.find_record(memo.id)).metadata.title, "original");
 }
 
@@ -499,9 +501,9 @@ TEST_F(ConcurrentOperations, IpcControlBrowseAndUnrelatedLoadProgressWhileAccept
   Cleanup release_save{[&] { hold.open(); }};
   ASSERT_EQ(entered.get_future().wait_for(2s), std::future_status::ready);
   auto browse = browsing.browse(core::RecordType::Memo, {});
-  ASSERT_TRUE(std::holds_alternative<app::ApplicationResponse<app::BrowseResult>>(browse));
+  ASSERT_TRUE(std::holds_alternative<app::Annotated<app::BrowseResult>>(browse));
   EXPECT_EQ(std::get<core::MemoMetadata>(
-                std::get<app::ApplicationResponse<app::BrowseResult>>(browse).value.records.at(0))
+                std::get<app::Annotated<app::BrowseResult>>(browse).value.records.at(0))
                 .title,
             "original");
   auto denied = acquiring.acquire_edit(memo.id);
@@ -517,8 +519,9 @@ TEST_F(ConcurrentOperations, IpcControlBrowseAndUnrelatedLoadProgressWhileAccept
   EXPECT_TRUE(std::holds_alternative<core::MemoMetadata>(
       std::get<app::MutationResponse<core::MemoMetadata>>(saved).result));
   auto loaded = loading.load_memo(memo.id);
-  ASSERT_TRUE(std::holds_alternative<core::Memo::Snapshot>(loaded));
-  EXPECT_EQ(std::get<core::Memo::Snapshot>(loaded).title, "changed");
+  ASSERT_TRUE(std::holds_alternative<folio::application::Annotated<core::Memo::Snapshot>>(loaded));
+  EXPECT_EQ(std::get<folio::application::Annotated<core::Memo::Snapshot>>(loaded).value.title,
+            "changed");
   EXPECT_TRUE(fatal_errors.take_failures().empty());
 }
 
