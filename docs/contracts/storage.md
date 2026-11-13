@@ -691,3 +691,14 @@ remain valid. Scoped publication retains global readiness; Full rebuild may
 restore Ready. Neither maintenance operation repairs Entry files or certifies an
 uncertain authoritative Mutation, and Refresh does not itself persist the Index
 or clear the Session Marker.
+
+### Catalog construction and locator uniqueness
+
+Catalog state maintains a derived locator-to-UUID lookup alongside its primary and
+membership indices. Insert, update and removal maintain it within the same private
+candidate/publication boundary. UUID and locator uniqueness are both validated;
+ordinary writes do not scan all existing Records for locator collisions.
+Index decoding and full reconstruction use the bulk `MetadataCatalog::rebuild()`
+path: one isolated State is populated and validated before replacing the destination.
+Failures preserve the previous Catalog and its retained immutable views. The locator
+lookup is reconstructed in memory and adds no persisted Index fields.

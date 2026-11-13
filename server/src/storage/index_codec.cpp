@@ -792,19 +792,34 @@ RecordMetadata entry_of(const Object& object, std::string_view path) {
     require(static_cast<std::size_t>(directories.via.array.size) + entries.via.array.size <=
                 kMaxRecords,
             IndexCodecErrorCode::LimitExceeded, "", "Too many Index records");
-    MetadataCatalog catalog;
+    std::vector<DirectoryMetadata> directory_metadata;
+    std::vector<LogMetadata> logs;
+    std::vector<MemoMetadata> memos;
+    std::vector<TodoMetadata> todos;
+    directory_metadata.reserve(directories.via.array.size);
     for (std::uint32_t i = 0; i < directories.via.array.size; ++i) {
       const auto path = "directories[" + std::to_string(i) + "]";
-      auto result = catalog.insert_directory(directory_of(directories.via.array.ptr[i], path));
-      if (const auto* problem = std::get_if<StorageError>(&result))
-        fail(IndexCodecErrorCode::InvalidMetadata, path, problem->message);
+      directory_metadata.push_back(directory_of(directories.via.array.ptr[i], path));
     }
     for (std::uint32_t i = 0; i < entries.via.array.size; ++i) {
       const auto path = "entries[" + std::to_string(i) + "]";
-      auto result = catalog.insert_record(entry_of(entries.via.array.ptr[i], path));
-      if (const auto* problem = std::get_if<StorageError>(&result))
-        fail(IndexCodecErrorCode::InvalidMetadata, path, problem->message);
+      std::visit(
+          [&](auto value) {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<T, LogMetadata>)
+              logs.push_back(std::move(value));
+            else if constexpr (std::is_same_v<T, MemoMetadata>)
+              memos.push_back(std::move(value));
+            else
+              todos.push_back(std::move(value));
+          },
+          entry_of(entries.via.array.ptr[i], path));
     }
+    MetadataCatalog catalog;
+    auto built = catalog.rebuild(std::move(logs), std::move(memos), std::move(todos),
+                                 std::move(directory_metadata));
+    if (const auto* problem = std::get_if<StorageError>(&built))
+      fail(IndexCodecErrorCode::InvalidMetadata, problem->path.generic_string(), problem->message);
     catalog.mark_persisted();
     return catalog;
   } catch (const Failure& failure) {

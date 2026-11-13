@@ -152,8 +152,8 @@ private:
                                                                      RecordMetadata metadata);
   core::Result<std::monostate, StorageError> insert_record_candidate(State& next,
                                                                      RecordMetadata metadata);
-  [[nodiscard]] bool record_path_occupied(const std::filesystem::path& path,
-                                          std::optional<Id> except = std::nullopt) const;
+  [[nodiscard]] bool locator_occupied(const std::filesystem::path& path,
+                                      std::optional<Id> except = std::nullopt) const;
   [[nodiscard]] bool directory_referenced(const DirectoryMetadata& directory) const;
   void change_members(State& next, RecordType type, std::optional<Id> directory_id,
                       const std::string& key, bool insert);

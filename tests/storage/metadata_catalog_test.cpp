@@ -992,3 +992,24 @@ TEST(MetadataCatalogViewTest, MovePublishesMembershipAndLocatorTogether) {
 }
 
 } // namespace
+
+TEST(MetadataCatalogTest, LocatorLookupTracksUpdatesRemovalAndRetainedViews) {
+  storage::MetadataCatalog catalog;
+  auto first = log_snapshot();
+  auto second = first;
+  second.id = core::Id::generate();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      catalog.insert_record(storage::metadata_from(first, "logs/old.md"))));
+  auto retained = catalog.read_view();
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      catalog.update_record(storage::metadata_from(first, "logs/new.md"))));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      catalog.insert_record(storage::metadata_from(second, "logs/old.md"))));
+  expect_error(catalog.update_record(storage::metadata_from(second, "logs/new.md")),
+               storage::StorageErrorCode::InvalidMetadata);
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(catalog.remove_record(first.id)));
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(
+      catalog.update_record(storage::metadata_from(second, "logs/new.md"))));
+  EXPECT_EQ(std::get<storage::LogMetadata>(*retained.find_record(first.id)).relative_path,
+            "logs/old.md");
+}
