@@ -48,7 +48,7 @@ BackendActionOutcome Bootstrap(BackendContext& context) {
   context.repository = std::make_unique<storage::NormalRepository>(context.paths->normal_root);
   context.coordinator =
       std::make_unique<storage::CatalogCoordinator>(*context.paths, context.catalog);
-  auto result = context.coordinator->startup_load();
+  auto result = context.coordinator->initialize();
   if (auto* error = std::get_if<storage::CoordinatorError>(&result)) {
     return record_backend_failure(context, {Phase::Bootstrap, *error});
   }

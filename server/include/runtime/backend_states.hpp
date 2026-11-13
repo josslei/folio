@@ -48,7 +48,7 @@ struct BackendContext {
   std::unique_ptr<MutationOrchestrator> mutations;
   std::unique_ptr<RequestCoordinator> request_coordinator;
   std::unique_ptr<IpcServer> runtime;
-  // Historical obligation: startup_load succeeded. Current consistency remains
+  // Historical obligation: initialize succeeded. Current consistency remains
   // Coordinator-owned; finish_session itself rejects unsafe Catalog states.
   std::optional<RuntimeLimits> runtime_limits;
   bool initialized = false;

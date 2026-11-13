@@ -123,7 +123,7 @@ protected:
     ASSERT_TRUE(std::holds_alternative<app::RepositoryOwnership>(owner));
     storage::MetadataCatalog catalog;
     storage::CatalogCoordinator coordinator(paths, catalog);
-    ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
+    ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.initialize()));
     ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.finish_session()));
   }
 };

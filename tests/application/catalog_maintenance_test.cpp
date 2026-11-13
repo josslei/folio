@@ -30,7 +30,7 @@ protected:
   core::Memo root{"Root", "body", time}, member{"Member", "body", time};
   void SetUp() override {
     fs::create_directories(paths.normal_root);
-    ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
+    ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.initialize()));
     ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_directory(
         directory.kind(), directory.snapshot(), coordinator.directory_creation_callback(),
         coordinator.creation_check())));

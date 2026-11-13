@@ -134,7 +134,7 @@ protected:
       owned_catalog};
 
   void SetUp() override {
-    const auto loaded = coordinator.startup_load();
+    const auto loaded = coordinator.initialize();
     ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(loaded));
     ASSERT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
     const auto saved = coordinator.shutdown_save();
@@ -262,7 +262,7 @@ TEST_F(NormalRepositoryCallbacksTest, StoredCallbackReferencesSurviveRefreshWith
   EXPECT_TRUE(static_cast<bool>(*directory_create));
   EXPECT_TRUE(static_cast<bool>(*directory_update));
 
-  ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(other.startup_load()));
+  ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(other.initialize()));
   ASSERT_TRUE(std::holds_alternative<std::vector<storage::ExcludedObject>>(other.refresh_all()));
   EXPECT_EQ(log_create, &other.log_creation_callback());
   EXPECT_EQ(log_update, &other.log_update_callback());

@@ -53,52 +53,26 @@ application::internal::CatalogMaintenance& CatalogCoordinator::maintenance() noe
   return *maintenance_;
 }
 
-::folio::core::Result<InitializationOutcome, CoordinatorError> CatalogCoordinator::startup_load() {
+::folio::core::Result<InitializationOutcome, CoordinatorError> CatalogCoordinator::initialize() {
   if (load_attempted_)
-    return error(CoordinatorErrorCode::Lifecycle, {}, "Startup load already attempted");
+    return error(CoordinatorErrorCode::Lifecycle, {}, "Catalog initialization already attempted");
   load_attempted_ = true;
   status_ = CatalogStatus::Unavailable;
-  auto reconstruct_and_publish =
-      [&]() -> ::folio::core::Result<std::vector<ExcludedObject>, CoordinatorError> {
-    auto built = maintenance_->reconstruct_full();
-    if (auto* problem = std::get_if<CoordinatorError>(&built)) return *problem;
-    auto candidate = std::get<CatalogCandidate>(std::move(built));
+  auto prepared = maintenance_->prepare_initialization();
+  if (auto* problem = std::get_if<CoordinatorError>(&prepared)) return *problem;
+  auto candidate = std::get<application::internal::CatalogMaintenance::PreparedInitialization>(
+      std::move(prepared));
+  if (candidate.outcome.previous_session_incomplete || candidate.outcome.index_error) {
     auto published = publish_full_refresh(std::move(candidate.catalog));
     if (auto* problem = std::get_if<CoordinatorError>(&published)) return *problem;
-    return std::move(candidate.diagnostics);
-  };
-  auto marker = maintenance_->previous_marker();
-  if (auto* problem = std::get_if<CoordinatorError>(&marker)) return *problem;
-  if (std::get<bool>(marker)) {
-    auto rebuilt = reconstruct_and_publish();
-    if (auto* problem = std::get_if<CoordinatorError>(&rebuilt)) return *problem;
-    return InitializationOutcome{std::nullopt,
-                                 std::get<std::vector<ExcludedObject>>(std::move(rebuilt)), true};
+  } else {
+    auto marker_ready = maintenance_->establish_marker();
+    if (auto* problem = std::get_if<CoordinatorError>(&marker_ready)) return *problem;
+    session_active_ = true;
+    catalog_ = std::move(candidate.catalog);
+    status_ = CatalogStatus::Ready;
   }
-  // Keep cache-read errors distinct so only unusable caches trigger a rebuild.
-  auto loaded = maintenance_->load_index();
-  if (const auto* problem = std::get_if<CoordinatorError>(&loaded)) {
-    switch (problem->code) {
-    case CoordinatorErrorCode::Missing:
-    case CoordinatorErrorCode::Corrupt:
-    case CoordinatorErrorCode::UnsupportedVersion:
-    case CoordinatorErrorCode::LimitExceeded:
-      break;
-    default:
-      return *problem;
-    }
-    CoordinatorError index_error = *problem;
-    auto rebuilt = reconstruct_and_publish();
-    if (const auto* failure = std::get_if<CoordinatorError>(&rebuilt)) return *failure;
-    return InitializationOutcome{std::move(index_error),
-                                 std::get<std::vector<ExcludedObject>>(std::move(rebuilt))};
-  }
-  auto marker_ready = maintenance_->establish_marker();
-  if (auto* problem = std::get_if<CoordinatorError>(&marker_ready)) return *problem;
-  session_active_ = true;
-  catalog_ = std::get<MetadataCatalog>(std::move(loaded));
-  status_ = CatalogStatus::Ready;
-  return InitializationOutcome{};
+  return std::move(candidate.outcome);
 }
 
 ::folio::core::Result<std::vector<ExcludedObject>, CoordinatorError>

@@ -516,7 +516,7 @@ remaining connections and joins workers before Catalog finalization.
 
 The endpoint is bound under ownership before Storage initialization so startup
 errors can be returned, but no successful handshake is processed until
-`CatalogCoordinator::startup_load()` succeeds. No Ready precedes the durable
+`CatalogCoordinator::initialize()` succeeds. No Ready precedes the durable
 Marker. Shutdown closes admission/connections, explicitly calls `finish_session()`,
 and releases ownership last. Failed finalization returns failure and retains the
 Marker according to Storage's existing contract. Backend crashes release locks,

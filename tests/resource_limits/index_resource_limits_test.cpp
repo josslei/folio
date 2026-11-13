@@ -77,7 +77,7 @@ protected:
   void expect_oversized_fallback(std::size_t expected_entries) const {
     storage::MetadataCatalog owned_catalog;
     storage::CatalogCoordinator coordinator{paths(), owned_catalog};
-    const auto result = coordinator.startup_load();
+    const auto result = coordinator.initialize();
     ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(result));
     const auto& outcome = std::get<storage::InitializationOutcome>(result);
     ASSERT_TRUE(outcome.index_error.has_value());
@@ -90,7 +90,7 @@ protected:
     EXPECT_TRUE(owned_catalog.unpersisted());
     EXPECT_EQ(owned_catalog.read_view().query().size(), expected_entries);
     expect_cache_unchanged();
-    const auto repeated = coordinator.startup_load();
+    const auto repeated = coordinator.initialize();
     ASSERT_TRUE(std::holds_alternative<storage::CoordinatorError>(repeated));
     EXPECT_EQ(std::get<storage::CoordinatorError>(repeated).code,
               storage::CoordinatorErrorCode::Lifecycle);

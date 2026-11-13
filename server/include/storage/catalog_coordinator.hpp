@@ -68,7 +68,7 @@ enum class SaveOutcome { Saved, SkippedPersisted };
 /// Integrates complex Catalog/Repository/maintenance behavior; not a mandatory
 /// gateway for independent operations. Performs no filesystem or codec work.
 /// Coordinates an owner-supplied Catalog without owning it. The Catalog must
-/// outlive this coordinator and its callbacks. Startup load is a single attempt;
+/// outlive this coordinator and its callbacks. Initialization is a single attempt;
 /// saving once at shutdown is caller policy and failed saves may be retried.
 /// Failed startup cannot be turned into save permission by editing the Catalog.
 /// One mutation worker serializes callbacks; read_state() captures roots/status
@@ -109,9 +109,9 @@ public:
   CatalogCoordinator(CatalogCoordinator&&) = delete;
   CatalogCoordinator& operator=(CatalogCoordinator&&) = delete;
 
-  /// Coordinate Index adoption or authoritative fallback and durable session startup.
-  /// One attempt; filesystem/codec work is delegated to CatalogMaintenance.
-  [[nodiscard]] ::folio::core::Result<InitializationOutcome, CoordinatorError> startup_load();
+  /// Coordinate maintenance preparation, durable session startup and candidate publication.
+  /// One attempt; Index/fallback selection belongs to CatalogMaintenance.
+  [[nodiscard]] ::folio::core::Result<InitializationOutcome, CoordinatorError> initialize();
   /// Coordinate complete authoritative reconstruction, readiness and publication.
   [[nodiscard]] ::folio::core::Result<std::vector<ExcludedObject>, CoordinatorError> refresh_all();
   /// Publish a complete authoritative candidate; establish the durable session if

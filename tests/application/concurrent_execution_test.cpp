@@ -269,7 +269,7 @@ protected:
   void SetUp() override {
     fs::create_directories(paths.normal_root);
     ASSERT_TRUE(
-        std::holds_alternative<storage::InitializationOutcome>(catalog_coordinator.startup_load()));
+        std::holds_alternative<storage::InitializationOutcome>(catalog_coordinator.initialize()));
     ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(
         memo, catalog_coordinator.memo_creation_callback(), catalog_coordinator.creation_check())));
   }

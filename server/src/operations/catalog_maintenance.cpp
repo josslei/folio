@@ -174,6 +174,37 @@ CatalogMaintenance::establish_marker() const {
   return std::monostate{};
 }
 
+::folio::core::Result<CatalogMaintenance::PreparedInitialization, CoordinatorError>
+CatalogMaintenance::prepare_initialization() const {
+  auto marker = previous_marker();
+  if (auto* problem = std::get_if<CoordinatorError>(&marker)) return *problem;
+  InitializationOutcome outcome;
+  outcome.previous_session_incomplete = std::get<bool>(marker);
+  if (!outcome.previous_session_incomplete) {
+    auto loaded = load_index();
+    if (const auto* problem = std::get_if<CoordinatorError>(&loaded)) {
+      // Only an unusable Index permits authoritative fallback; I/O/path failures propagate.
+      switch (problem->code) {
+      case CoordinatorErrorCode::Missing:
+      case CoordinatorErrorCode::Corrupt:
+      case CoordinatorErrorCode::UnsupportedVersion:
+      case CoordinatorErrorCode::LimitExceeded:
+        outcome.index_error = *problem;
+        break;
+      default:
+        return *problem;
+      }
+    } else {
+      return PreparedInitialization{std::get<MetadataCatalog>(std::move(loaded)), {}};
+    }
+  }
+  auto built = reconstruct_full();
+  if (auto* problem = std::get_if<CoordinatorError>(&built)) return *problem;
+  auto candidate = std::get<CatalogCandidate>(std::move(built));
+  outcome.diagnostics = std::move(candidate.diagnostics);
+  return PreparedInitialization{std::move(candidate.catalog), std::move(outcome)};
+}
+
 ::folio::core::Result<MetadataCatalog, CoordinatorError> CatalogMaintenance::load_index() const {
   auto resolved = locations(paths_);
   if (auto* problem = std::get_if<CoordinatorError>(&resolved)) return *problem;

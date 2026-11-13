@@ -52,7 +52,7 @@ TEST(IpcResourceLimits, OwnershipAcquisitionIsIndependentOfOversizedLoad) {
   storage::MetadataCatalog catalog;
   storage::NormalRepository repository{paths.normal_root};
   storage::CatalogCoordinator coordinator{paths, catalog};
-  ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
+  ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.initialize()));
   core::TimestampContext time{core::Timestamp{}, "UTC", {}};
   core::Memo record{"Oversized", std::string(ipc::max_application_bytes, 'x'), time};
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(

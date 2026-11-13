@@ -42,7 +42,7 @@ protected:
 
   void SetUp() override {
     fs::create_directories(paths.normal_root);
-    ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
+    ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.initialize()));
   }
   void TearDown() override {
     storage::internal::repository_test_hooks = {};

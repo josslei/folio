@@ -359,11 +359,14 @@ component inheritance merely because they live under `tui/`.
 
 There is one Backend-private `CatalogMaintenance` module. It owns Check/Refresh
 handling, scope resolution and reconciliation, full candidate construction, Index
-reading/writing and durable Session Marker I/O. Its per-scope Check history and
+reading/writing and durable Session Marker I/O. Startup preparation inspects the
+previous Marker and chooses Index loading or authoritative reconstruction, returning
+an isolated candidate and initialization diagnostics. Its per-scope Check history and
 Refresh observer belong to that same instance.
 
 `CatalogCoordinator` owns that maintenance instance and coordinates complex
-startup, full Refresh and finalization contracts, synchronizes active publication
+`initialize()` sequences maintenance preparation, session establishment and safe
+publication. It also coordinates full Refresh and finalization, synchronizes active publication
 and readiness, and supplies Repository mutation-result callbacks. It performs no
 filesystem or codec work. Independent/reserved Check and scoped Refresh operations
 use the maintenance instance directly, passing Coordinator explicitly when they

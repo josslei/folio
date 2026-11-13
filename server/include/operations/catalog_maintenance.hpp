@@ -22,6 +22,14 @@ public:
   using OperationResponse = application::internal::OperationResponse;
   using DirectoryRef = application::DirectoryRef;
   using RefreshScope = application::RefreshScope;
+  /// Startup preparation result; no active Catalog or session has been changed.
+  struct PreparedInitialization {
+    MetadataCatalog catalog;
+    core::storage::InitializationOutcome outcome;
+  };
+  /// Inspect the previous Marker, load the Index when eligible, otherwise reconstruct.
+  /// Returns an isolated candidate and diagnostics; does not establish a session or publish.
+  ::folio::core::Result<PreparedInitialization, CoordinatorError> prepare_initialization() const;
   /// Check once per scope/session; caller holds the maintenance reservation.
   OperationResponse check(CatalogCoordinator& coordinator, const DirectoryRef& scope);
   /// Reconcile selected scope; Coordinator handles managed publication/readiness.
