@@ -5,6 +5,7 @@
 #include <folio/io/filesystem.hpp>
 #include "storage/common.hpp"
 #include "storage/index_codec.hpp"
+#include <memory>
 #include "storage/normal_repository.hpp"
 
 #include <concepts>
@@ -16,6 +17,10 @@
 #include <variant>
 #include <utility>
 #include <vector>
+
+namespace folio::application::internal {
+class CatalogMaintenance;
+}
 
 namespace folio::core::storage {
 
@@ -51,9 +56,17 @@ struct InitializationOutcome {
   bool previous_session_incomplete = false;
 };
 
+/// Independently constructed authoritative projection, not yet published.
+struct CatalogCandidate {
+  MetadataCatalog catalog;
+  std::vector<ExcludedObject> diagnostics;
+};
+
 enum class CatalogStatus { Unloaded, Ready, Unavailable, Inconsistent, Stopped };
 enum class SaveOutcome { Saved, SkippedPersisted };
 
+/// Integrates complex Catalog/Repository/maintenance behavior; not a mandatory
+/// gateway for independent operations. Performs no filesystem or codec work.
 /// Coordinates an owner-supplied Catalog without owning it. The Catalog must
 /// outlive this coordinator and its callbacks. Startup load is a single attempt;
 /// saving once at shutdown is caller policy and failed saves may be retried.
@@ -65,6 +78,7 @@ enum class SaveOutcome { Saved, SkippedPersisted };
 class CatalogCoordinator {
 public:
   CatalogCoordinator(StoragePaths paths, MetadataCatalog& catalog);
+  ~CatalogCoordinator();
   /// Sanitized publication facts for the Application notification adapter. Invoked
   /// under publication_mutex_; observer must not reenter Storage or perform I/O.
   struct RecordChange {
@@ -95,16 +109,15 @@ public:
   CatalogCoordinator(CatalogCoordinator&&) = delete;
   CatalogCoordinator& operator=(CatalogCoordinator&&) = delete;
 
-  // One-time startup policy: load the Index, rebuilding from Normal files only
-  // when the cache is missing, corrupt, unsupported, or over a resource limit,
-  // or a previous durable Session Marker exists. Ready requires a durable Marker.
-  // Uses application.cache/index/normal.msgpack; former State indexes are ignored
-  // and are neither migrated nor removed. Construction performs no Index I/O.
+  /// Coordinate Index adoption or authoritative fallback and durable session startup.
+  /// One attempt; filesystem/codec work is delegated to CatalogMaintenance.
   [[nodiscard]] ::folio::core::Result<InitializationOutcome, CoordinatorError> startup_load();
-  // Explicit full replacement from authoritative Normal files, not a targeted
-  // correction of individual cached records. Caller excludes Mutations through
-  // completion; Access captures/publication share a short mutex.
+  /// Coordinate complete authoritative reconstruction, readiness and publication.
   [[nodiscard]] ::folio::core::Result<std::vector<ExcludedObject>, CoordinatorError> refresh_all();
+  /// Publish a complete authoritative candidate; establish the durable session if
+  /// needed and restore Ready. Caller excludes other writers/finalization.
+  [[nodiscard]] ::folio::core::Result<std::monostate, CoordinatorError>
+  publish_full_refresh(MetadataCatalog candidate);
   /// Publish a privately validated maintenance candidate. Caller excludes Mutations
   /// through completion; concurrent Access retains immutable views. Scoped publication
   /// preserves readiness and never clears global Inconsistent state.
@@ -116,6 +129,9 @@ public:
   // shutdown_save() alone leaves the Marker in place and does not end a session.
   // No authoritative mutations may follow successful finalization.
   [[nodiscard]] ::folio::core::Result<SaveOutcome, CoordinatorError> finish_session();
+  /// Borrow the single maintenance module for independent/reserved operations.
+  /// Its lifetime is bounded by this Coordinator; no forwarding of its whole API.
+  application::internal::CatalogMaintenance& maintenance() noexcept;
   [[nodiscard]] CatalogStatus status() const noexcept;
   struct ReadState {
     CatalogStatus status;
@@ -259,16 +275,11 @@ private:
   // Does not change Catalog records or unpersisted state. Only successful
   // authoritative reconciliation restores Ready; shutdown refuses Inconsistent.
   void mark_needs_refresh() noexcept;
-  // Explicit full rebuild/Refresh from authoritative Normal files. Failure
-  // preserves catalog and readiness; success is Ready and unpersisted, with no
-  // Index I/O, and prevents a later stale startup load from replacing it.
-  [[nodiscard]] ::folio::core::Result<std::vector<ExcludedObject>, CoordinatorError> rebuild();
-  [[nodiscard]] ::folio::core::Result<bool, CoordinatorError> previous_marker() const;
-  [[nodiscard]] ::folio::core::Result<std::monostate, CoordinatorError> establish_marker();
   std::function<void(const Change&)> observer_;
   std::function<void()> observer_failed_;
   StoragePaths paths_;
   MetadataCatalog& catalog_;
+  std::unique_ptr<application::internal::CatalogMaintenance> maintenance_;
   /// Protects managed Catalog publication and read_state capture; never held for
   /// Repository I/O. Single writer owns lifecycle fields; startup/finalization
   /// run only with execution drained; Refresh excludes Mutations. Status is atomic for independent

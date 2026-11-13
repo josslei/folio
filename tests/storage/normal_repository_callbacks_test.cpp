@@ -123,7 +123,7 @@ protected:
   fs::path vault = root.path / "vault";
   fs::path state = root.path / "state";
   fs::path cache = root.path / "cache";
-  fs::path index = cache / "index" / "normal.msgpack";
+  fs::path index = state / "index" / "normal.msgpack";
   storage::NormalRepository repository{normal};
   storage::MetadataCatalog owned_catalog;
   storage::CatalogCoordinator coordinator{

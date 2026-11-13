@@ -73,7 +73,7 @@ Private process code uses `folio::application::internal`. Domain/Storage namespa
 | [NormalRepository](../../server/include/storage/normal_repository.hpp) | Authoritative Normal Entry operations; targeted identity verification, explicit UUID discovery, scoped/full scan and direct-entry counts |
 | [MetadataCatalog](../../server/include/storage/metadata_catalog.hpp) | Four typed maps, derived UUID membership sets, non-recursive listing and Record metadata search; no filesystem I/O |
 | [CatalogCoordinator](../../server/include/storage/catalog_coordinator.hpp) | Borrows owner-supplied Catalog; startup, full Refresh, Index shutdown persistence, stored synchronization callbacks and consistency status |
-| [CatalogMaintenance](../../server/include/operations/catalog_maintenance.hpp) | Backend Check/Refresh workflow; logical scope resolution, scan reconciliation and candidate publication through Coordinator |
+| [CatalogMaintenance](../../server/include/operations/catalog_maintenance.hpp) | Check/Refresh handling, Index/Marker I/O and candidate reconstruction; managed publication through Coordinator |
 | [IndexCodec](../../server/include/storage/index_codec.hpp) | Pure deterministic MessagePack encode/decode; temporary validated Catalog, no file I/O |
 | [I/O](../../lib/include/folio/io/filesystem.hpp) | Generic byte reads, atomic create/replace, and durability operations |
 | [Storage common types](../../server/include/storage/common.hpp) | Storage-specific errors, mixed Repository results, and effective-path validation |
@@ -158,7 +158,7 @@ scheduling are execution policy; they do not define new domain operation types.
 | `storage/` | Authoritative persistence, Catalog projections and Coordinator consistency mechanisms |
 
 Put a future operation helper under `operations/` when it implements Application
-semantics by coordinating lower-level components. CatalogMaintenance follows this boundary. Delete or Trash orchestration could fit
+semantics by coordinating lower-level components. Delete or Trash orchestration could fit
 there once separately authorized. One operation does not
 require one class/file. Worker pools, queue accounting, codecs, filesystem
 primitives and Core models have other owners. Repository still owns persistence
@@ -304,3 +304,73 @@ Stopping/Report close IPC admission, drain the coordinator, then wait for final
 response delivery. Report resolves Push delivery before Finish closes IPC workers.
 The coordinator is drained even if IPC initialization fails; Storage finalization
 follows execution termination. Destruction order keeps borrowed services alive.
+
+## Frontend and TUI organization
+
+**Implemented baseline and approved extension boundaries:** reusable Frontend
+facilities are those a completely different GUI would actually reuse, principally
+Backend communication, Application exchanges, Push receipt and transport handling.
+They remain in `app/`, never shared runtime `lib/`. TUI navigation, history,
+module selection, cached display state, logical cursor/focus, keyboard commands,
+sorting presentation and responsive layout belong under `app/tui/` (in practice,
+matching `app/include/tui/` and `app/src/tui/`), even without FTXUI calls.
+
+| Category | Responsibility |
+| --- | --- |
+| `shell/` | Application-wide composition: active page, persistent Bottom Bar, global Quit handling and future overlays; no Record-specific rules |
+| `pages/` | Major navigation contexts and their local state/controls: Browser, Record and future Settings |
+| `layouts/` | Reusable composition/arrangement rules extracted when independently useful; no navigation ownership implied |
+| `components/` | Reusable localized UI elements; elements used only by one page stay beside that page |
+
+```text
+TuiShell
+  Active Page: BrowserPage
+    Browser-specific TopBar
+    EntriesDisplay
+    LoadingFeedback (reusable TUI component)
+  BottomBar
+  Dialog Overlay (future; no placeholder implementation)
+```
+
+Browser is one **Page Type** with Logs/Memos/Todos module contexts. A **Page
+Instance** is a concrete page and its state, while a **context** identifies the
+module or Record. Record viewing/editing are modes of one Record Page Type.
+These distinctions do not impose inheritance or identical layouts on variants.
+The Browser header switches modules; the future Record header provides Back,
+Title and Metadata Drawer control. They need no universal Top Bar abstraction.
+
+Layouts are introduced selectively: an `hbox` or `vbox` does not justify another
+class/file. The source tree follows responsibility and locality, not a one-to-one
+mapping to the FTXUI component tree. There are currently no extracted reusable
+Layouts, so `layouts/` has no empty directory. Existing target boundaries remain
+unchanged; no shared UI framework or new build target is introduced.
+
+See the [Application plan](../development/plans/application.md#tui-ownership--implemented)
+for current files, feedback ownership and remaining increments. “Bottom Bar” is
+the region's project term; status feedback is one function, and command input is
+only a deferred possibility.
+
+TUI visual elements use `ftxui::ComponentBase` with `OnRender()` and child
+Component composition by default, including noninteractive displays. Exceptions
+need a concrete reason. Nonvisual request and timing helpers do not require
+component inheritance merely because they live under `tui/`.
+
+### Catalog coordination and maintenance boundary
+
+There is one Backend-private `CatalogMaintenance` module. It owns Check/Refresh
+handling, scope resolution and reconciliation, full candidate construction, Index
+reading/writing and durable Session Marker I/O. Its per-scope Check history and
+Refresh observer belong to that same instance.
+
+`CatalogCoordinator` owns that maintenance instance and coordinates complex
+startup, full Refresh and finalization contracts, synchronizes active publication
+and readiness, and supplies Repository mutation-result callbacks. It performs no
+filesystem or codec work. Independent/reserved Check and scoped Refresh operations
+use the maintenance instance directly, passing Coordinator explicitly when they
+need a coherent Catalog view or managed publication. Maintenance retains no
+Coordinator reference; the headers use a forward declaration rather than a second
+adapter/module or a callback framework.
+
+Coordinator is not a mandatory gateway or forwarding API for every Catalog method.
+Direct operations remain available when their caller does not need to enforce a
+complex cross-module contract.

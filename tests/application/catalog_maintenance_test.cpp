@@ -1,4 +1,5 @@
 #include "operations/catalog_maintenance.hpp"
+#include "storage/catalog_coordinator.hpp"
 #include "operations/access_orchestrator.hpp"
 #include <folio/ipc/application_codec.hpp>
 #include <gtest/gtest.h>
@@ -24,7 +25,7 @@ protected:
   storage::MetadataCatalog catalog;
   storage::NormalRepository repository{paths.normal_root};
   storage::CatalogCoordinator coordinator{paths, catalog};
-  ipc::CatalogMaintenance maintenance{repository, coordinator};
+  folio::application::internal::CatalogMaintenance& maintenance = coordinator.maintenance();
   core::Directory directory{core::DirectoryKind::Memo, "Folder"};
   core::Memo root{"Root", "body", time}, member{"Member", "body", time};
   void SetUp() override {
@@ -53,47 +54,47 @@ protected:
 };
 TEST_F(CatalogMaintenance, CountsAllLayoutsWithoutClassifyingFiles) {
   for (auto type : {core::RecordType::Log, core::RecordType::Memo, core::RecordType::Todo})
-    EXPECT_EQ(std::get<app::ConsistencyCheckResult>(maintenance.check(type)),
+    EXPECT_EQ(std::get<app::ConsistencyCheckResult>(maintenance.check(coordinator, type)),
               app::ConsistencyCheckResult::NoAnomalyDetected);
-  EXPECT_EQ(std::get<app::ConsistencyCheckResult>(maintenance.check(directory.id())),
+  EXPECT_EQ(std::get<app::ConsistencyCheckResult>(maintenance.check(coordinator, directory.id())),
             app::ConsistencyCheckResult::NoAnomalyDetected);
   std::ofstream(paths.normal_root / "memos" / "unrelated") << "unrelated";
-  EXPECT_EQ(std::get<app::ConsistencyCheckResult>(maintenance.check(core::RecordType::Memo)),
+  EXPECT_EQ(std::get<app::ConsistencyCheckResult>(maintenance.check(coordinator, core::RecordType::Memo)),
             app::ConsistencyCheckResult::NoAnomalyDetected);
-  folio::application::internal::CatalogMaintenance next_session(repository, coordinator);
-  EXPECT_EQ(std::get<app::ConsistencyCheckResult>(next_session.check(core::RecordType::Memo)),
+  folio::application::internal::CatalogMaintenance next_session(paths);
+  EXPECT_EQ(std::get<app::ConsistencyCheckResult>(next_session.check(coordinator, core::RecordType::Memo)),
             app::ConsistencyCheckResult::AnomalyDetected);
   fs::remove(paths.normal_root / "memos" / directory.id().to_string() / ".folio-dir.toml");
-  EXPECT_EQ(std::get<app::ConsistencyCheckResult>(next_session.check(directory.id())),
+  EXPECT_EQ(std::get<app::ConsistencyCheckResult>(next_session.check(coordinator, directory.id())),
             app::ConsistencyCheckResult::AnomalyDetected);
   fs::remove_all(paths.normal_root / "memos" / directory.id().to_string());
-  folio::application::internal::CatalogMaintenance missing_session(repository, coordinator);
-  EXPECT_TRUE(std::holds_alternative<app::ApplicationError>(missing_session.check(directory.id())));
+  folio::application::internal::CatalogMaintenance missing_session(paths);
+  EXPECT_TRUE(std::holds_alternative<app::ApplicationError>(missing_session.check(coordinator, directory.id())));
   fs::create_directories(paths.normal_root / "memos" / directory.id().to_string());
-  EXPECT_TRUE(std::holds_alternative<app::ApplicationError>(missing_session.check(directory.id())));
+  EXPECT_TRUE(std::holds_alternative<app::ApplicationError>(missing_session.check(coordinator, directory.id())));
 }
 TEST_F(CatalogMaintenance, ImmediateRootPreservesUnscannedMembersAndRetainedViews) {
   auto retained = coordinator.read_state().view;
   fs::remove(path(root.id()));
   fs::remove(path(member.id()));
   EXPECT_TRUE(std::holds_alternative<std::monostate>(
-      maintenance.refresh(scope(core::RecordType::Memo, false))));
+      maintenance.refresh(coordinator, scope(core::RecordType::Memo, false))));
   EXPECT_FALSE(catalog.read_view().contains_entry(root.id()));
   EXPECT_TRUE(catalog.read_view().contains_entry(member.id()));
   EXPECT_TRUE(retained.contains_entry(root.id()));
-  EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh(scope(directory.id()))));
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh(coordinator, scope(directory.id()))));
   EXPECT_FALSE(catalog.read_view().contains_entry(member.id()));
   EXPECT_TRUE(catalog.read_view().contains_entry(directory.id()));
   EXPECT_TRUE(catalog.unpersisted());
 }
 TEST_F(CatalogMaintenance, MissingDirectoryRequiresFullRefreshWithoutPublishing) {
   fs::remove_all(paths.normal_root / "memos" / directory.id().to_string());
-  auto response = maintenance.refresh(scope(core::RecordType::Memo, false));
+  auto response = maintenance.refresh(coordinator, scope(core::RecordType::Memo, false));
   ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(response));
   EXPECT_EQ(std::get<app::ApplicationError>(response).reason,
             app::ErrorReason::FullRefreshRequired);
   EXPECT_TRUE(catalog.read_view().contains_entry(member.id()));
-  EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh({})));
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh(coordinator, {})));
   EXPECT_FALSE(catalog.read_view().contains_entry(member.id()));
 }
 TEST_F(CatalogMaintenance, CrossScopeIdentityConflictRequiresFullRefresh) {
@@ -104,18 +105,18 @@ TEST_F(CatalogMaintenance, CrossScopeIdentityConflictRequiresFullRefresh) {
   snapshot.directory_id.reset();
   fs::remove(paths.normal_root / "memos" / "relocated.md");
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(snapshot)));
-  auto response = maintenance.refresh(scope(core::RecordType::Memo, false));
+  auto response = maintenance.refresh(coordinator, scope(core::RecordType::Memo, false));
   ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(response));
   EXPECT_EQ(std::get<app::ApplicationError>(response).reason,
             app::ErrorReason::FullRefreshRequired);
   EXPECT_TRUE(catalog.read_view().contains_entry(member.id()));
-  EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh({})));
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh(coordinator, {})));
   EXPECT_FALSE(std::get<storage::MemoMetadata>(*catalog.read_view().find_record(member.id()))
                    .metadata.directory_id);
 }
 TEST_F(CatalogMaintenance, FailedScanPreservesCatalogAndAccess) {
   std::ofstream(path(root.id()), std::ios::trunc) << "invalid persisted Memo";
-  auto response = maintenance.refresh(scope(core::RecordType::Memo));
+  auto response = maintenance.refresh(coordinator, scope(core::RecordType::Memo));
   EXPECT_TRUE(std::holds_alternative<app::ApplicationError>(response));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_TRUE(catalog.read_view().contains_entry(root.id()));
@@ -130,20 +131,20 @@ TEST_F(CatalogMaintenance, ScopedRefreshCannotClearInconsistentButFullCan) {
       {}};
   coordinator.memo_update_callback()(std::cref(failure));
   ASSERT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
-  EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh(scope(directory.id()))));
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh(coordinator, scope(directory.id()))));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Inconsistent);
   EXPECT_TRUE(std::holds_alternative<storage::CoordinatorError>(coordinator.shutdown_save()));
-  EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh({})));
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh(coordinator, {})));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
   EXPECT_TRUE(catalog.unpersisted());
-  EXPECT_FALSE(fs::exists(paths.application.cache / "index" / "normal.msgpack"));
+  EXPECT_FALSE(fs::exists(paths.application.state / "index" / "normal.msgpack"));
 }
 TEST_F(CatalogMaintenance, OldPreparedLoadRemainsFailedAfterSuccessfulRefresh) {
   ipc::AccessOrchestrator access{catalog, repository, coordinator};
   auto old_load = access.prepare(ipc::LoadMemoRequest{root.id()});
   auto original = path(root.id());
   fs::rename(original, original.parent_path() / "renamed.md");
-  EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh({})));
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh(coordinator, {})));
   auto result = old_load();
   ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(result));
   EXPECT_EQ(std::get<app::ApplicationError>(result).reason, app::ErrorReason::StaleLocation);
@@ -156,7 +157,7 @@ TEST_F(CatalogMaintenance, RecursiveRootRemovesMembersButPreservesOtherModules) 
       todo.snapshot(), coordinator.todo_creation_callback(), coordinator.creation_check())));
   fs::remove_all(paths.normal_root / "memos" / directory.id().to_string());
   EXPECT_TRUE(
-      std::holds_alternative<std::monostate>(maintenance.refresh(scope(core::RecordType::Memo))));
+      std::holds_alternative<std::monostate>(maintenance.refresh(coordinator, scope(core::RecordType::Memo))));
   EXPECT_FALSE(catalog.read_view().contains_entry(member.id()));
   EXPECT_FALSE(catalog.read_view().contains_entry(directory.id()));
   EXPECT_TRUE(catalog.read_view().contains_entry(todo.id()));
@@ -164,17 +165,17 @@ TEST_F(CatalogMaintenance, RecursiveRootRemovesMembersButPreservesOtherModules) 
 TEST_F(CatalogMaintenance, DirectoryScopeDoesNotReadMalformedSiblingAndFullFailsAtomically) {
   std::ofstream(path(root.id()), std::ios::trunc) << "invalid";
   fs::remove(path(member.id()));
-  EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh(scope(directory.id()))));
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh(coordinator, scope(directory.id()))));
   EXPECT_FALSE(catalog.read_view().contains_entry(member.id()));
   EXPECT_TRUE(catalog.read_view().contains_entry(root.id()));
-  EXPECT_TRUE(std::holds_alternative<app::ApplicationError>(maintenance.refresh({})));
+  EXPECT_TRUE(std::holds_alternative<app::ApplicationError>(maintenance.refresh(coordinator, {})));
   EXPECT_TRUE(catalog.read_view().contains_entry(root.id()));
   EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Ready);
 }
 TEST_F(CatalogMaintenance, DuplicateUuidFailsFullRefreshWithoutPublication) {
   fs::copy_file(path(root.id()), path(root.id()).parent_path() / "duplicate.md");
   auto before = coordinator.read_state().view;
-  auto result = maintenance.refresh({});
+  auto result = maintenance.refresh(coordinator, {});
   ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(result));
   EXPECT_EQ(std::get<app::ApplicationError>(result).reason, app::ErrorReason::IdentityConflict);
   EXPECT_EQ(catalog.read_view().query().size(), before.query().size());
@@ -193,7 +194,7 @@ TEST_F(CatalogMaintenance, ConcurrentCapturesRemainCompleteDuringRefreshPublicat
     }
   });
   for (int i = 0; i < 8; ++i)
-    EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh({})));
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(maintenance.refresh(coordinator, {})));
   reader.request_stop();
   reader.join();
   EXPECT_TRUE(valid.load());

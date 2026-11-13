@@ -127,7 +127,7 @@ TEST_F(MetadataAccess, FiltersAndOrderingUseMetadataOnly) {
       value<app::Annotated<std::vector<core::RecordMetadata>>>(access::QueryRecordsRequest{query});
   ASSERT_EQ(sorted.value.size(), 2u);
   EXPECT_EQ(std::get<core::MemoMetadata>(sorted.value[0]).title, "Beta");
-  EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+  EXPECT_FALSE(fs::exists(paths.application.state / "index/normal.msgpack"));
 }
 
 TEST_F(MetadataAccess, RejectsInvalidEnumsRangesDatesAndIncompatibleScope) {
@@ -198,7 +198,7 @@ TEST_F(MetadataAccess, TargetedReadsIgnoreUnrelatedMalformedFilesAndDoNotWriteIn
       value<app::Annotated<std::vector<core::RecordMetadata>>>(access::QueryRecordsRequest{{}})
           .value.size(),
       4u);
-  EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+  EXPECT_FALSE(fs::exists(paths.application.state / "index/normal.msgpack"));
   EXPECT_TRUE(catalog.unpersisted());
 }
 
@@ -237,7 +237,7 @@ TEST_F(MetadataAccess, MalformedRecordFailureDoesNotPoisonOtherReadsOrFinalizeSe
           .value.size(),
       4u);
   EXPECT_TRUE(fs::exists(paths.application.state / "session.marker"));
-  EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+  EXPECT_FALSE(fs::exists(paths.application.state / "index/normal.msgpack"));
 }
 
 TEST_F(MetadataAccess, FinalizedSessionRejectsAccessAndManagedCreation) {

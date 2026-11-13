@@ -1,3 +1,4 @@
+#include "operations/catalog_maintenance.hpp"
 #include <folio/io/filesystem.hpp>
 #include "storage/catalog_coordinator.hpp"
 #include "storage/normal_repository.hpp"
@@ -204,7 +205,7 @@ protected:
   fs::path vault = temporary.path() / "vault";
   fs::path state = temporary.path() / "custom-state";
   fs::path cache = temporary.path() / "cache";
-  fs::path file = cache / "index" / "normal.msgpack";
+  fs::path file = state / "index" / "normal.msgpack";
 
   storage::MetadataCatalog owned_catalog;
 
@@ -223,17 +224,44 @@ protected:
   void expect_no_data_roots() const {
     EXPECT_FALSE(fs::exists(normal));
     EXPECT_FALSE(fs::exists(vault));
-    EXPECT_FALSE(fs::exists(state / "index"));
+    EXPECT_FALSE(fs::exists(cache / "index"));
   }
 };
 
-TEST_F(CatalogCoordinatorTest, SharedApplicationParentKeepsIndexInEffectiveCache) {
+TEST_F(CatalogCoordinatorTest, ClearingDisposableCachePreservesStateIndex) {
+  seed(make_catalog());
+  const auto original = read_bytes(file);
+  fs::create_directories(cache);
+  write_bytes(cache / "disposable", "temporary");
+  fs::remove_all(cache);
+  storage::CatalogCoordinator coordinator{paths(), owned_catalog};
+  const auto loaded = coordinator.startup_load();
+  ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(loaded));
+  EXPECT_FALSE(std::get<storage::InitializationOutcome>(loaded).index_error);
+  EXPECT_EQ(read_bytes(file), original);
+  EXPECT_FALSE(owned_catalog.unpersisted());
+  EXPECT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.finish_session()));
+}
+
+TEST_F(CatalogCoordinatorTest, MaintenanceLoadsCandidateWithoutPublishingOrEstablishingSession) {
+  seed(make_catalog());
+  folio::application::internal::CatalogMaintenance maintenance{paths()};
+  auto loaded = maintenance.load_index();
+  ASSERT_TRUE(std::holds_alternative<storage::MetadataCatalog>(loaded));
+  const auto& candidate = std::get<storage::MetadataCatalog>(loaded);
+  EXPECT_EQ(candidate.read_view().query().size(), 5U);
+  EXPECT_FALSE(candidate.unpersisted());
+  EXPECT_TRUE(owned_catalog.read_view().query().empty());
+  EXPECT_FALSE(fs::exists(state / "session.marker"));
+}
+
+TEST_F(CatalogCoordinatorTest, SharedApplicationParentKeepsIndexInEffectiveState) {
   auto effective = paths();
   effective.application.config = temporary.path() / "application";
   effective.application.data = effective.application.config;
   effective.application.state = effective.application.data / "state";
   effective.application.cache = effective.application.data / "cache";
-  const auto expected = effective.application.cache / "index/normal.msgpack";
+  const auto expected = effective.application.state / "index/normal.msgpack";
   {
     storage::CatalogCoordinator coordinator{effective, owned_catalog};
     ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
@@ -245,8 +273,8 @@ TEST_F(CatalogCoordinatorTest, SharedApplicationParentKeepsIndexInEffectiveCache
     EXPECT_FALSE(owned_catalog.unpersisted());
   }
   EXPECT_TRUE(fs::is_regular_file(expected));
-  EXPECT_FALSE(fs::exists(effective.application.state / "index"));
-  EXPECT_FALSE(fs::exists(state / "index"));
+  EXPECT_FALSE(fs::exists(effective.application.cache / "index"));
+  EXPECT_FALSE(fs::exists(cache / "index"));
   EXPECT_FALSE(fs::exists(normal));
   EXPECT_FALSE(fs::exists(vault));
   storage::CatalogCoordinator restored{effective, owned_catalog};
@@ -256,7 +284,7 @@ TEST_F(CatalogCoordinatorTest, SharedApplicationParentKeepsIndexInEffectiveCache
   EXPECT_FALSE(owned_catalog.unpersisted());
 }
 
-TEST_F(CatalogCoordinatorTest, FormerStateIndexIsIgnoredAndLeftUntouched) {
+TEST_F(CatalogCoordinatorTest, FormerCacheIndexIsIgnoredAndLeftUntouched) {
   storage::NormalRepository repository{normal};
   const auto snapshot = authoritative_log();
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(snapshot)));
@@ -264,7 +292,7 @@ TEST_F(CatalogCoordinatorTest, FormerStateIndexIsIgnoredAndLeftUntouched) {
   ASSERT_TRUE(std::holds_alternative<fs::path>(locator));
   const auto entry_path = normal / std::get<fs::path>(locator);
   const auto entry_bytes = read_bytes(entry_path);
-  const auto legacy = state / "index/normal.msgpack";
+  const auto legacy = cache / "index/normal.msgpack";
   ASSERT_TRUE(fs::create_directories(legacy.parent_path()));
   const auto stale = codec::encode_index(make_catalog());
   ASSERT_TRUE(std::holds_alternative<std::string>(stale));
@@ -282,20 +310,20 @@ TEST_F(CatalogCoordinatorTest, FormerStateIndexIsIgnoredAndLeftUntouched) {
     EXPECT_EQ(catalog.read_view().query().size(), 1U);
     EXPECT_TRUE(catalog.read_view().find_record(snapshot.id));
     EXPECT_TRUE(catalog.unpersisted());
-    EXPECT_FALSE(fs::exists(cache));
+    EXPECT_FALSE(fs::exists(file));
     EXPECT_EQ(read_bytes(legacy), bytes);
     ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.finish_session()));
     EXPECT_TRUE(fs::is_regular_file(file));
     EXPECT_FALSE(catalog.unpersisted());
     EXPECT_EQ(read_bytes(legacy), bytes);
     EXPECT_EQ(read_bytes(entry_path), entry_bytes);
-    fs::remove_all(cache);
+    fs::remove_all(state / "index");
   }
 }
 
-TEST_F(CatalogCoordinatorTest, ValidCacheIgnoresFormerStateIndexWithoutScanning) {
+TEST_F(CatalogCoordinatorTest, ValidCacheIgnoresFormerCacheIndexWithoutScanning) {
   seed(make_catalog());
-  const auto legacy = state / "index/normal.msgpack";
+  const auto legacy = cache / "index/normal.msgpack";
   ASSERT_TRUE(fs::create_directories(legacy.parent_path()));
   ASSERT_NO_FATAL_FAILURE(write_bytes(legacy, "invalid old Index"));
   ASSERT_TRUE(fs::create_directories(normal / "logs"));
@@ -319,9 +347,9 @@ TEST_F(CatalogCoordinatorTest, CacheRemovalBetweenSessionsRebuildsWithoutEntryLo
   const auto entry_bytes = read_bytes(entry_path);
   // Exercise both a removed Cache directory and an existing empty directory.
   for (const bool empty_directory : {false, true}) {
-    fs::remove_all(cache);
+    fs::remove_all(state / "index");
     if (empty_directory) {
-      ASSERT_TRUE(fs::create_directory(cache));
+      ASSERT_TRUE(fs::create_directories(state / "index"));
     }
     storage::MetadataCatalog catalog;
     storage::CatalogCoordinator coordinator{paths(), catalog};
@@ -336,7 +364,7 @@ TEST_F(CatalogCoordinatorTest, CacheRemovalBetweenSessionsRebuildsWithoutEntryLo
     ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(coordinator.finish_session()));
     EXPECT_TRUE(fs::is_regular_file(file));
     EXPECT_EQ(read_bytes(entry_path), entry_bytes);
-    EXPECT_FALSE(fs::exists(state / "index"));
+    EXPECT_FALSE(fs::exists(cache / "index"));
   }
 }
 
@@ -344,8 +372,8 @@ TEST_F(CatalogCoordinatorTest, InvalidCacheObjectsAreFatalWithoutReconstruction)
   ASSERT_TRUE(fs::create_directories(normal / "logs"));
   ASSERT_NO_FATAL_FAILURE(write_bytes(normal / "logs/broken.md", "invalid Entry"));
   // Each path conflict must be reported, rather than treated as cache loss.
-  for (const auto& target : {cache, file.parent_path(), file}) {
-    fs::remove_all(cache);
+  for (const auto& target : {file.parent_path(), file}) {
+    fs::remove_all(state / "index");
     fs::create_directories(target.parent_path());
     if (target == file) {
       ASSERT_TRUE(fs::create_directory(target));
@@ -358,7 +386,6 @@ TEST_F(CatalogCoordinatorTest, InvalidCacheObjectsAreFatalWithoutReconstruction)
     EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Unavailable);
     EXPECT_TRUE(catalog.read_view().query().empty());
     expect_error(coordinator.shutdown_save(), storage::CoordinatorErrorCode::Unavailable);
-    EXPECT_FALSE(fs::exists(state / "index"));
   }
 }
 
@@ -371,7 +398,7 @@ TEST_F(CatalogCoordinatorTest, BorrowedCatalogSurvivesCoordinatorWithoutConstruc
     EXPECT_EQ(coordinator.status(), storage::CatalogStatus::Unloaded);
     EXPECT_FALSE(fs::exists(normal));
     EXPECT_FALSE(fs::exists(vault));
-    EXPECT_FALSE(fs::exists(state / "index"));
+    EXPECT_FALSE(fs::exists(cache / "index"));
     EXPECT_FALSE(fs::exists(cache));
     EXPECT_EQ(owned_catalog.read_view().query().size(), 5U);
   }
@@ -400,7 +427,7 @@ TEST_F(CatalogCoordinatorTest, FailedStartupNeverOverwritesCache) {
   EXPECT_EQ(read_bytes(file), "corrupt cache");
   EXPECT_EQ(read_bytes(normal / "logs" / "malformed.md"), "bad Entry");
   EXPECT_FALSE(fs::exists(vault));
-  EXPECT_FALSE(fs::exists(state / "index"));
+  EXPECT_FALSE(fs::exists(cache / "index"));
 }
 
 TEST_F(CatalogCoordinatorTest, ShutdownBeforeStartupDoesNotBlockStartup) {
@@ -506,7 +533,7 @@ TEST_F(CatalogCoordinatorTest, UnpersistedEmptyCatalogCanReplaceAndMissingTarget
 TEST_F(CatalogCoordinatorTest, StartupCacheErrorsReportFallbackReasonsAndCannotRetry) {
   auto check = [&](storage::CoordinatorErrorCode expected) {
     // Independent cache-error fixtures, not consecutive abandoned sessions.
-    fs::remove_all(state);
+    fs::remove(state / "session.marker");
     const auto before = fs::exists(file) ? read_bytes(file) : std::string{};
     storage::CatalogCoordinator coordinator{paths(), owned_catalog};
     const auto started = coordinator.startup_load();
@@ -524,7 +551,7 @@ TEST_F(CatalogCoordinatorTest, StartupCacheErrorsReportFallbackReasonsAndCannotR
     expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);
   };
   check(storage::CoordinatorErrorCode::Missing);
-  EXPECT_FALSE(fs::exists(state / "index"));
+  EXPECT_FALSE(fs::exists(cache / "index"));
   ASSERT_TRUE(fs::create_directories(file.parent_path()));
   ASSERT_NO_FATAL_FAILURE(write_bytes(file, "bad MessagePack"));
   check(storage::CoordinatorErrorCode::Corrupt);
@@ -557,14 +584,14 @@ TEST_F(CatalogCoordinatorTest, InvalidRootsAndIoFailureDoNotCreateCache) {
   expect_error(overlap.startup_load(), storage::CoordinatorErrorCode::InvalidPath);
   expect_error(overlap.shutdown_save(), storage::CoordinatorErrorCode::Unavailable);
   invalid = paths();
-  invalid.application.cache = temporary.path() / std::string(8192, 'x');
+  invalid.application.state = temporary.path() / std::string(8192, 'x');
   storage::MetadataCatalog io_catalog;
   storage::CatalogCoordinator io{invalid, io_catalog};
   const auto failure = io.startup_load();
   expect_error(failure, storage::CoordinatorErrorCode::IoError);
   ASSERT_TRUE(std::get<storage::CoordinatorError>(failure).file_error.has_value());
   EXPECT_TRUE(std::get<storage::CoordinatorError>(failure).file_error->system_error);
-  EXPECT_FALSE(fs::exists(state / "index"));
+  EXPECT_FALSE(fs::exists(cache / "index"));
   expect_no_data_roots();
 }
 
@@ -639,7 +666,7 @@ TEST_F(CatalogCoordinatorTest, ParentFileAndSymlinksPreventShutdownWrite) {
   ASSERT_TRUE(fs::remove(file.parent_path()));
 
   // Independent unsafe-target case: seed a valid Index and reset session state.
-  fs::remove_all(state);
+  fs::remove(state / "session.marker");
   seed(make_catalog());
   storage::MetadataCatalog symlink_catalog;
   storage::CatalogCoordinator symlinked{paths(), symlink_catalog};
@@ -697,7 +724,7 @@ TEST_F(CatalogCoordinatorTest, MissingIndexRebuildsAuthoritativeFilesWithoutInde
   EXPECT_EQ(std::get<storage::LogMetadata>(*found).metadata.title, snapshot.title);
   EXPECT_EQ(std::get<storage::LogMetadata>(*found).metadata.created.timestamp,
             snapshot.created.timestamp);
-  EXPECT_FALSE(fs::exists(state / "index"));
+  EXPECT_FALSE(fs::exists(cache / "index"));
   expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);
   const auto saved = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(saved));
@@ -705,7 +732,7 @@ TEST_F(CatalogCoordinatorTest, MissingIndexRebuildsAuthoritativeFilesWithoutInde
   EXPECT_TRUE(fs::is_regular_file(file));
   EXPECT_FALSE(owned_catalog.unpersisted());
   EXPECT_FALSE(fs::exists(vault));
-  EXPECT_FALSE(fs::exists(state / "index"));
+  EXPECT_FALSE(fs::exists(cache / "index"));
 }
 
 TEST_F(CatalogCoordinatorTest, CorruptIndexCanRebuildAndReplacesItOnlyOnSave) {
@@ -763,7 +790,7 @@ TEST_F(CatalogCoordinatorTest, EmptyRebuildEstablishesReadyUnpersistedCatalog) {
   EXPECT_TRUE(owned_catalog.read_view().query().empty());
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_FALSE(fs::exists(normal));
-  EXPECT_FALSE(fs::exists(state / "index"));
+  EXPECT_FALSE(fs::exists(cache / "index"));
   const auto saved = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(saved));
   EXPECT_EQ(std::get<storage::SaveOutcome>(saved), storage::SaveOutcome::Saved);
@@ -784,7 +811,7 @@ TEST_F(CatalogCoordinatorTest, RebuildReportsDiagnosticsWithoutIndexIo) {
   EXPECT_FALSE(diagnostics.front().path.empty());
   EXPECT_EQ(owned_catalog.read_view().query().size(), 1U);
   EXPECT_TRUE(owned_catalog.unpersisted());
-  EXPECT_FALSE(fs::exists(state / "index"));
+  EXPECT_FALSE(fs::exists(cache / "index"));
 }
 
 TEST_F(CatalogCoordinatorTest, RebuildBeforeStartupPreventsCacheOverwriteByStartupLoad) {
@@ -830,7 +857,7 @@ TEST_F(CatalogCoordinatorTest, StartupFallsBackForMissingCorruptAndUnsupportedIn
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_log(snapshot)));
   auto verify_fallback = [&](storage::CoordinatorErrorCode expected) {
     // Reset session evidence between independent cache-error cases.
-    fs::remove_all(state);
+    fs::remove(state / "session.marker");
     const auto previous = fs::exists(file) ? read_bytes(file) : std::string{};
     storage::CatalogCoordinator coordinator{paths(), owned_catalog};
     const auto result = coordinator.startup_load();
@@ -846,7 +873,7 @@ TEST_F(CatalogCoordinatorTest, StartupFallsBackForMissingCorruptAndUnsupportedIn
     expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);
   };
   verify_fallback(storage::CoordinatorErrorCode::Missing);
-  EXPECT_FALSE(fs::exists(state / "index"));
+  EXPECT_FALSE(fs::exists(cache / "index"));
   ASSERT_TRUE(fs::create_directories(file.parent_path()));
   ASSERT_NO_FATAL_FAILURE(write_bytes(file, "bad MessagePack"));
   verify_fallback(storage::CoordinatorErrorCode::Corrupt);
@@ -925,7 +952,7 @@ TEST_F(CatalogCoordinatorTest, StartupFallbackRestoresMixedMetadataAndDirectoryM
           owned_catalog.read_view().list_directory(core::DirectoryKind::Todo, todo_directory.id))
           .size(),
       1U);
-  EXPECT_FALSE(fs::exists(state / "index"));
+  EXPECT_FALSE(fs::exists(cache / "index"));
 }
 
 TEST_F(CatalogCoordinatorTest, StartupReturnsExclusionsFromFallbackAndSavesOnlyLater) {
@@ -941,7 +968,7 @@ TEST_F(CatalogCoordinatorTest, StartupReturnsExclusionsFromFallbackAndSavesOnlyL
   EXPECT_EQ(outcome.index_error->code, storage::CoordinatorErrorCode::Missing);
   ASSERT_EQ(outcome.diagnostics.size(), 1U);
   EXPECT_FALSE(outcome.diagnostics.front().path.empty());
-  EXPECT_FALSE(fs::exists(state / "index"));
+  EXPECT_FALSE(fs::exists(cache / "index"));
   const auto saved = coordinator.shutdown_save();
   ASSERT_TRUE(std::holds_alternative<storage::SaveOutcome>(saved));
   EXPECT_EQ(std::get<storage::SaveOutcome>(saved), storage::SaveOutcome::Saved);
@@ -960,7 +987,7 @@ TEST_F(CatalogCoordinatorTest, StartupMissingIndexAndEmptyNormalRootBuildsEmptyR
   EXPECT_TRUE(owned_catalog.read_view().query().empty());
   EXPECT_TRUE(owned_catalog.unpersisted());
   EXPECT_FALSE(fs::exists(normal));
-  EXPECT_FALSE(fs::exists(state / "index"));
+  EXPECT_FALSE(fs::exists(cache / "index"));
 }
 
 TEST_F(CatalogCoordinatorTest, StartupPropagatesPathAndIoErrorsWithoutScanning) {
@@ -972,13 +999,13 @@ TEST_F(CatalogCoordinatorTest, StartupPropagatesPathAndIoErrorsWithoutScanning) 
   EXPECT_EQ(overlap.status(), storage::CatalogStatus::Unavailable);
   EXPECT_FALSE(fs::exists(normal));
   invalid = paths();
-  invalid.application.cache = temporary.path() / std::string(8192, 'x');
+  invalid.application.state = temporary.path() / std::string(8192, 'x');
   storage::MetadataCatalog io_catalog;
   storage::CatalogCoordinator io{invalid, io_catalog};
   expect_error(io.startup_load(), storage::CoordinatorErrorCode::IoError);
   EXPECT_EQ(io.status(), storage::CatalogStatus::Unavailable);
   EXPECT_FALSE(fs::exists(normal));
-  EXPECT_FALSE(fs::exists(state / "index"));
+  EXPECT_FALSE(fs::exists(cache / "index"));
 }
 
 TEST_F(CatalogCoordinatorTest, FailedFallbackScanPreservesCatalogAndUnavailableStatus) {
@@ -995,7 +1022,7 @@ TEST_F(CatalogCoordinatorTest, FailedFallbackScanPreservesCatalogAndUnavailableS
   const auto after = codec::encode_index(owned_catalog);
   ASSERT_TRUE(std::holds_alternative<std::string>(after));
   EXPECT_EQ(std::get<std::string>(after), std::get<std::string>(before));
-  EXPECT_FALSE(fs::exists(state / "index"));
+  EXPECT_FALSE(fs::exists(cache / "index"));
   expect_error(coordinator.startup_load(), storage::CoordinatorErrorCode::Lifecycle);
   expect_error(coordinator.shutdown_save(), storage::CoordinatorErrorCode::Unavailable);
 }
@@ -1079,7 +1106,7 @@ TEST_F(CatalogCoordinatorTest, CleanStartupEstablishesMarkerAndReadOnlyFinishDoe
   const auto original = read_bytes(file);
   const auto modified = fs::last_write_time(file);
   storage::CatalogCoordinator coordinator{paths(), owned_catalog};
-  EXPECT_FALSE(fs::exists(state)); // Construction is side-effect free.
+  EXPECT_FALSE(fs::exists(state / "session.marker")); // Construction is side-effect free.
   const auto loaded = coordinator.startup_load();
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(loaded));
   EXPECT_FALSE(std::get<storage::InitializationOutcome>(loaded).previous_session_incomplete);
@@ -1276,7 +1303,7 @@ TEST_F(CatalogCoordinatorTest, MissingCleanCacheCannotCertifyCleanShutdown) {
   seed(make_catalog());
   storage::CatalogCoordinator coordinator{paths(), owned_catalog};
   ASSERT_TRUE(std::holds_alternative<storage::InitializationOutcome>(coordinator.startup_load()));
-  fs::remove_all(cache);
+  fs::remove_all(state / "index");
   expect_error(coordinator.finish_session(), storage::CoordinatorErrorCode::Missing);
   EXPECT_TRUE(fs::exists(state / "session.marker"));
 }

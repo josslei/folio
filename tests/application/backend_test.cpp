@@ -116,7 +116,7 @@ protected:
 
   fs::path marker() { return paths.application.state / "session.marker"; }
 
-  fs::path index() { return paths.application.cache / "index/normal.msgpack"; }
+  fs::path index() { return paths.application.state / "index/normal.msgpack"; }
 
   void clean_cache() {
     auto owner = app::RepositoryOwnership::acquire(paths);
@@ -252,7 +252,7 @@ TEST_F(Backend, FailedIndexSaveRetainsMarkerAndReportsFailure) {
   {
     auto connection = connect();
     fs::create_directories(paths.application.cache);
-    write(paths.application.cache / "index", "blocks index directory");
+    write(paths.application.state / "index", "blocks index directory");
   }
   ASSERT_TRUE(until([&] { return fs::exists(children[0].result); }));
   EXPECT_EQ(read(children[0].result), "1");
@@ -266,7 +266,7 @@ TEST_F(Backend, TwoFrontendsDisconnectBeforeFailedFinalizationReleasesOwnership)
       auto second = connect();
       EXPECT_TRUE(std::holds_alternative<std::monostate>(second.ping()));
       fs::create_directories(paths.application.cache);
-      write(paths.application.cache / "index", "blocks index directory");
+      write(paths.application.state / "index", "blocks index directory");
     }
     EXPECT_TRUE(std::holds_alternative<std::monostate>(first.ping()));
     EXPECT_FALSE(fs::exists(children.front().result));

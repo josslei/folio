@@ -1,4 +1,5 @@
 #include "runtime/backend_states.hpp"
+#include "operations/catalog_maintenance.hpp"
 #include "operations/access_orchestrator.hpp"
 #include <folio/ipc/application_codec.hpp>
 #include <folio/ipc/message_transport.hpp>
@@ -69,8 +70,6 @@ BackendActionOutcome Bootstrap(BackendContext& context) {
 }
 
 BackendActionOutcome Serve(BackendContext& context) {
-  context.maintenance =
-      std::make_unique<CatalogMaintenance>(*context.repository, *context.coordinator);
   context.access = std::make_unique<AccessOrchestrator>(context.catalog, *context.repository,
                                                         *context.coordinator);
   context.mutations = std::make_unique<MutationOrchestrator>(context.catalog, *context.repository,
@@ -82,9 +81,9 @@ BackendActionOutcome Serve(BackendContext& context) {
       [&context](std::exception_ptr error) { context.fatal_errors.report(error); },
       [&](OperationRequest request, Session session) -> RequestCoordinator::OperationAction {
         if (auto* check = std::get_if<CheckConsistencyRequest>(&request))
-          return [&context, scope = check->scope] { return context.maintenance->check(scope); };
+          return [&context, scope = check->scope] { return context.coordinator->maintenance().check(*context.coordinator, scope); };
         if (auto* refresh = std::get_if<RefreshRequest>(&request))
-          return [&context, scope = refresh->scope] { return context.maintenance->refresh(scope); };
+          return [&context, scope = refresh->scope] { return context.coordinator->maintenance().refresh(*context.coordinator, scope); };
         if (std::holds_alternative<MutationRequest>(request) ||
             std::holds_alternative<AcquireEditRequest>(request) ||
             std::holds_alternative<ReleaseEditRequest>(request))
@@ -103,7 +102,7 @@ BackendActionOutcome Serve(BackendContext& context) {
       context.fatal_errors.report(std::current_exception());
     }
   });
-  context.maintenance->set_refresh_observer([broadcast, &context](const RefreshScope& scope) {
+  context.coordinator->maintenance().set_refresh_observer([broadcast, &context](const RefreshScope& scope) {
     try {
       broadcast(PushNotification{CatalogChangeNotice{scope, true}});
     } catch (...) {
@@ -276,7 +275,6 @@ BackendActionOutcome Finish(BackendContext& context) {
     failed = true;
     cleanup_error({Phase::Finish, std::current_exception()});
   }
-  context.maintenance.reset();
   context.coordinator.reset();
   context.repository.reset();
   context.ownership.reset();

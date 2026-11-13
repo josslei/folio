@@ -1,10 +1,305 @@
-#include <tuple>
 #include "operations/catalog_maintenance.hpp"
+#include "storage/catalog_coordinator.hpp"
 #include <folio/logging/logging.hpp>
+#include <tuple>
 #include <set>
-#include <type_traits>
+#include <system_error>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+namespace folio::application::internal {
+using namespace ::folio::core::storage;
+namespace {
+namespace fs = std::filesystem;
+constexpr std::size_t kMaxIndexBytes = 64u * 1024u * 1024u; // IndexCodec v1 limit.
+fs::path marker_path(const StoragePaths& paths) {
+  return paths.application.state / "session.marker";
+}
+fs::path index_relative_path() {
+  return fs::path{"index"} / "normal.msgpack";
+}
+
+bool contains_path(const fs::path& parent, const fs::path& child) {
+  auto p = parent.begin();
+  auto c = child.begin();
+  for (; p != parent.end(); ++p, ++c) {
+    if (c == child.end()) return false;
+#ifdef _WIN32
+    if (CompareStringOrdinal(p->c_str(), -1, c->c_str(), -1, TRUE) != CSTR_EQUAL) return false;
+#else
+    if (*p != *c) return false;
+#endif
+  }
+  return true;
+}
+
+CoordinatorError error(CoordinatorErrorCode code, const fs::path& path, std::string message) {
+  return {code, path, std::move(message), std::nullopt, std::nullopt, std::nullopt};
+}
+CoordinatorError storage_error(StorageError source) {
+  return {CoordinatorErrorCode::StorageFailure,
+          source.path,
+          source.message,
+          std::move(source),
+          std::nullopt,
+          std::nullopt,
+          std::nullopt};
+}
+CoordinatorError storage_error(io::FileError source) {
+  const auto code =
+      source.code == io::FileErrorCode::InvalidPath
+          ? CoordinatorErrorCode::InvalidPath
+          : (source.code == io::FileErrorCode::IoError ? CoordinatorErrorCode::IoError
+                                                       : CoordinatorErrorCode::StorageFailure);
+  return {code,         source.path,  source.message,   std::nullopt,
+          std::nullopt, std::nullopt, std::move(source)};
+}
+CoordinatorError io_error(const fs::path& path, std::string message, std::error_code ec) {
+  return storage_error(
+      io::FileError{io::FileErrorCode::IoError, path, std::move(message), ec, false});
+}
+CoordinatorError codec_error(const fs::path& path, index_codec::IndexCodecError source,
+                             bool loading) {
+  CoordinatorErrorCode code;
+  switch (source.code) {
+  case index_codec::IndexCodecErrorCode::UnsupportedVersion:
+    code = CoordinatorErrorCode::UnsupportedVersion;
+    break;
+  case index_codec::IndexCodecErrorCode::LimitExceeded:
+    code = CoordinatorErrorCode::LimitExceeded;
+    break;
+  case index_codec::IndexCodecErrorCode::Malformed:
+  case index_codec::IndexCodecErrorCode::InvalidMetadata:
+    code = loading ? CoordinatorErrorCode::Corrupt : CoordinatorErrorCode::CodecError;
+    break;
+  }
+  return {code, path, source.message, std::nullopt, std::move(source), std::nullopt};
+}
+CoordinatorError binary_error(io::ReadError source) {
+  const auto code = source.code == io::ReadErrorCode::LimitExceeded
+                        ? CoordinatorErrorCode::LimitExceeded
+                        : CoordinatorErrorCode::IoError;
+  return {code, source.path, source.message, std::nullopt, std::nullopt, std::move(source)};
+}
+
+struct Locations {
+  fs::path state_root;
+  fs::path parent;
+  fs::path file;
+};
+::folio::core::Result<Locations, CoordinatorError> locations(const StoragePaths& paths) {
+  auto checked = validate_storage_paths(paths);
+  if (auto* problem = std::get_if<StorageError>(&checked)) return storage_error(*problem);
+  if (auto* problem = std::get_if<io::FileError>(&checked)) return storage_error(*problem);
+  std::error_code ec;
+  const auto root = fs::weakly_canonical(paths.application.state, ec);
+  if (ec) return io_error(paths.application.state, "Could not resolve state root", ec);
+  const auto relative = index_relative_path();
+  return Locations{root, root / relative.parent_path(), root / relative};
+}
+::folio::core::Result<fs::file_status, CoordinatorError> inspect(const fs::path& path) {
+  std::error_code ec;
+  const auto status = fs::symlink_status(path, ec);
+  if (ec == std::errc::no_such_file_or_directory) return fs::file_status{fs::file_type::not_found};
+  if (ec) return io_error(path, "Could not inspect lifecycle path", ec);
+  if (fs::is_symlink(status))
+    return error(CoordinatorErrorCode::InvalidPath, path, "Symlink in lifecycle path");
+  return status;
+}
+::folio::core::Result<bool, CoordinatorError> directory_ready(const fs::path& path) {
+  auto inspected = inspect(path);
+  if (auto* problem = std::get_if<CoordinatorError>(&inspected)) return *problem;
+  const auto status = std::get<fs::file_status>(inspected);
+  if (status.type() == fs::file_type::not_found) return false;
+  if (!fs::is_directory(status))
+    return error(CoordinatorErrorCode::InvalidPath, path, "Lifecycle parent is not a directory");
+  return true;
+}
+::folio::core::Result<bool, CoordinatorError> file_ready(const fs::path& path) {
+  auto inspected = inspect(path);
+  if (auto* problem = std::get_if<CoordinatorError>(&inspected)) return *problem;
+  const auto status = std::get<fs::file_status>(inspected);
+  if (status.type() == fs::file_type::not_found) return false;
+  if (!fs::is_regular_file(status))
+    return error(CoordinatorErrorCode::InvalidPath, path, "Lifecycle target is not a regular file");
+  return true;
+}
+} // namespace
+
+// Marker location must survive independent Cache/Runtime deletion. Application
+// categories can otherwise share parents; only this durable file is constrained.
+::folio::core::Result<bool, CoordinatorError> CatalogMaintenance::previous_marker() const {
+  auto validated = validate_storage_paths(paths_);
+  if (auto* problem = std::get_if<StorageError>(&validated)) return storage_error(*problem);
+  if (auto* problem = std::get_if<io::FileError>(&validated)) return storage_error(*problem);
+  std::error_code ec;
+  const auto marker = fs::weakly_canonical(marker_path(paths_), ec);
+  if (ec) return io_error(marker_path(paths_), "Could not resolve Session Marker", ec);
+  for (const auto& transient :
+       {std::optional<fs::path>{paths_.application.cache}, paths_.application.runtime}) {
+    if (!transient) continue;
+    const auto root = fs::weakly_canonical(*transient, ec);
+    if (ec) return io_error(*transient, "Could not resolve transient directory", ec);
+    if (contains_path(root, marker))
+      return error(CoordinatorErrorCode::InvalidPath, marker,
+                   "Session Marker must be outside Cache and Runtime");
+  }
+  // Inspect the original path, not its canonical alias: reject symlinks rather
+  // than following a Marker or State-directory link.
+  auto current = paths_.application.state.root_path();
+  for (const auto& component : paths_.application.state.relative_path()) {
+    current /= component;
+    auto found = directory_ready(current);
+    if (auto* problem = std::get_if<CoordinatorError>(&found)) return *problem;
+    if (!std::get<bool>(found)) return false;
+  }
+  return file_ready(marker_path(paths_));
+}
+
+::folio::core::Result<std::monostate, CoordinatorError>
+CatalogMaintenance::establish_marker() const {
+  auto present = previous_marker();
+  if (auto* problem = std::get_if<CoordinatorError>(&present)) return *problem;
+  auto parents = io::create_directories_durable(paths_.application.state);
+  if (auto* problem = std::get_if<io::FileError>(&parents)) return storage_error(*problem);
+  const auto marker = marker_path(paths_);
+  // Never remove/recreate an existing Marker during startup. Sync it and its
+  // ancestry, including when a previous process failed during publication sync.
+  auto durable = std::get<bool>(present) ? io::sync_regular_file(marker)
+                                         : io::create_empty_file_durable(marker);
+  if (auto* problem = std::get_if<io::FileError>(&durable)) return storage_error(*problem);
+  return std::monostate{};
+}
+
+::folio::core::Result<MetadataCatalog, CoordinatorError> CatalogMaintenance::load_index() const {
+  auto resolved = locations(paths_);
+  if (auto* problem = std::get_if<CoordinatorError>(&resolved)) return *problem;
+  const auto& path = std::get<Locations>(resolved);
+  for (const auto& directory : {path.state_root, path.parent}) {
+    auto ready = directory_ready(directory);
+    if (auto* problem = std::get_if<CoordinatorError>(&ready)) return *problem;
+    if (!std::get<bool>(ready))
+      return error(CoordinatorErrorCode::Missing, path.file, "Normal Index is missing");
+  }
+  auto ready = file_ready(path.file);
+  if (auto* problem = std::get_if<CoordinatorError>(&ready)) return *problem;
+  if (!std::get<bool>(ready))
+    return error(CoordinatorErrorCode::Missing, path.file, "Normal Index is missing");
+  auto bytes = io::read_file(path.file, kMaxIndexBytes);
+  if (auto* problem = std::get_if<io::ReadError>(&bytes)) return binary_error(*problem);
+  auto decoded = index_codec::decode_index(std::get<std::string>(bytes));
+  if (auto* problem = std::get_if<index_codec::IndexCodecError>(&decoded))
+    return codec_error(path.file, *problem, true);
+  return std::get<MetadataCatalog>(std::move(decoded));
+}
+::folio::core::Result<std::monostate, CoordinatorError>
+CatalogMaintenance::save_index(const MetadataCatalog& catalog) const {
+  auto encoded = index_codec::encode_index(catalog);
+  if (auto* problem = std::get_if<index_codec::IndexCodecError>(&encoded))
+    return codec_error(paths_.application.state / index_relative_path(), *problem, false);
+  auto resolved = locations(paths_);
+  if (auto* problem = std::get_if<CoordinatorError>(&resolved)) return *problem;
+  const auto& path = std::get<Locations>(resolved);
+  for (const auto& directory : {path.state_root, path.parent}) {
+    auto found = directory_ready(directory);
+    if (auto* problem = std::get_if<CoordinatorError>(&found)) return *problem;
+  }
+  auto parents = io::create_directories_durable(path.parent);
+  if (auto* problem = std::get_if<io::FileError>(&parents)) return storage_error(*problem);
+  for (const auto& directory : {path.state_root, path.parent}) {
+    auto found = directory_ready(directory);
+    if (auto* problem = std::get_if<CoordinatorError>(&found)) return *problem;
+    if (!std::get<bool>(found))
+      return error(CoordinatorErrorCode::IoError, directory,
+                   "Index parent is missing after creation");
+  }
+  auto found = file_ready(path.file);
+  if (auto* problem = std::get_if<CoordinatorError>(&found)) return *problem;
+  const auto& bytes = std::get<std::string>(encoded);
+  auto written = std::get<bool>(found) ? io::replace_file_atomic(path.file, bytes)
+                                       : io::create_file_atomic(path.file, bytes);
+  if (auto* problem = std::get_if<io::FileError>(&written)) return storage_error(*problem);
+  return std::monostate{};
+}
+::folio::core::Result<std::monostate, CoordinatorError> CatalogMaintenance::sync_index() const {
+  auto resolved = locations(paths_);
+  if (auto* problem = std::get_if<CoordinatorError>(&resolved)) return *problem;
+  const auto& path = std::get<Locations>(resolved);
+  auto exists = file_ready(path.file);
+  if (auto* problem = std::get_if<CoordinatorError>(&exists)) return *problem;
+  if (!std::get<bool>(exists))
+    return error(CoordinatorErrorCode::Missing, path.file,
+                 "Cannot finalize without a persisted Index");
+  // Also establish durability for a loaded, unchanged Index before certifying
+  // clean shutdown, without rewriting it. This is shutdown-only work.
+  auto parents = io::create_directories_durable(path.parent);
+  if (auto* problem = std::get_if<io::FileError>(&parents)) return storage_error(*problem);
+  auto synced = io::sync_regular_file(path.file);
+  if (auto* problem = std::get_if<io::FileError>(&synced)) return storage_error(*problem);
+  return std::monostate{};
+}
+::folio::core::Result<std::monostate, CoordinatorError> CatalogMaintenance::remove_marker() const {
+  auto removed = io::remove_file_durable(marker_path(paths_));
+  if (auto* problem = std::get_if<io::FileError>(&removed)) return storage_error(*problem);
+  return std::monostate{};
+}
+::folio::core::Result<std::monostate, CoordinatorError> CatalogMaintenance::validate_paths() const {
+  auto checked = validate_storage_paths(paths_);
+  if (auto* problem = std::get_if<StorageError>(&checked)) return storage_error(*problem);
+  if (auto* problem = std::get_if<io::FileError>(&checked)) return storage_error(*problem);
+  return std::monostate{};
+}
+::folio::core::Result<CatalogCandidate, CoordinatorError>
+CatalogMaintenance::reconstruct_full() const {
+  auto valid = validate_paths();
+  if (auto* problem = std::get_if<CoordinatorError>(&valid)) return *problem;
+  auto scanned = repository_.scan();
+  if (auto* problem = std::get_if<StorageError>(&scanned))
+    return CoordinatorError{CoordinatorErrorCode::StorageFailure,
+                            problem->path,
+                            problem->message,
+                            *problem,
+                            {},
+                            {},
+                            {}};
+  if (auto* problem = std::get_if<folio::io::FileError>(&scanned)) {
+    const auto code =
+        problem->code == folio::io::FileErrorCode::InvalidPath ? CoordinatorErrorCode::InvalidPath
+        : problem->code == folio::io::FileErrorCode::IoError ? CoordinatorErrorCode::IoError
+                                                             : CoordinatorErrorCode::StorageFailure;
+    return CoordinatorError{code, problem->path, problem->message, {}, {}, {}, *problem};
+  }
+  auto inventory = std::get<NormalRepositoryScanResult>(std::move(scanned));
+  auto to_vector = []<class T>(std::deque<T>& records) {
+    std::vector<T> result;
+    result.reserve(records.size());
+    for (auto& record : records)
+      result.push_back(std::move(record));
+    return result;
+  };
+  MetadataCatalog candidate;
+  auto adopted = candidate.rebuild(to_vector(inventory.logs), to_vector(inventory.memos),
+                                   to_vector(inventory.todos), to_vector(inventory.directories));
+  if (auto* problem = std::get_if<StorageError>(&adopted))
+    return CoordinatorError{CoordinatorErrorCode::StorageFailure,
+                            problem->path,
+                            problem->message,
+                            *problem,
+                            {},
+                            {},
+                            {}};
+  return CatalogCandidate{std::move(candidate), std::move(inventory.diagnostics)};
+}
+
+} // namespace folio::application::internal
 
 namespace folio::application::internal {
+using namespace ::folio::core::storage;
+using namespace ::folio::application;
+using namespace ::folio::application::internal;
 namespace storage = core::storage;
 namespace {
 constexpr std::size_t root_overhead = 0;
@@ -81,7 +376,8 @@ resolve(const DirectoryRef& scope, const storage::MetadataCatalogView& view) {
 }
 } // namespace
 
-OperationResponse CatalogMaintenance::check(const DirectoryRef& scope) {
+OperationResponse CatalogMaintenance::check(CatalogCoordinator& coordinator,
+                                            const DirectoryRef& scope) {
   const auto key = std::visit(
       [](const auto& value) -> std::string {
         using T = std::decay_t<decltype(value)>;
@@ -95,7 +391,7 @@ OperationResponse CatalogMaintenance::check(const DirectoryRef& scope) {
   auto& outcome = entry->second;
   if (first) {
     try {
-      outcome.result = perform_check(scope);
+      outcome.result = perform_check(coordinator, scope);
     } catch (...) {
       outcome.exception = std::current_exception();
     }
@@ -104,8 +400,9 @@ OperationResponse CatalogMaintenance::check(const DirectoryRef& scope) {
   return *outcome.result;
 }
 
-OperationResponse CatalogMaintenance::perform_check(const DirectoryRef& scope) const {
-  const auto state = coordinator_.read_state();
+OperationResponse CatalogMaintenance::perform_check(CatalogCoordinator& coordinator,
+                                                    const DirectoryRef& scope) const {
+  const auto state = coordinator.read_state();
   if (state.status != storage::CatalogStatus::Ready &&
       state.status != storage::CatalogStatus::Inconsistent)
     return unavailable();
@@ -128,9 +425,10 @@ OperationResponse CatalogMaintenance::perform_check(const DirectoryRef& scope) c
                                                   : ConsistencyCheckResult::AnomalyDetected;
 }
 
-OperationResponse CatalogMaintenance::refresh(const RefreshScope& scope) const {
+OperationResponse CatalogMaintenance::refresh(CatalogCoordinator& coordinator,
+                                              const RefreshScope& scope) const {
   if (std::holds_alternative<RepositoryScope>(scope)) {
-    auto result = coordinator_.refresh_all();
+    auto result = coordinator.refresh_all();
     if (auto* failure = std::get_if<storage::CoordinatorError>(&result)) {
       if (failure->storage_error) return scan_error(*failure->storage_error);
       if (failure->file_error) return scan_error(*failure->file_error);
@@ -147,7 +445,7 @@ OperationResponse CatalogMaintenance::refresh(const RefreshScope& scope) const {
                             ErrorReason::InvalidQuery,
                             "Invalid Refresh traversal",
                             {ErrorAction::Dismiss}};
-  const auto state = coordinator_.read_state();
+  const auto state = coordinator.read_state();
   if (state.status != storage::CatalogStatus::Ready &&
       state.status != storage::CatalogStatus::Inconsistent)
     return unavailable();
@@ -219,7 +517,7 @@ OperationResponse CatalogMaintenance::refresh(const RefreshScope& scope) const {
   auto built = candidate.rebuild(std::move(logs), std::move(memos), std::move(todos),
                                  std::move(directories));
   if (auto* failure = std::get_if<storage::StorageError>(&built)) return scan_error(*failure);
-  auto published = coordinator_.publish_scoped_refresh(std::move(candidate), [&] {
+  auto published = coordinator.publish_scoped_refresh(std::move(candidate), [&] {
     if (refreshed_) refreshed_(scope);
   });
   if (std::holds_alternative<storage::CoordinatorError>(published)) return unavailable();

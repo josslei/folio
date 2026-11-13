@@ -137,8 +137,9 @@ Keep three responsibilities separate:
   response routing through the existing connection machinery.
 - A Backend-private Refresh component owns scope-specific scanning, candidate
   reconciliation and publication: `CatalogMaintenance` in
-  `server/include/operations/catalog_maintenance.hpp`. It borrows Repository and
-  Coordinator; worker execution owns its complete workflow.
+  `server/include/operations/catalog_maintenance.hpp`. The single instance owns
+  maintenance state and Repository access, and receives Coordinator explicitly
+  for coherent capture/publication; worker execution owns its complete workflow.
 - A future consistency-policy owner may decide whether an Access anomaly warrants
   maintenance, user action or no additional action. This mechanism is deferred;
   scheduling must not become a second implementation of consistency policy.

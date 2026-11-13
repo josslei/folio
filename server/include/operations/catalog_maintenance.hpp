@@ -1,41 +1,55 @@
 #pragma once
-
-#include <folio/ipc/application_protocol.hpp>
+#include "storage/normal_repository.hpp"
 #include "storage/catalog_coordinator.hpp"
+#include "storage/index_codec.hpp"
+#include <folio/io/filesystem.hpp>
+#include <folio/ipc/application_protocol.hpp>
 #include <map>
 #include <exception>
 
 namespace folio::application::internal {
-
-/// Executes maintenance on a reserved Access worker. Borrows session Storage;
-/// caller excludes Mutations through completion, but concurrent Access may retain
-/// old views. Never repairs Entries, retries requests or writes the Index.
+/// One maintenance module for Check/Refresh, Index and Session Marker I/O.
+/// Owns no active Catalog/readiness state; delegates managed publication to
+/// Coordinator. Callers coordinate writers and lifecycle ordering.
 class CatalogMaintenance {
 public:
-  CatalogMaintenance(core::storage::NormalRepository& repository,
-                     core::storage::CatalogCoordinator& coordinator)
-      : repository_(repository), coordinator_(coordinator) {}
-  /// Once per scope per session; later calls return the historical outcome.
-  OperationResponse check(const DirectoryRef& scope);
-  OperationResponse refresh(const RefreshScope& scope) const;
-
-  /// Optional Application sink, called inside the scoped publication boundary.
+  explicit CatalogMaintenance(core::storage::StoragePaths paths)
+      : paths_(std::move(paths)), repository_(paths_.normal_root) {}
+  using CoordinatorError = core::storage::CoordinatorError;
+  using CatalogCandidate = core::storage::CatalogCandidate;
+  using CatalogCoordinator = core::storage::CatalogCoordinator;
+  using MetadataCatalog = core::storage::MetadataCatalog;
+  using OperationResponse = application::internal::OperationResponse;
+  using DirectoryRef = application::DirectoryRef;
+  using RefreshScope = application::RefreshScope;
+  /// Check once per scope/session; caller holds the maintenance reservation.
+  OperationResponse check(CatalogCoordinator& coordinator, const DirectoryRef& scope);
+  /// Reconcile selected scope; Coordinator handles managed publication/readiness.
+  OperationResponse refresh(CatalogCoordinator& coordinator, const RefreshScope& scope) const;
+  /// Install/remove with execution drained. Sink enqueues only, never performs I/O.
   void set_refresh_observer(std::function<void(const RefreshScope&)> observer) {
     refreshed_ = std::move(observer);
   }
+  ::folio::core::Result<bool, CoordinatorError> previous_marker() const;
+  ::folio::core::Result<std::monostate, CoordinatorError> establish_marker() const;
+  ::folio::core::Result<MetadataCatalog, CoordinatorError> load_index() const;
+  ::folio::core::Result<std::monostate, CoordinatorError>
+  save_index(const MetadataCatalog& catalog) const;
+  ::folio::core::Result<std::monostate, CoordinatorError> sync_index() const;
+  ::folio::core::Result<std::monostate, CoordinatorError> remove_marker() const;
+  ::folio::core::Result<std::monostate, CoordinatorError> validate_paths() const;
+  ::folio::core::Result<CatalogCandidate, CoordinatorError> reconstruct_full() const;
 
 private:
-  std::function<void(const RefreshScope&)> refreshed_;
-  OperationResponse perform_check(const DirectoryRef& scope) const;
+  OperationResponse perform_check(CatalogCoordinator& coordinator, const DirectoryRef& scope) const;
   struct CheckOutcome {
     std::optional<OperationResponse> result;
     std::exception_ptr exception;
   };
-  // Check executions are serialized by maintenance reservations, not a mutex.
-  // Retained until this Backend session ends, including unsuccessful attempts.
+  // Serialized by maintenance reservations; history lasts for this session.
   std::map<std::string, CheckOutcome> checked_;
-  core::storage::NormalRepository& repository_;
-  core::storage::CatalogCoordinator& coordinator_;
+  std::function<void(const RefreshScope&)> refreshed_;
+  core::storage::StoragePaths paths_;
+  core::storage::NormalRepository repository_;
 };
-
 } // namespace folio::application::internal

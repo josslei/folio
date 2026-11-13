@@ -177,7 +177,7 @@ TEST_F(MutationOrchestrator, CreateAllKindsUsesBackendIdsAndPreservesBothFronten
   EXPECT_TRUE(catalog.read_view().contains_entry(dir.id));
   EXPECT_TRUE(catalog.unpersisted());
   EXPECT_TRUE(fs::exists(paths.application.state / "session.marker"));
-  EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+  EXPECT_FALSE(fs::exists(paths.application.state / "index/normal.msgpack"));
 }
 
 TEST_F(MutationOrchestrator, UpdateMoveInEitherOrderPreservesCurrentMembershipAndImmutableFields) {
