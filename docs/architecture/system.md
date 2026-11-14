@@ -407,6 +407,13 @@ complex cross-module contract.
 
 ### Initial Frontend Runtime
 
+**Responsiveness rule:** pending Backend work must not delay navigation, input, or
+rendering. Render the destination page immediately, with empty Entries while its
+query is pending. Ordinary rendering work scales with visible content, not total
+data. Worker separation alone is insufficient evidence of responsiveness; main-thread
+submission and completion work must also remain small. See the authoritative
+[Frontend responsiveness rule and outstanding verification](../development/plans/application.md#frontend-responsiveness--approved-rule).
+
 UI-independent session, connection and launch code lives under matching
 `app/include/frontend/` and `app/src/frontend/` directories. Their `runtime/`
 subdirectories contain BackendConnectionHandle and ConnectionSession; worker code

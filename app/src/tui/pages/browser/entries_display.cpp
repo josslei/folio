@@ -104,7 +104,7 @@ public:
 
   Element OnRender() override {
     Element body = text("");
-    if (const auto* values = records()) {
+    if (const auto* values = queries_.loading() ? nullptr : records()) {
       reconcile_cursor(*values);
       if (values->empty()) {
         body = text("No Records") | dim;

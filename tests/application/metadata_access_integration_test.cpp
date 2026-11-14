@@ -1,3 +1,5 @@
+#include <ftxui/dom/node.hpp>
+#include <ftxui/screen/screen.hpp>
 #include "tui/pages/browser/entries_display.hpp"
 #include "tui/pages/browser/top_bar.hpp"
 #include <ftxui/component/component.hpp>
@@ -724,4 +726,51 @@ TEST_F(MetadataAccessIntegration, BrowserCursorMovesBetweenRegionsWithoutActivat
   EXPECT_FALSE(page->OnEvent(ftxui::Event::Tab));
   EXPECT_TRUE(tabs->Focused());
   runtime.finish_requests();
+}
+
+TEST_F(MetadataAccessIntegration, BrowserRendersAndHandlesNavigationWhileRequestIsBlocked) {
+  app::BackendConnectionHandle runtime(connect(), [] {});
+  folio::tui::BrowserQueryController queries(runtime);
+  queries.select(core::RecordType::Memo);
+  ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
+  runtime.process_completion();
+  auto entries = std::make_shared<folio::tui::EntriesDisplay>(queries);
+  auto tabs = std::make_shared<folio::tui::TopBar>([&](auto type) { queries.select(type); });
+  auto page = ftxui::Container::Vertical({tabs, entries});
+  ftxui::Screen initial(100, 24);
+  ftxui::Render(initial, page->Render());
+  EXPECT_NE(initial.ToString().find("Long memo"), std::string::npos);
+
+  std::promise<void> release;
+  auto released = release.get_future();
+  const bool submitted = runtime.connection_session().submit([&](app::ConnectionSession&) {
+    released.wait();
+    return [] {};
+  });
+  ASSERT_TRUE(submitted);
+  // Release even if an assertion fails, so teardown never waits on this test gate.
+  struct ReleaseGate {
+    std::promise<void>& promise;
+    app::BackendConnectionHandle& runtime;
+    ~ReleaseGate() {
+      promise.set_value();
+      runtime.finish_requests();
+    }
+  } gate{release, runtime};
+  queries.select(core::RecordType::Memo);
+  EXPECT_TRUE(queries.loading());
+  ftxui::Screen pending(100, 24);
+  ftxui::Render(pending, page->Render());
+  EXPECT_EQ(pending.ToString().find("Long memo"), std::string::npos);
+  EXPECT_NE(pending.ToString().find("NAME / TITLE"), std::string::npos);
+  EXPECT_TRUE(page->OnEvent(ftxui::Event::ArrowRight));
+  EXPECT_TRUE(page->OnEvent(ftxui::Event::Return));
+  EXPECT_EQ(queries.selected(), core::RecordType::Memo);
+  EXPECT_TRUE(page->OnEvent(ftxui::Event::ArrowRight));
+  EXPECT_TRUE(page->OnEvent(ftxui::Event::Return));
+  EXPECT_EQ(queries.selected(), core::RecordType::Todo);
+  ftxui::Screen todos(100, 24);
+  ftxui::Render(todos, page->Render());
+  EXPECT_NE(todos.ToString().find("PRIORITY"), std::string::npos);
+  EXPECT_TRUE(queries.loading());
 }

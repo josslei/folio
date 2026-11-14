@@ -178,10 +178,36 @@ and its deadline. Fast requests never display Loading.
 
 The Bottom Bar keeps its fixed geometry and `C-q Quit` hint throughout. Errors
 and warnings take precedence over Loading. No spinner or reserved loading row
-is added to the Entries Display. Cached results belong only to the selected
-section and remain provisional during a request; there are currently no
-interactive Entry actions. Timer destruction wakes and joins independently of
+is added to the Entries Display. The current implementation can retain provisional cached results during a request;
+the approved responsiveness rule below supersedes that presentation behavior. Timer destruction wakes and joins independently of
 the request worker; existing accepted-request shutdown limitations remain.
+
+### Frontend responsiveness — approved rule
+
+Backend response time must not delay module activation, input handling, or rendering
+of the destination page. Switch the page context immediately; while its query is
+pending, render the stable page layout with an empty Entries Display. Populate it
+when the relevant result arrives. Cached entries must not stand in for the pending
+destination result. Loading feedback is independent of data arrival and must never
+delay displaying a completed result.
+
+Blocking IPC, waiting for results, and whole-dataset query/sort work must not execute
+on the TUI Event Loop thread. Asynchronous submission alone does not establish
+responsiveness: submission, completion callbacks, synchronization, and rendering
+must also avoid work or waits proportional to the full dataset during ordinary
+interaction. Rendering work should scale with visible screen content, not the total
+number of available entries. Retaining off-screen data/state is permitted; formatting
+and constructing all off-screen rows on each redraw is not.
+
+**Implemented:** Pending queries render the destination headers and an empty Entries
+Display, including when provisional cached results exist. A gated-request integration
+test verifies rendering and repeated module activation before request completion.
+
+**Deferred Implementation — UI-RESPONSIVENESS-01:** Investigate the remaining user-observed TODOS interaction lag after visible-row
+rendering was introduced. Request Worker timing does not disprove UI lag. Verify
+input-to-render latency while a deliberately delayed request remains outstanding,
+including repeated module changes, stale completions, and large result sets. Keep
+Backend result latency distinct from main-thread responsiveness in reports.
 
 ### Browser field display — implemented query slice
 
