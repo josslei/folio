@@ -9,23 +9,23 @@
 #include <string>
 
 namespace folio::tui {
-/// TUI Loading / Loaded presentation timing. Control methods run on the UI
+/// TUI Ready / Loading / Loaded presentation timing. Control methods run on the UI
 /// thread; the private timer only wakes the event loop. Wake must be
 /// thread-safe and outlive this object. No polling or result delay.
-class LoadingFeedback : public ftxui::ComponentBase {
+class LoadingStatus : public ftxui::ComponentBase {
 public:
-  LoadingFeedback(std::function<void()> wake, std::chrono::milliseconds delay,
+  LoadingStatus(std::function<void()> wake, std::chrono::milliseconds delay,
                   std::chrono::milliseconds loaded_duration);
-  ~LoadingFeedback();
+  ~LoadingStatus();
   void begin(std::size_t generation);
   /// Cancel an unseen Loading deadline when the Backend result arrives.
   void received(std::size_t generation);
-  /// Start Loaded duration when presentation applies the result.
+  /// Transition to Loaded after the minimum Loading display time.
   void complete(std::size_t generation);
   bool visible(std::size_t generation) const;
   /// Render the feedback in the Bottom Bar without changing its geometry.
   ftxui::Element OnRender() override;
-  /// Presentation text; no visibility means no feedback.
+  /// Presentation text defaults to Ready when no timed feedback is visible.
   std::string text(std::size_t generation, bool pending) const;
 
 private:
@@ -34,7 +34,7 @@ private:
   struct Deadline {
     std::size_t generation;
     std::chrono::steady_clock::time_point time;
-    bool hide = false;
+    enum class Action { ShowLoading, ShowLoaded, Hide } action = Action::ShowLoading;
   };
   void run(std::stop_token stop);
   std::function<void()> wake_;
@@ -45,6 +45,7 @@ private:
   std::condition_variable_any changed_;
   std::optional<Deadline> deadline_;
   std::optional<std::size_t> visible_generation_;
+  mutable std::optional<std::chrono::steady_clock::time_point> loading_shown_at_;
   std::jthread timer_;
 };
 } // namespace folio::tui

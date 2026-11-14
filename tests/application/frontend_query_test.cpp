@@ -9,12 +9,12 @@
 #include <gtest/gtest.h>
 #include <future>
 
-TEST(TuiLoadingFeedbackTest, NavigationResetsOldIndicator) {
+TEST(TuiLoadingStatusTest, NavigationResetsOldIndicator) {
   using namespace folio;
   std::mutex mutex;
   std::condition_variable changed;
   int wakes = 0;
-  tui::LoadingFeedback feedback(
+  tui::LoadingStatus feedback(
       [&] {
         std::lock_guard lock(mutex);
         ++wakes;
@@ -31,15 +31,15 @@ TEST(TuiLoadingFeedbackTest, NavigationResetsOldIndicator) {
   EXPECT_FALSE(feedback.visible(1));
   feedback.received(2);
   feedback.complete(2);
-  EXPECT_TRUE(feedback.text(1, false).empty());
+  EXPECT_EQ(feedback.text(1, false), "Ready");
 }
 
-TEST(TuiLoadingFeedbackTest, LoadedHasItsOwnDuration) {
+TEST(TuiLoadingStatusTest, LoadedHasItsOwnDuration) {
   using namespace folio;
   std::mutex mutex;
   std::condition_variable changed;
   int wakes = 0;
-  tui::LoadingFeedback feedback(
+  tui::LoadingStatus feedback(
       [&] {
         std::lock_guard lock(mutex);
         ++wakes;
@@ -54,20 +54,27 @@ TEST(TuiLoadingFeedbackTest, LoadedHasItsOwnDuration) {
   EXPECT_EQ(feedback.text(1, true), "Loading...");
   feedback.received(1);
   feedback.complete(1);
+  EXPECT_EQ(feedback.text(1, false), "Loading...");
+  {
+    std::unique_lock lock(mutex);
+    ASSERT_TRUE(changed.wait_for(lock, std::chrono::seconds(2), [&] { return wakes >= 2; }));
+  }
   EXPECT_EQ(feedback.text(1, false), "Loaded");
   {
     std::unique_lock lock(mutex);
-    changed.wait(lock, [&] { return wakes >= 2; });
+    ASSERT_TRUE(changed.wait_for(lock, std::chrono::seconds(2), [&] { return wakes >= 3; }));
   }
-  EXPECT_TRUE(feedback.text(1, false).empty());
+  EXPECT_EQ(feedback.text(1, false), "Ready");
 }
 
-TEST(TuiLoadingFeedbackTest, FastCompletionDoesNotShowFeedback) {
-  folio::tui::LoadingFeedback feedback([] {}, std::chrono::hours(1), std::chrono::seconds(1));
+TEST(TuiLoadingStatusTest, FastCompletionDoesNotShowFeedback) {
+  folio::tui::LoadingStatus feedback([] {}, std::chrono::hours(1), std::chrono::seconds(1));
+  EXPECT_EQ(feedback.text(0, false), "Ready");
   feedback.begin(1);
+  EXPECT_EQ(feedback.text(1, true), "Ready");
   feedback.received(1);
   feedback.complete(1);
-  EXPECT_TRUE(feedback.text(1, false).empty());
+  EXPECT_EQ(feedback.text(1, false), "Ready");
 }
 
 TEST(TuiShellTest, QuitIsGlobalAndPlainQDoesNotExit) {

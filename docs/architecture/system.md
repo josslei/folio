@@ -330,7 +330,7 @@ TuiShell
   Active Page: BrowserPage
     Browser-specific TopBar
     EntriesDisplay
-    LoadingFeedback (reusable TUI component)
+    LoadingStatus (reusable TUI component)
   BottomBar
   Dialog Overlay (future; no placeholder implementation)
 ```
@@ -351,7 +351,7 @@ Finish outstanding requests while controller completion targets remain alive.
 Organize by responsibility, not inheritance alone: substantial nonvisual TUI
 behavior belongs in `logic/`; small tightly coupled state stays with its visual
 owner. Page composition, Shell, layouts and presentation components retain their
-existing responsibilities. LoadingFeedback remains a visual timing/presentation
+existing responsibilities. LoadingStatus remains a visual timing/presentation
 component. This separation serves current maintainability, not a speculative GUI
 framework; it adds no MVC/MVVM infrastructure, event bus or dependencies.
 

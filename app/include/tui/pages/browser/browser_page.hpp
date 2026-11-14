@@ -2,7 +2,7 @@
 #include "tui/logic/browser/browser_query_controller.hpp"
 #include "tui/pages/browser/top_bar.hpp"
 #include "tui/pages/browser/entries_display.hpp"
-#include "tui/components/loading_feedback.hpp"
+#include "tui/components/loading_status.hpp"
 #include <ftxui/component/component_base.hpp>
 #include <functional>
 namespace folio::tui {
@@ -20,7 +20,7 @@ public:
 private:
   void select(core::RecordType type);
   BrowserQueryController& queries_;
-  std::shared_ptr<LoadingFeedback> loading_feedback_;
+  std::shared_ptr<LoadingStatus> loading_status_;
   std::size_t feedback_generation_ = 0;
   bool awaiting_result_ = false;
   std::string feedback_;
