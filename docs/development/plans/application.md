@@ -183,6 +183,25 @@ section and remain provisional during a request; there are currently no
 interactive Entry actions. Timer destruction wakes and joins independently of
 the request worker; existing accepted-request shutdown limitations remain.
 
+### Browser field display — implemented query slice
+
+The Entries Display renders the metadata returned by Query without loading Record
+bodies. Logs show their logical `log_date`, creation time, and
+title; adjacent equal dates omit the repeated date label. Memos show title, tags,
+and modified date/time. Todos show completion, title, priority, and optional
+due date/time. Date-only values retain their logical calendar date; timestamp
+values use the system’s current local timezone by default, with the offset and
+daylight-saving rules applicable to each timestamp, rather than the stored original
+timezone.
+
+**Deferred Implementation — BROWSER-FIELDS-01:** Todo Query metadata does not expose
+subtask progress; the column displays `—` rather than fabricating zero or loading
+all Todo bodies. Directory navigation/display and configurable timezone rendering
+remain outside this query-only slice. Column headers and rows share their widths and one-cell scroll-indicator gutter.
+Text, dates, and times are left-aligned; Todo checkboxes are centered in their
+fixed-width column, and numeric subtask progress is right-aligned. Headers follow
+their column alignment, with two-cell inter-column gaps.
+
 ### Logical Cursor — approved design
 
 Each active Page or Dialog maintains one valid Logical Cursor targeting a keyboard-interactable element. Arrow keys and Tab move it; Enter activates the target. Cursor, FTXUI focus, selection and activation are distinct: moving over a Browser Top Bar item must not change the active module. Mouse activation must not move or reset the Logical Cursor. Page transitions and removal of targets must leave a valid target. Text editing uses a separate insertion caret, with arrow keys directed to that caret while editing.
