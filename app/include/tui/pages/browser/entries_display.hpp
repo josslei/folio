@@ -1,14 +1,14 @@
 #pragma once
-#include "tui/pages/browser/record_query.hpp"
+#include "tui/logic/browser/browser_query_controller.hpp"
 #include <ftxui/component/component_base.hpp>
 namespace folio::tui {
 /// Presentation of query results only; owns no Backend or request state.
 class EntriesDisplay : public ftxui::ComponentBase {
 public:
-  explicit EntriesDisplay(const RecordQuery& queries);
+  explicit EntriesDisplay(const BrowserQueryController& queries);
   ftxui::Element OnRender() override;
 private:
-  const RecordQuery& queries_;
+  const BrowserQueryController& queries_;
   ftxui::Component logs_;
   ftxui::Component memos_;
   ftxui::Component todos_;

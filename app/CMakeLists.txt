@@ -4,7 +4,7 @@ add_library(folio_frontend STATIC
   src/frontend/runtime/connection_session.cpp
   src/frontend/runtime/backend_connection_handle.cpp
   src/process.cpp
-  src/tui/pages/browser/record_query.cpp
+  src/tui/logic/browser/browser_query_controller.cpp
   src/tui/components/loading_feedback.cpp
   src/tui/shell/tui_shell.cpp
   src/tui/shell/bottom_bar.cpp

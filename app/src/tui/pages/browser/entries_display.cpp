@@ -8,7 +8,7 @@ using namespace ftxui;
 // owns its column layout so module-specific presentation can evolve separately.
 class RecordList : public ComponentBase {
 public:
-  explicit RecordList(const RecordQuery& queries) : queries_(queries) {}
+  explicit RecordList(const BrowserQueryController& queries) : queries_(queries) {}
   Element OnRender() override {
     Elements rows;
     if (const auto& result = queries_.result()) {
@@ -26,7 +26,7 @@ public:
 private:
   virtual Element header() const = 0;
   virtual Element row(const core::RecordMetadata& record) const = 0;
-  const RecordQuery& queries_;
+  const BrowserQueryController& queries_;
 };
 
 class LogList final : public RecordList {
@@ -73,7 +73,7 @@ private:
 };
 } // namespace
 
-EntriesDisplay::EntriesDisplay(const RecordQuery& queries)
+EntriesDisplay::EntriesDisplay(const BrowserQueryController& queries)
     : queries_(queries), logs_(std::make_shared<LogList>(queries)),
       memos_(std::make_shared<MemoList>(queries)), todos_(std::make_shared<TodoList>(queries)) {
   Add(logs_);

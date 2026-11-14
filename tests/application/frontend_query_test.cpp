@@ -1,4 +1,4 @@
-#include "tui/pages/browser/record_query.hpp"
+#include "tui/logic/browser/browser_query_controller.hpp"
 #include "tui/pages/browser/browser_page.hpp"
 #include "tui/shell/tui_shell.hpp"
 #include <ftxui/component/component.hpp>

@@ -22,5 +22,9 @@ work also consult the affected module instructions through the root index.
   [Shell/Page/Layout/Component boundaries](../docs/architecture/system.md#frontend-and-tui-organization);
   keep page-specific headers and controls local rather than creating universal UI abstractions.
 
+- Substantial TUI-specific nonvisual behavior belongs under `tui/logic/`; small
+  presentation-local state may stay with its component. Code boundaries do not
+  introduce threads or duplicate UI state in the communication runtime.
+
 - TUI visual elements use `ftxui::ComponentBase` and compose child Components by default.
   Document a specific reason for exceptions; nonvisual helpers need no component base.

@@ -211,7 +211,7 @@ FrontendWork BackendConnectionHandle::take_pending_work() {
   return session_->take_pending_work();
 }
 bool BackendConnectionHandle::ping(
-    std::function<void(core::Result<std::monostate, internal::IpcError>)> completed) {
+    CompletionCallback<core::Result<std::monostate, internal::IpcError>> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [](ConnectionSession& session) -> core::Result<std::monostate, IpcError> {
@@ -233,9 +233,8 @@ bool BackendConnectionHandle::ping(
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::browse(
-    DirectoryRef dir, RecordOrder order,
-    std::function<void(AccessResult<Annotated<BrowseResult>>)> completed) {
+bool BackendConnectionHandle::browse(DirectoryRef dir, RecordOrder order,
+                                     AnnotatedAccessCallback<BrowseResult> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [dir, order](ConnectionSession& session) {
@@ -244,30 +243,28 @@ bool BackendConnectionHandle::browse(
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::query_records(
-    const RecordQuery& query,
-    std::function<void(AccessResult<Annotated<std::vector<core::RecordMetadata>>>)> completed) {
+bool BackendConnectionHandle::query_records(const RecordQuery& query,
+                                            AnnotatedAccessCallback<RecordMetadataList> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [query](ConnectionSession& session) {
-        return invoke_operation<Annotated<std::vector<core::RecordMetadata>>>(
-            session.request_connection(), session, QueryRecordsRequest{query});
+        return invoke_operation<Annotated<RecordMetadataList>>(session.request_connection(),
+                                                               session, QueryRecordsRequest{query});
       },
       std::move(completed)));
 }
 bool BackendConnectionHandle::list_directories(
-    core::DirectoryKind kind,
-    std::function<void(AccessResult<Annotated<std::vector<core::DirectoryMetadata>>>)> completed) {
+    core::DirectoryKind kind, AnnotatedAccessCallback<DirectoryMetadataList> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [kind](ConnectionSession& session) {
-        return invoke_operation<Annotated<std::vector<core::DirectoryMetadata>>>(
+        return invoke_operation<Annotated<DirectoryMetadataList>>(
             session.request_connection(), session, ListDirectoriesRequest{kind});
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::check_consistency(
-    DirectoryRef scope, std::function<void(AccessResult<ConsistencyCheckResult>)> completed) {
+bool BackendConnectionHandle::check_consistency(DirectoryRef scope,
+                                                AccessCallback<ConsistencyCheckResult> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [scope](ConnectionSession& session) {
@@ -277,7 +274,7 @@ bool BackendConnectionHandle::check_consistency(
       std::move(completed)));
 }
 bool BackendConnectionHandle::refresh(RefreshScope scope,
-                                      std::function<void(AccessResult<std::monostate>)> completed) {
+                                      AccessCallback<std::monostate> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [scope](ConnectionSession& session) {
@@ -286,9 +283,8 @@ bool BackendConnectionHandle::refresh(RefreshScope scope,
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::load_log(
-    const core::Id& id,
-    std::function<void(AccessResult<Annotated<core::Log::Snapshot>>)> completed) {
+bool BackendConnectionHandle::load_log(const core::Id& id,
+                                       AnnotatedAccessCallback<core::Log::Snapshot> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [id](ConnectionSession& session) {
@@ -297,9 +293,8 @@ bool BackendConnectionHandle::load_log(
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::load_memo(
-    const core::Id& id,
-    std::function<void(AccessResult<Annotated<core::Memo::Snapshot>>)> completed) {
+bool BackendConnectionHandle::load_memo(const core::Id& id,
+                                        AnnotatedAccessCallback<core::Memo::Snapshot> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [id](ConnectionSession& session) {
@@ -308,9 +303,8 @@ bool BackendConnectionHandle::load_memo(
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::load_todo(
-    const core::Id& id,
-    std::function<void(AccessResult<Annotated<core::Todo::Snapshot>>)> completed) {
+bool BackendConnectionHandle::load_todo(const core::Id& id,
+                                        AnnotatedAccessCallback<core::Todo::Snapshot> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [id](ConnectionSession& session) {
@@ -319,8 +313,8 @@ bool BackendConnectionHandle::load_todo(
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::acquire_edit(
-    const core::Id& id, std::function<void(AccessResult<std::monostate>)> completed) {
+bool BackendConnectionHandle::acquire_edit(const core::Id& id,
+                                           AccessCallback<std::monostate> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [id](ConnectionSession& session) {
@@ -329,8 +323,8 @@ bool BackendConnectionHandle::acquire_edit(
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::release_edit(
-    const core::Id& id, std::function<void(AccessResult<std::monostate>)> completed) {
+bool BackendConnectionHandle::release_edit(const core::Id& id,
+                                           AccessCallback<std::monostate> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [id](ConnectionSession& session) {
@@ -339,10 +333,10 @@ bool BackendConnectionHandle::release_edit(
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::create(
-    const MutationId& mutation_id, const LogEditableFields& fields,
-    const core::TimestampContext& created, const core::TimestampContext& modified,
-    std::function<void(MutationResult<core::LogMetadata>)> completed) {
+bool BackendConnectionHandle::create(const MutationId& mutation_id, const LogEditableFields& fields,
+                                     const core::TimestampContext& created,
+                                     const core::TimestampContext& modified,
+                                     MutationCallback<core::LogMetadata> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [mutation_id, fields, created, modified](ConnectionSession& session) {
@@ -351,11 +345,12 @@ bool BackendConnectionHandle::create(
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::create(
-    const MutationId& mutation_id, const MemoEditableFields& fields,
-    const core::TimestampContext& created, const core::TimestampContext& modified,
-    std::optional<core::Id> directory_id,
-    std::function<void(MutationResult<core::MemoMetadata>)> completed) {
+bool BackendConnectionHandle::create(const MutationId& mutation_id,
+                                     const MemoEditableFields& fields,
+                                     const core::TimestampContext& created,
+                                     const core::TimestampContext& modified,
+                                     std::optional<core::Id> directory_id,
+                                     MutationCallback<core::MemoMetadata> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [mutation_id, fields, created, modified, directory_id](ConnectionSession& session) {
@@ -365,11 +360,12 @@ bool BackendConnectionHandle::create(
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::create(
-    const MutationId& mutation_id, const TodoEditableFields& fields,
-    const core::TimestampContext& created, const core::TimestampContext& modified,
-    std::optional<core::Id> directory_id,
-    std::function<void(MutationResult<core::TodoMetadata>)> completed) {
+bool BackendConnectionHandle::create(const MutationId& mutation_id,
+                                     const TodoEditableFields& fields,
+                                     const core::TimestampContext& created,
+                                     const core::TimestampContext& modified,
+                                     std::optional<core::Id> directory_id,
+                                     MutationCallback<core::TodoMetadata> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [mutation_id, fields, created, modified, directory_id](ConnectionSession& session) {
@@ -379,10 +375,10 @@ bool BackendConnectionHandle::create(
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::update(
-    const MutationId& mutation_id, const core::Id& entry_id, const LogEditableFields& fields,
-    const core::TimestampContext& modified,
-    std::function<void(MutationResult<core::LogMetadata>)> completed) {
+bool BackendConnectionHandle::update(const MutationId& mutation_id, const core::Id& entry_id,
+                                     const LogEditableFields& fields,
+                                     const core::TimestampContext& modified,
+                                     MutationCallback<core::LogMetadata> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [mutation_id, entry_id, fields, modified](ConnectionSession& session) {
@@ -391,10 +387,10 @@ bool BackendConnectionHandle::update(
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::update(
-    const MutationId& mutation_id, const core::Id& entry_id, const MemoEditableFields& fields,
-    const core::TimestampContext& modified,
-    std::function<void(MutationResult<core::MemoMetadata>)> completed) {
+bool BackendConnectionHandle::update(const MutationId& mutation_id, const core::Id& entry_id,
+                                     const MemoEditableFields& fields,
+                                     const core::TimestampContext& modified,
+                                     MutationCallback<core::MemoMetadata> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [mutation_id, entry_id, fields, modified](ConnectionSession& session) {
@@ -403,10 +399,10 @@ bool BackendConnectionHandle::update(
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::update(
-    const MutationId& mutation_id, const core::Id& entry_id, const TodoEditableFields& fields,
-    const core::TimestampContext& modified,
-    std::function<void(MutationResult<core::TodoMetadata>)> completed) {
+bool BackendConnectionHandle::update(const MutationId& mutation_id, const core::Id& entry_id,
+                                     const TodoEditableFields& fields,
+                                     const core::TimestampContext& modified,
+                                     MutationCallback<core::TodoMetadata> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [mutation_id, entry_id, fields, modified](ConnectionSession& session) {
@@ -415,10 +411,10 @@ bool BackendConnectionHandle::update(
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::move(
-    const MutationId& mutation_id, const core::Id& entry_id, std::optional<core::Id> destination,
-    const core::TimestampContext& modified,
-    std::function<void(MutationResult<core::RecordMetadata>)> completed) {
+bool BackendConnectionHandle::move(const MutationId& mutation_id, const core::Id& entry_id,
+                                   std::optional<core::Id> destination,
+                                   const core::TimestampContext& modified,
+                                   MutationCallback<core::RecordMetadata> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [mutation_id, entry_id, destination, modified](ConnectionSession& session) {
@@ -427,9 +423,9 @@ bool BackendConnectionHandle::move(
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::create(
-    const MutationId& mutation_id, core::DirectoryKind kind, const std::string& name,
-    std::function<void(MutationResult<core::DirectoryMetadata>)> completed) {
+bool BackendConnectionHandle::create(const MutationId& mutation_id, core::DirectoryKind kind,
+                                     const std::string& name,
+                                     MutationCallback<core::DirectoryMetadata> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [mutation_id, kind, name](ConnectionSession& session) {
@@ -440,7 +436,7 @@ bool BackendConnectionHandle::create(
 }
 bool BackendConnectionHandle::rename_directory(
     const MutationId& mutation_id, const core::Id& entry_id, const std::string& new_name,
-    std::function<void(MutationResult<core::DirectoryMetadata>)> completed) {
+    MutationCallback<core::DirectoryMetadata> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [mutation_id, entry_id, new_name](ConnectionSession& session) {
@@ -450,10 +446,10 @@ bool BackendConnectionHandle::rename_directory(
       },
       std::move(completed)));
 }
-bool BackendConnectionHandle::set_todo_status(
-    const MutationId& mutation_id, const core::Id& entry_id, core::TodoStatus status,
-    const core::TimestampContext& modified,
-    std::function<void(MutationResult<core::TodoMetadata>)> completed) {
+bool BackendConnectionHandle::set_todo_status(const MutationId& mutation_id,
+                                              const core::Id& entry_id, core::TodoStatus status,
+                                              const core::TimestampContext& modified,
+                                              MutationCallback<core::TodoMetadata> completed) {
   if (!completed) return false;
   return session_->submit(request_with_completion(
       [mutation_id, entry_id, status, modified](ConnectionSession& session) {

@@ -2,7 +2,7 @@
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/event.hpp>
 namespace folio::tui {
-BrowserPage::BrowserPage(RecordQuery& queries, std::function<void()> wake,
+BrowserPage::BrowserPage(BrowserQueryController& queries, std::function<void()> wake,
                          std::chrono::milliseconds loading_delay,
                          std::chrono::milliseconds loaded_duration)
     : queries_(queries), loading_feedback_(std::make_shared<LoadingFeedback>(std::move(wake), loading_delay, loaded_duration)),

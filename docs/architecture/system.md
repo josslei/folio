@@ -319,6 +319,7 @@ matching `app/include/tui/` and `app/src/tui/`), even without FTXUI calls.
 
 | Category | Responsibility |
 | --- | --- |
+| `logic/` | Substantial TUI-specific state and behavior, independent of rendering: Browser query selection, relevance, invalidation and deferred reload |
 | `shell/` | Application-wide composition: active page, persistent Bottom Bar, global Quit handling and future overlays; no Record-specific rules |
 | `pages/` | Major navigation contexts and their local state/controls: Browser, Record and future Settings |
 | `layouts/` | Reusable composition/arrangement rules extracted when independently useful; no navigation ownership implied |
@@ -333,6 +334,26 @@ TuiShell
   BottomBar
   Dialog Overlay (future; no placeholder implementation)
 ```
+
+Code organization does not define thread organization. `logic/` runs on the TUI
+Event Loop thread; moving a controller introduces no worker, event loop, service
+or queue. Presentation depends on TUI logic, which uses the shared Frontend runtime
+for Backend Application requests. Components need not pass through every layer.
+The communication runtime remains independent of FTXUI and UI state.
+
+`BrowserQueryController` owns Browser selection, cached results, relevance
+generations and deferred reload intentions. It lives under `tui/logic/browser/`.
+Navigation, Browser and future Editor/Draft state belong to the TUI, with one
+owner rather than copies synchronized with the communication runtime. Push
+relevance and reload decisions are TUI behavior, not transport responsibilities.
+Finish outstanding requests while controller completion targets remain alive.
+
+Organize by responsibility, not inheritance alone: substantial nonvisual TUI
+behavior belongs in `logic/`; small tightly coupled state stays with its visual
+owner. Page composition, Shell, layouts and presentation components retain their
+existing responsibilities. LoadingFeedback remains a visual timing/presentation
+component. This separation serves current maintainability, not a speculative GUI
+framework; it adds no MVC/MVVM infrastructure, event bus or dependencies.
 
 Browser is one **Page Type** with Logs/Memos/Todos module contexts. A **Page
 Instance** is a concrete page and its state, while a **context** identifies the
@@ -446,9 +467,9 @@ result-before-invalidation processing.
 The request slot stays occupied until the main thread consumes its completion.
 Completion callbacks run on that thread before retained Push Notifications are
 drained. Wakeup only posts an FTXUI event; it carries no Application payload.
-The handle owns communication state, while `RecordQuery` owns module selection,
+The handle owns communication state, while `BrowserQueryController` owns module selection,
 result relevance and the latest deferred query intention. All Browser queries use
-the handle; RecordQuery has no worker or alternative execution path. Integration
+the handle; BrowserQueryController has no worker or alternative execution path. Integration
 tests exercise navigation generations and retained invalidations.
 Navigation generations discard obsolete query results.
 Invalidations consumed after completion mark the displayed result stale and request

@@ -1,6 +1,6 @@
 #include "tui/tui.hpp"
 #include "frontend/runtime/backend_connection_handle.hpp"
-#include "tui/pages/browser/record_query.hpp"
+#include "tui/logic/browser/browser_query_controller.hpp"
 #include "tui/pages/browser/browser_page.hpp"
 #include "tui/shell/tui_shell.hpp"
 #include <ftxui/component/component.hpp>
@@ -20,7 +20,7 @@ int folio::tui::run() {
   const auto frontend_work = Event::Special("folio.frontend.work");
   application::BackendConnectionHandle backend(std::move(session),
                                                [&] { screen.PostEvent(frontend_work); });
-  RecordQuery queries(backend);
+  BrowserQueryController queries(backend);
   auto page = std::make_shared<BrowserPage>(queries, [&] { screen.PostEvent(Event::Custom); });
   bool available = true;
   auto component = std::make_shared<TuiShell>(

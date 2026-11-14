@@ -1,4 +1,4 @@
-#include "tui/pages/browser/record_query.hpp"
+#include "tui/logic/browser/browser_query_controller.hpp"
 #include "frontend/runtime/backend_connection_handle.hpp"
 #include <future>
 #include "push_fixture.hpp"
@@ -587,7 +587,7 @@ TEST_F(MetadataAccessIntegration, HandleTakesExclusiveSessionOwnership) {
 
 TEST_F(MetadataAccessIntegration, HandleQueryNavigationDiscardsObsoleteCompletion) {
   app::BackendConnectionHandle runtime(connect(), [] {});
-  folio::tui::RecordQuery queries(runtime);
+  folio::tui::BrowserQueryController queries(runtime);
   // Keep the slot busy so multiple navigation changes collapse to the latest intent.
   std::promise<void> release;
   auto released = release.get_future();
@@ -619,7 +619,7 @@ TEST_F(MetadataAccessIntegration, HandleRetainsPushUntilQueryCompletionThenReloa
   auto session = connect();
   auto* transport = session.get();
   app::BackendConnectionHandle runtime(std::move(session), [] {});
-  folio::tui::RecordQuery queries(runtime);
+  folio::tui::BrowserQueryController queries(runtime);
   queries.select(core::RecordType::Memo);
   // Do not consume completion yet. A separate session changes the Catalog.
   auto writer_session = connect();

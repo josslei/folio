@@ -196,9 +196,9 @@ Quit handling. It renders the page first, then reads its feedback through a smal
 callback and renders the Bottom Bar. No generic page/event framework is added.
 
 `BrowserPage` owns its Browser-specific `TopBar`, `EntriesDisplay` and
-`LoadingFeedback`. `RecordQuery` handles the Browser's query execution, module
-selection, per-module result retention and relevance generations. It lives beside
-the Browser Page, not under reusable Frontend communication. `tui.cpp` wires
+`LoadingFeedback`. `BrowserQueryController` coordinates asynchronous Browser queries, module
+selection, per-module result retention and relevance generations. It lives under
+`tui/logic/browser/`, separate from presentation and shared Frontend communication. `tui.cpp` wires
 Backend communication, query lifetime, screen and Shell.
 
 ```text
@@ -207,11 +207,12 @@ app/{include,src}/tui/
   shell/
     tui_shell.*
     bottom_bar.*
+  logic/browser/
+    browser_query_controller.*
   pages/browser/
     browser_page.*
     top_bar.*
     entries_display.*
-    record_query.*
   components/
     loading_feedback.*
 ```
@@ -246,7 +247,7 @@ Methods accept arguments and one main-thread result callback. Session creation
 returns ownership to transfer into the handle. Each worker groups its connection
 and path state.
 
-Runtime consolidation is implemented: RecordQuery contains only TUI state and a
+Runtime consolidation is implemented: BrowserQueryController contains only TUI state and a
 latest deferred query intention, with no legacy execution worker. Integration tests
 cover obsolete navigation results and Request/Push handoff through BackendConnectionHandle.
 Receiver retention uses preallocated slots and wakeup callbacks execute outside
