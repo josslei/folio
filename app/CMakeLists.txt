@@ -5,6 +5,7 @@ add_library(folio_frontend STATIC
   src/frontend/runtime/backend_connection_handle.cpp
   src/process.cpp
   src/tui/logic/browser/browser_query_controller.cpp
+  src/tui/layouts/virtual_rows.cpp
   src/tui/components/loading_status.cpp
   src/tui/shell/tui_shell.cpp
   src/tui/shell/bottom_bar.cpp

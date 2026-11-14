@@ -1,3 +1,5 @@
+#include "tui/layouts/virtual_rows.hpp"
+#include <algorithm>
 #include "tui/logic/browser/browser_query_controller.hpp"
 #include "tui/pages/browser/browser_page.hpp"
 #include "tui/shell/tui_shell.hpp"
@@ -132,4 +134,37 @@ TEST(TuiTopBarTest, CursorAndSelectionHaveDistinctStyles) {
   EXPECT_EQ(moved.CellAt(4, 2).character, "▔");
   EXPECT_EQ(moved.CellAt(23, 2).character, "▔");
   EXPECT_NE(moved.CellAt(23, 1).background_color, ftxui::Color::White);
+}
+
+TEST(TuiVirtualRowsTest, RenderingWorkDependsOnViewportRatherThanRecordCount) {
+  using namespace ftxui;
+  for (const int count : {10, 5000, 10000}) {
+    for (const int height : {1, 12, 40}) {
+      for (const int cursor : {0, count / 2, count - 1}) {
+        std::vector<int> rendered;
+        auto rows = std::make_shared<folio::tui::VirtualRows>(count, cursor, [&](int index) {
+          rendered.push_back(index);
+          return text(std::to_string(index));
+        });
+        auto layout = rows | vscroll_indicator | frame | flex;
+        Screen screen(80, height);
+        Render(screen, layout);
+        EXPECT_LE(rendered.size(), static_cast<std::size_t>(height));
+        EXPECT_NE(std::find(rendered.begin(), rendered.end(), cursor), rendered.end());
+        for (int index : rendered) {
+          EXPECT_GE(index, 0);
+          EXPECT_LT(index, count);
+        }
+      }
+    }
+  }
+}
+
+TEST(TuiVirtualRowsTest, EmptyListDoesNotMaterializeRows) {
+  auto rows = std::make_shared<folio::tui::VirtualRows>(0, 0, [](int) {
+    ADD_FAILURE() << "Empty list requested a row";
+    return ftxui::text("");
+  });
+  ftxui::Screen screen(80, 24);
+  ftxui::Render(screen, rows | ftxui::frame | ftxui::flex);
 }

@@ -1,5 +1,8 @@
 #include "tui/pages/browser/entries_display.hpp"
+#include "tui/layouts/virtual_rows.hpp"
 
+#include <ftxui/component/event.hpp>
+#include <algorithm>
 #include <ctime>
 #include <iomanip>
 #include <sstream>
@@ -79,27 +82,80 @@ Element todo_columns(std::string checkbox, std::string title, std::string priori
 class RecordList : public ComponentBase {
 public:
   explicit RecordList(const BrowserQueryController& queries) : queries_(queries) {}
+  bool Focusable() const override { return !queries_.loading() && records() && !records()->empty(); }
+
+  bool OnEvent(Event event) override {
+    if (!Focused()) return false;
+    const auto* values = records();
+    if (!values || values->empty()) return false;
+    reconcile_cursor(*values);
+    if (event == Event::ArrowUp) {
+      // Let the parent focus container move upward to the Top Bar.
+      if (cursor_ == 0) return false;
+      --cursor_;
+    } else if (event == Event::ArrowDown) {
+      if (cursor_ + 1 < values->size()) ++cursor_;
+    } else {
+      return false;
+    }
+    cursor_id_ = id((*values)[cursor_]);
+    return true;
+  }
+
   Element OnRender() override {
-    Elements rows;
-    if (const auto& result = queries_.result()) {
-      if (const auto* records =
-              std::get_if<application::Annotated<std::vector<core::RecordMetadata>>>(&*result)) {
-        const core::RecordMetadata* previous = nullptr;
-        for (const auto& record : records->value) {
-          rows.push_back(row(record, previous));
-          previous = &record;
-        }
-        if (rows.empty()) rows.push_back(text("No Records") | dim);
+    Element body = text("");
+    if (const auto* values = records()) {
+      reconcile_cursor(*values);
+      if (values->empty()) {
+        body = text("No Records") | dim;
+      } else {
+        const bool focused = Focused();
+        body = std::make_shared<VirtualRows>(
+            static_cast<int>(values->size()), static_cast<int>(cursor_),
+            [this, values, focused](int index) {
+              const auto position = static_cast<std::size_t>(index);
+              auto rendered = row((*values)[position], position ? &(*values)[position - 1] : nullptr);
+              if (position == cursor_ && focused)
+                rendered = rendered | bgcolor(Color::White) | color(Color::Black);
+              return rendered;
+            });
       }
     }
-    if (rows.empty()) rows.push_back(text(""));
     return vbox({// Match the body's one-cell scroll-indicator gutter even when it is hidden.
                  hbox({header() | xflex | dim, text(" ")}),
-                 vbox(std::move(rows)) | vscroll_indicator | frame | flex}) |
-           flex;
+                 body | vscroll_indicator | frame | flex}) | flex;
   }
 
 private:
+  const application::RecordMetadataList* records() const {
+    if (!queries_.result()) return nullptr;
+    const auto* value = std::get_if<application::Annotated<application::RecordMetadataList>>(
+        &*queries_.result());
+    return value ? &value->value : nullptr;
+  }
+
+  static core::Id id(const core::RecordMetadata& record) {
+    return std::visit([](const auto& metadata) { return metadata.id; }, record);
+  }
+
+  // Reconcile only when the result changes; ordinary cursor movement is O(1).
+  void reconcile_cursor(const application::RecordMetadataList& values) {
+    if (values.empty()) {
+      cursor_ = 0;
+      return;
+    }
+    if (cursor_id_ && cursor_ < values.size() && id(values[cursor_]) == *cursor_id_) return;
+    if (cursor_id_) {
+      const auto found = std::find_if(values.begin(), values.end(),
+                                    [&](const auto& record) { return id(record) == *cursor_id_; });
+      if (found != values.end()) cursor_ = static_cast<std::size_t>(found - values.begin());
+    }
+    cursor_ = std::min(cursor_, values.size() - 1);
+    cursor_id_ = id(values[cursor_]);
+  }
+
+  std::size_t cursor_ = 0;
+  std::optional<core::Id> cursor_id_;
   virtual Element header() const = 0;
   virtual Element row(const core::RecordMetadata& record,
                       const core::RecordMetadata* previous) const = 0;
@@ -189,6 +245,27 @@ EntriesDisplay::EntriesDisplay(const BrowserQueryController& queries)
   Add(logs_);
   Add(memos_);
   Add(todos_);
+}
+
+bool EntriesDisplay::Focusable() const {
+  return !queries_.loading() && queries_.result() &&
+         std::holds_alternative<application::Annotated<application::RecordMetadataList>>(
+             *queries_.result()) &&
+         !std::get<application::Annotated<application::RecordMetadataList>>(*queries_.result())
+              .value.empty();
+}
+
+ftxui::Component EntriesDisplay::ActiveChild() {
+  switch (queries_.selected()) {
+  case core::RecordType::Log: return logs_;
+  case core::RecordType::Memo: return memos_;
+  case core::RecordType::Todo: return todos_;
+  }
+  return nullptr;
+}
+
+bool EntriesDisplay::OnEvent(ftxui::Event event) {
+  return ActiveChild()->OnEvent(event);
 }
 
 ftxui::Element EntriesDisplay::OnRender() {

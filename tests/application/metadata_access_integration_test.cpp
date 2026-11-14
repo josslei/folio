@@ -1,3 +1,7 @@
+#include "tui/pages/browser/entries_display.hpp"
+#include "tui/pages/browser/top_bar.hpp"
+#include <ftxui/component/component.hpp>
+#include <ftxui/component/event.hpp>
 #include "tui/logic/browser/browser_query_controller.hpp"
 #include "frontend/runtime/backend_connection_handle.hpp"
 #include <future>
@@ -685,5 +689,39 @@ TEST_F(MetadataAccessIntegration, TypedHandleCallsDeliverResultsOnlyOnMainThread
   ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
   runtime.process_completion();
   EXPECT_TRUE(acquired);
+  runtime.finish_requests();
+}
+
+TEST_F(MetadataAccessIntegration, BrowserCursorMovesBetweenRegionsWithoutActivatingTabs) {
+  app::BackendConnectionHandle runtime(connect(), [] {});
+  folio::tui::BrowserQueryController queries(runtime);
+  queries.select(core::RecordType::Memo);
+  auto entries = std::make_shared<folio::tui::EntriesDisplay>(queries);
+  auto tabs = std::make_shared<folio::tui::TopBar>([](auto) {
+    ADD_FAILURE() << "Cursor movement must not activate a module";
+  });
+  auto page = ftxui::Container::Vertical({tabs, entries});
+  EXPECT_FALSE(entries->Focusable());
+  ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
+  runtime.process_completion();
+  ASSERT_TRUE(entries->Focusable());
+  EXPECT_TRUE(tabs->Focused());
+  EXPECT_TRUE(page->OnEvent(ftxui::Event::Tab));
+  EXPECT_TRUE(entries->Focused());
+  EXPECT_TRUE(entries->ActiveChild()->Focused());
+  // Down at the last row stays put; Up at the first row returns to the Top Bar.
+  EXPECT_TRUE(page->OnEvent(ftxui::Event::ArrowDown));
+  EXPECT_TRUE(entries->Focused());
+  EXPECT_TRUE(page->OnEvent(ftxui::Event::ArrowUp));
+  EXPECT_TRUE(tabs->Focused());
+  EXPECT_TRUE(page->OnEvent(ftxui::Event::ArrowDown));
+  EXPECT_TRUE(entries->Focused());
+  EXPECT_FALSE(page->OnEvent(ftxui::Event::Return));
+  EXPECT_TRUE(page->OnEvent(ftxui::Event::TabReverse));
+  EXPECT_TRUE(tabs->Focused());
+  queries.invalidate();
+  EXPECT_FALSE(entries->Focusable());
+  EXPECT_FALSE(page->OnEvent(ftxui::Event::Tab));
+  EXPECT_TRUE(tabs->Focused());
   runtime.finish_requests();
 }

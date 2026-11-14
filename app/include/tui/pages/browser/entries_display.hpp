@@ -7,6 +7,9 @@ class EntriesDisplay : public ftxui::ComponentBase {
 public:
   explicit EntriesDisplay(const BrowserQueryController& queries);
   ftxui::Element OnRender() override;
+  ftxui::Component ActiveChild() override;
+  bool OnEvent(ftxui::Event event) override;
+  bool Focusable() const override;
 private:
   const BrowserQueryController& queries_;
   ftxui::Component logs_;

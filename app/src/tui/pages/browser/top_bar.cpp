@@ -43,8 +43,8 @@ bool TopBar::OnEvent(ftxui::Event event) {
     return false;
   }
   if (!Focused()) return false;
-  if (event == Event::ArrowRight || event == Event::Tab) cursor_ = (cursor_ + 1) % 3;
-  else if (event == Event::ArrowLeft || event == Event::TabReverse) cursor_ = (cursor_ + 2) % 3;
+  if (event == Event::ArrowRight) cursor_ = (cursor_ + 1) % 3;
+  else if (event == Event::ArrowLeft) cursor_ = (cursor_ + 2) % 3;
   else if (event == Event::Return) activate(cursor_);
   else return false;
   return true;

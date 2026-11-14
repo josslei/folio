@@ -14,6 +14,7 @@ public:
               std::chrono::milliseconds loading_delay = std::chrono::milliseconds(100),
               std::chrono::milliseconds loaded_duration = std::chrono::seconds(1));
   ftxui::Element OnRender() override;
+  bool OnEvent(ftxui::Event event) override;
   /// Shell reads feedback after rendering the page; no Shell ownership here.
   ftxui::Element feedback() const;
 
@@ -24,6 +25,7 @@ private:
   std::size_t feedback_generation_ = 0;
   bool awaiting_result_ = false;
   std::string feedback_;
+  ftxui::Component navigation_;
   std::shared_ptr<TopBar> top_bar_;
   std::shared_ptr<EntriesDisplay> entries_;
 };

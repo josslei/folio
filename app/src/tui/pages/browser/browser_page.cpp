@@ -8,8 +8,8 @@ BrowserPage::BrowserPage(BrowserQueryController& queries, std::function<void()> 
     : queries_(queries), loading_status_(std::make_shared<LoadingStatus>(std::move(wake), loading_delay, loaded_duration)),
       top_bar_(std::make_shared<TopBar>([this](core::RecordType type) { select(type); })),
       entries_(std::make_shared<EntriesDisplay>(queries)) {
-  Add(top_bar_);
-  Add(entries_);
+  navigation_ = ftxui::Container::Vertical({top_bar_, entries_});
+  Add(navigation_);
   select(core::RecordType::Log);
 }
 ftxui::Element BrowserPage::feedback() const {
@@ -21,6 +21,12 @@ void BrowserPage::select(core::RecordType type) {
   awaiting_result_ = true;
   loading_status_->begin(feedback_generation_);
   queries_.select(type);
+}
+bool BrowserPage::OnEvent(ftxui::Event event) {
+  // Mouse activation must not invoke container focus movement (including wheel events).
+  if (event.is_mouse()) return top_bar_->OnEvent(event);
+  if (!entries_->Focusable()) navigation_->SetActiveChild(top_bar_.get());
+  return navigation_->OnEvent(event);
 }
 ftxui::Element BrowserPage::OnRender() {
   using namespace ftxui;
@@ -41,7 +47,7 @@ ftxui::Element BrowserPage::OnRender() {
     }
   }
 
-  return vbox({top_bar_->Render(), entries_->Render()}) |
-         flex;
+  if (!entries_->Focusable()) navigation_->SetActiveChild(top_bar_.get());
+  return navigation_->Render() | flex;
 }
 } // namespace folio::tui
