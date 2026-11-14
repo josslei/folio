@@ -6,7 +6,8 @@
 #include <spdlog/sinks/base_sink.h>
 #include <fstream>
 #include <future>
-#include "backend_connection_handle.hpp"
+#include "blocking_frontend.hpp"
+#include "frontend/runtime/connection_session.hpp"
 #include "push_fixture.hpp"
 #include <stdexcept>
 
@@ -51,7 +52,7 @@ protected:
 
   void block_index_save() {
     fs::create_directories(paths.application.cache);
-    std::ofstream(paths.application.cache / "index") << "blocks index directory";
+    std::ofstream(paths.application.state / "index") << "blocks index directory";
   }
 
   void expect_released() {
@@ -90,7 +91,7 @@ TEST_F(BackendStates, PartialStartupPreservesMarkerAndReleasesOwnership) {
   EXPECT_TRUE(std::holds_alternative<storage::CoordinatorError>(context.diagnostics[0].error));
   EXPECT_EQ(Finish(context), BackendActionOutcome::Success);
   EXPECT_TRUE(fs::exists(marker()));
-  EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+  EXPECT_FALSE(fs::exists(paths.application.state / "index/normal.msgpack"));
   expect_released();
 }
 
@@ -101,7 +102,7 @@ TEST_F(BackendStates, NormalFinishPersistsAndReleasesResources) {
   EXPECT_EQ(Finish(context), BackendActionOutcome::Success);
   EXPECT_TRUE(context.diagnostics.empty());
   EXPECT_FALSE(fs::exists(marker()));
-  EXPECT_TRUE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+  EXPECT_TRUE(fs::exists(paths.application.state / "index/normal.msgpack"));
   expect_released();
 }
 
@@ -114,7 +115,7 @@ TEST_F(BackendStates, AcceptedWorkDrainsBeforeCatalogFinalizationAndOwnershipRel
   std::stop_source shutdown;
   std::jthread lifecycle, frontend;
   bool released = false;
-  std::optional<BackendConnectionHandle> handle;
+  std::optional<folio::test::BlockingFrontend> handle;
   std::optional<AccessResult<Annotated<core::Memo::Snapshot>>> response;
   BackendActionOutcome stopped{}, finished{};
   struct Cleanup {
@@ -147,9 +148,9 @@ TEST_F(BackendStates, AcceptedWorkDrainsBeforeCatalogFinalizationAndOwnershipRel
     finished = Finish(context);
   });
   auto settings = std::get<ConnectionSettings>(connection_settings(paths));
-  auto connected = BackendConnectionHandle::connect(settings);
-  ASSERT_TRUE(std::holds_alternative<BackendConnectionHandle>(connected));
-  handle.emplace(std::get<BackendConnectionHandle>(std::move(connected)));
+  auto connected = folio::application::ConnectionSession::connect(settings);
+  ASSERT_TRUE(std::holds_alternative<std::unique_ptr<folio::application::ConnectionSession>>(connected));
+  handle.emplace(std::get<std::unique_ptr<folio::application::ConnectionSession>>(connected));
   frontend = std::jthread([&] { response = handle->load_memo(core::Id::generate()); });
   ASSERT_EQ(entered.get_future().wait_for(3s), std::future_status::ready);
   shutdown.request_stop();
@@ -231,7 +232,7 @@ TEST_F(BackendStates, InconsistentCatalogCannotBeFinalizedAsClean) {
   ASSERT_EQ(context.coordinator->status(), storage::CatalogStatus::Inconsistent);
   EXPECT_EQ(Finish(context), BackendActionOutcome::Failure);
   EXPECT_TRUE(fs::exists(marker()));
-  EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+  EXPECT_FALSE(fs::exists(paths.application.state / "index/normal.msgpack"));
   ASSERT_EQ(context.diagnostics.size(), 1u);
   EXPECT_EQ(context.diagnostics[0].phase, Phase::Finish);
   expect_released();
@@ -318,9 +319,10 @@ TEST_F(BackendStates, ReportDeliversFatalAvailabilityBeforeFinishClosesSessions)
   std::stop_source shutdown;
   std::jthread serving([&] { context.runtime->run(shutdown.get_token()); });
   auto settings = std::get<ConnectionSettings>(connection_settings(paths));
-  auto connected = BackendConnectionHandle::connect(settings);
-  ASSERT_TRUE(std::holds_alternative<BackendConnectionHandle>(connected));
-  auto handle = std::get<BackendConnectionHandle>(std::move(connected));
+  auto connected = folio::application::ConnectionSession::connect(settings);
+  ASSERT_TRUE(std::holds_alternative<std::unique_ptr<folio::application::ConnectionSession>>(connected));
+  auto handle_session = std::get<std::unique_ptr<folio::application::ConnectionSession>>(std::move(connected));
+  folio::test::BlockingFrontend handle(handle_session);
   shutdown.request_stop();
   serving.join();
   record_backend_failure(
@@ -328,7 +330,7 @@ TEST_F(BackendStates, ReportDeliversFatalAvailabilityBeforeFinishClosesSessions)
                 IpcError{IpcErrorCode::IoError, "private diagnostic must never appear in Push"}});
   ASSERT_EQ(Report(context), BackendActionOutcome::Success);
   ASSERT_TRUE(folio::test::wait_push_notifications(handle, std::chrono::steady_clock::now() + 1s));
-  auto notifications = handle.take_push_notifications();
+  auto notifications = handle.connection_session().take();
   ASSERT_EQ(notifications.size(), 1u);
   EXPECT_EQ(std::get<AvailabilityChangeNotice>(notifications[0]).state, SharedAvailability::Fatal);
   EXPECT_TRUE(std::get<AvailabilityChangeNotice>(notifications[0]).error);

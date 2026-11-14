@@ -279,24 +279,24 @@ TEST_F(Configuration, PlatformDefaultsAreResolvedWithoutCreatingDirectories) {
   ASSERT_TRUE(std::holds_alternative<folio::config::ApplicationPaths>(result));
   const auto& paths = std::get<folio::config::ApplicationPaths>(result);
 #if defined(__linux__)
-  EXPECT_EQ(paths.config, base / ".config/folio");
-  EXPECT_EQ(paths.data, base / ".local/share/folio");
-  EXPECT_EQ(paths.state, base / ".local/state/folio");
-  EXPECT_EQ(paths.logs, base / ".local/state/folio/logs");
+  EXPECT_EQ(paths.config, base / ".folio/config");
+  EXPECT_EQ(paths.data, base / ".folio/data");
+  EXPECT_EQ(paths.state, base / ".folio/state");
+  EXPECT_EQ(paths.logs, base / ".folio/logs");
   EXPECT_EQ(paths.cache, base / ".cache/folio");
   EXPECT_FALSE(paths.runtime);
 #elif defined(__APPLE__)
-  EXPECT_EQ(paths.config, base / "Library/Application Support/Folio/config");
-  EXPECT_EQ(paths.data, base / "Library/Application Support/Folio/data");
-  EXPECT_EQ(paths.state, base / "Library/Application Support/Folio/state");
+  EXPECT_EQ(paths.config, base / ".folio/config");
+  EXPECT_EQ(paths.data, base / ".folio/data");
+  EXPECT_EQ(paths.state, base / ".folio/state");
   EXPECT_EQ(paths.cache, base / "Library/Caches/Folio");
-  EXPECT_EQ(paths.logs, base / "Library/Logs/Folio");
+  EXPECT_EQ(paths.logs, base / ".folio/logs");
 #endif
   EXPECT_TRUE(fs::is_empty(base));
 }
 
 #if defined(__linux__)
-TEST_F(Configuration, XdgAbsoluteOverridesAndRelativeFallbacks) {
+TEST_F(Configuration, OnlyCacheAndRuntimeUseXdgOverrides) {
   EnvironmentOverride home("HOME", base.string());
   EnvironmentOverride config("XDG_CONFIG_HOME", (base / "settings").string());
   EnvironmentOverride data("XDG_DATA_HOME", std::string("relative"));
@@ -306,10 +306,10 @@ TEST_F(Configuration, XdgAbsoluteOverridesAndRelativeFallbacks) {
   auto result = folio::config::application_paths();
   ASSERT_TRUE(std::holds_alternative<folio::config::ApplicationPaths>(result));
   const auto& paths = std::get<folio::config::ApplicationPaths>(result);
-  EXPECT_EQ(paths.config, base / "settings/folio");
-  EXPECT_EQ(paths.data, base / ".local/share/folio");
-  EXPECT_EQ(paths.state, base / "persistent/folio");
-  EXPECT_EQ(paths.logs, base / "persistent/folio/logs");
+  EXPECT_EQ(paths.config, base / ".folio/config");
+  EXPECT_EQ(paths.data, base / ".folio/data");
+  EXPECT_EQ(paths.state, base / ".folio/state");
+  EXPECT_EQ(paths.logs, base / ".folio/logs");
   EXPECT_EQ(paths.cache, base / ".cache/folio");
   EXPECT_EQ(paths.runtime, base / "run/folio");
   EXPECT_TRUE(fs::is_empty(base));

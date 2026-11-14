@@ -85,13 +85,13 @@ target_link_libraries(folio_backend_child PRIVATE folio_frontend folio_backend)
 if(MINGW)
   target_link_options(folio_backend_child PRIVATE -municode)
 endif()
-add_executable(folio_application_tests application/push_codec_test.cpp application/catalog_maintenance_test.cpp application/concurrent_execution_test.cpp application/runtime_test.cpp application/mutation_orchestrator_test.cpp application/message_transport_test.cpp application/mutation_codec_test.cpp application/mutation_contract_test.cpp application/access_codec_test.cpp application/metadata_access_test.cpp application/metadata_access_integration_test.cpp application/logging_test.cpp application/configuration_test.cpp application/backend_states_test.cpp application/backend_lifecycle_test.cpp application/process_test.cpp application/backend_test.cpp)
+add_executable(folio_application_tests application/frontend_query_test.cpp application/push_codec_test.cpp application/catalog_maintenance_test.cpp application/concurrent_execution_test.cpp application/runtime_test.cpp application/mutation_orchestrator_test.cpp application/message_transport_test.cpp application/mutation_codec_test.cpp application/mutation_contract_test.cpp application/access_codec_test.cpp application/metadata_access_test.cpp application/metadata_access_integration_test.cpp application/logging_test.cpp application/configuration_test.cpp application/backend_states_test.cpp application/backend_lifecycle_test.cpp application/process_test.cpp application/backend_test.cpp)
 target_include_directories(folio_application_tests PRIVATE
   "${PROJECT_SOURCE_DIR}/server/include" "${PROJECT_SOURCE_DIR}/app/include"
   "${PROJECT_SOURCE_DIR}/lib/src")
 target_compile_features(folio_application_tests PRIVATE cxx_std_20)
 set_target_properties(folio_application_tests PROPERTIES CXX_EXTENSIONS OFF)
-target_link_libraries(folio_application_tests PRIVATE folio_frontend folio_backend GTest::gtest_main msgpack-cxx)
+target_link_libraries(folio_application_tests PRIVATE folio_frontend folio_backend GTest::gtest_main msgpack-cxx ftxui::component)
 target_compile_definitions(folio_application_tests PRIVATE
   "FOLIO_PROCESS_CHILD=\"$<TARGET_FILE:folio_process_child>\"")
 target_compile_definitions(folio_application_tests PRIVATE

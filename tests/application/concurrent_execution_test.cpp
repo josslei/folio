@@ -1,6 +1,7 @@
 #include "execution/request_coordinator.hpp"
 #include "ipc/ipc_server.hpp"
-#include "backend_connection_handle.hpp"
+#include "blocking_frontend.hpp"
+#include "frontend/runtime/connection_session.hpp"
 #include "operations/access_orchestrator.hpp"
 #include "operations/mutation_orchestrator.hpp"
 #include "storage/normal_repository_test_hooks.hpp"
@@ -489,9 +490,10 @@ TEST_F(ConcurrentOperations, IpcControlBrowseAndUnrelatedLoadProgressWhileAccept
   }};
   const auto settings = std::get<ipc::ConnectionSettings>(ipc::connection_settings(paths));
   auto connect = [&] {
-    return std::get<app::BackendConnectionHandle>(app::BackendConnectionHandle::connect(settings));
+    return std::get<std::unique_ptr<app::ConnectionSession>>(app::ConnectionSession::connect(settings));
   };
-  auto editing = connect(), browsing = connect(), loading = connect(), acquiring = connect();
+  auto editing_session = connect(), browsing_session = connect(), loading_session = connect(), acquiring_session = connect();
+  folio::test::BlockingFrontend editing(editing_session), browsing(browsing_session), loading(loading_session), acquiring(acquiring_session);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(editing.acquire_edit(memo.id)));
   auto save = std::async(std::launch::async, [&] {
     return editing.update(app::MutationId::generate(), memo.id,

@@ -3,7 +3,8 @@
 #include "ipc/ipc_server.hpp"
 #include <folio/ipc/application_codec.hpp>
 #include <folio/ipc/message_transport.hpp>
-#include "backend_connection_handle.hpp"
+#include "blocking_frontend.hpp"
+#include "frontend/runtime/connection_session.hpp"
 
 #include <gtest/gtest.h>
 #include <condition_variable>
@@ -418,21 +419,22 @@ TEST_F(IpcServer, ConnectionCapacityWaitWakesWhenAWorkerLeaves) {
   start();
   auto first = connect(), keeper = connect();
   auto waiting = std::async(std::launch::async,
-                            [&] { return app::BackendConnectionHandle::connect(settings()); });
+                            [&] { return app::ConnectionSession::connect(settings()); });
   EXPECT_EQ(waiting.wait_for(20ms), std::future_status::timeout);
   first = ipc::IpcStream{};
   ASSERT_EQ(waiting.wait_for(2s), std::future_status::ready);
   auto connected = waiting.get();
-  ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(connected));
+  ASSERT_TRUE(std::holds_alternative<std::unique_ptr<app::ConnectionSession>>(connected));
   EXPECT_TRUE(std::holds_alternative<std::monostate>(
-      std::get<app::BackendConnectionHandle>(connected).ping()));
+      folio::test::BlockingFrontend(std::get<std::unique_ptr<app::ConnectionSession>>(connected)).ping()));
 }
 
 TEST_F(IpcServer, BlockingPublicReadWaitsForFinalResultAfterAdmission) {
   start();
-  auto result = app::BackendConnectionHandle::connect(settings());
-  ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(result));
-  auto connection = std::get<app::BackendConnectionHandle>(std::move(result));
+  auto result = app::ConnectionSession::connect(settings());
+  ASSERT_TRUE(std::holds_alternative<std::unique_ptr<app::ConnectionSession>>(result));
+  auto connection_session = std::get<std::unique_ptr<app::ConnectionSession>>(std::move(result));
+  folio::test::BlockingFrontend connection(connection_session);
   auto read =
       std::async(std::launch::async, [&] { return connection.load_memo(core::Id::generate()); });
   ASSERT_TRUE(await_count(1));
@@ -476,9 +478,10 @@ TEST_F(IpcServer, FailureDrainPreservesOtherConnectionsUntilFinish) {
 TEST_F(IpcServer, MutationIdentityMismatchInvalidatesConnectionWithoutFabricatingFailure) {
   mismatch_mutation = true;
   start();
-  auto connected = app::BackendConnectionHandle::connect(settings());
-  ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(connected));
-  auto connection = std::get<app::BackendConnectionHandle>(std::move(connected));
+  auto connected = app::ConnectionSession::connect(settings());
+  ASSERT_TRUE(std::holds_alternative<std::unique_ptr<app::ConnectionSession>>(connected));
+  auto connection_session = std::get<std::unique_ptr<app::ConnectionSession>>(std::move(connected));
+  folio::test::BlockingFrontend connection(connection_session);
   core::TimestampContext time{core::Timestamp{}, "UTC", {}};
   const auto id = app::MutationId::generate();
   auto request = std::async(std::launch::async, [&] {
@@ -502,9 +505,10 @@ TEST_F(IpcServer, MutationAdmissionRejectionRetainsIdentityAndIsNotFinalMutation
   submit(blocker, core::Id::generate());
   EXPECT_EQ(receive(blocker).kind, ipc::MessageKind::Accepted);
   ASSERT_TRUE(await_count(1));
-  auto connected = app::BackendConnectionHandle::connect(settings());
-  ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(connected));
-  auto connection = std::get<app::BackendConnectionHandle>(std::move(connected));
+  auto connected = app::ConnectionSession::connect(settings());
+  ASSERT_TRUE(std::holds_alternative<std::unique_ptr<app::ConnectionSession>>(connected));
+  auto connection_session = std::get<std::unique_ptr<app::ConnectionSession>>(std::move(connected));
+  folio::test::BlockingFrontend connection(connection_session);
   core::TimestampContext time{core::Timestamp{}, "UTC", {}};
   const auto id = app::MutationId::generate();
   auto result = connection.create(id, app::MemoEditableFields{"title", "body", {}}, time, time, {});
@@ -519,9 +523,10 @@ TEST_F(IpcServer, MutationAdmissionRejectionRetainsIdentityAndIsNotFinalMutation
 TEST_F(IpcServer, LostMutationFinalResponseRetainsAcceptedSubmissionWithoutBackendStatus) {
   fail_operations = expect_failures = true;
   start();
-  auto connected = app::BackendConnectionHandle::connect(settings());
-  ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(connected));
-  auto connection = std::get<app::BackendConnectionHandle>(std::move(connected));
+  auto connected = app::ConnectionSession::connect(settings());
+  ASSERT_TRUE(std::holds_alternative<std::unique_ptr<app::ConnectionSession>>(connected));
+  auto connection_session = std::get<std::unique_ptr<app::ConnectionSession>>(std::move(connected));
+  folio::test::BlockingFrontend connection(connection_session);
   core::TimestampContext time{core::Timestamp{}, "UTC", {}};
   const auto id = app::MutationId::generate();
   auto request = std::async(std::launch::async, [&] {
@@ -540,9 +545,10 @@ TEST_F(IpcServer, NotificationProducerFailureReachesLifecycleWithoutClosingSessi
   hold_report = true;
   expect_failures = true;
   start();
-  auto connected = app::BackendConnectionHandle::connect(settings());
-  ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(connected));
-  auto connection = std::get<app::BackendConnectionHandle>(std::move(connected));
+  auto connected = app::ConnectionSession::connect(settings());
+  ASSERT_TRUE(std::holds_alternative<std::unique_ptr<app::ConnectionSession>>(connected));
+  auto connection_session = std::get<std::unique_ptr<app::ConnectionSession>>(std::move(connected));
+  folio::test::BlockingFrontend connection(connection_session);
   runtime->publish(app::AvailabilityChangeNotice{
       app::SharedAvailability::Fatal,
       app::ApplicationError{app::ErrorCategory::ApplicationUnavailable,
@@ -556,7 +562,7 @@ TEST_F(IpcServer, NotificationProducerFailureReachesLifecycleWithoutClosingSessi
   EXPECT_TRUE(connection.connected());
   runtime->publish(app::AvailabilityChangeNotice{app::SharedAvailability::Fatal});
   ASSERT_TRUE(folio::test::wait_push_notifications(connection, Clock::now() + 1s));
-  auto events = connection.take_push_notifications();
+  auto events = connection.connection_session().take();
   ASSERT_EQ(events.size(), 1u);
   EXPECT_EQ(std::get<app::AvailabilityChangeNotice>(events.front()).state,
             app::SharedAvailability::Fatal);
@@ -569,12 +575,13 @@ TEST_F(IpcServer, NotificationProducerFailureReachesLifecycleWithoutClosingSessi
 
 TEST_F(IpcServer, CancellingNotificationWaitLeavesSessionUsable) {
   start();
-  auto connected = app::BackendConnectionHandle::connect(settings());
-  ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(connected));
-  auto connection = std::get<app::BackendConnectionHandle>(std::move(connected));
+  auto connected = app::ConnectionSession::connect(settings());
+  ASSERT_TRUE(std::holds_alternative<std::unique_ptr<app::ConnectionSession>>(connected));
+  auto connection_session = std::get<std::unique_ptr<app::ConnectionSession>>(std::move(connected));
+  folio::test::BlockingFrontend connection(connection_session);
   std::stop_source stop;
   auto waiting = std::async(std::launch::async,
-                            [&] { return connection.wait_push_notifications(stop.get_token()); });
+                            [&] { return connection.connection_session().wait(stop.get_token()); });
   stop.request_stop();
   EXPECT_FALSE(waiting.get());
   EXPECT_TRUE(connection.connected());
@@ -583,20 +590,21 @@ TEST_F(IpcServer, CancellingNotificationWaitLeavesSessionUsable) {
 
 TEST_F(IpcServer, PushIsAckedWhileRequestExecutesAndRetainedUntilResult) {
   start();
-  auto connected = app::BackendConnectionHandle::connect(settings());
-  ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(connected));
-  auto connection = std::get<app::BackendConnectionHandle>(std::move(connected));
+  auto connected = app::ConnectionSession::connect(settings());
+  ASSERT_TRUE(std::holds_alternative<std::unique_ptr<app::ConnectionSession>>(connected));
+  auto connection_session = std::get<std::unique_ptr<app::ConnectionSession>>(std::move(connected));
+  folio::test::BlockingFrontend connection(connection_session);
   const auto id = core::Id::generate();
   auto request = std::async(std::launch::async, [&] { return connection.load_memo(id); });
   ASSERT_TRUE(await_count(1));
   runtime->publish(app::PushNotification{app::RecordChangeNotice{id, true, false}});
   EXPECT_TRUE(connection.connected());
-  EXPECT_TRUE(connection.take_push_notifications().empty());
+  EXPECT_TRUE(connection.connection_session().take().empty());
   EXPECT_EQ(request.wait_for(0ms), std::future_status::timeout);
   release();
   EXPECT_TRUE(std::holds_alternative<app::ApplicationError>(request.get()));
   ASSERT_TRUE(folio::test::wait_push_notifications(connection, Clock::now() + 1s));
-  auto events = connection.take_push_notifications();
+  auto events = connection.connection_session().take();
   ASSERT_EQ(events.size(), 1u);
   const auto& invalidation = std::get<app::RecordChangeNotice>(events[0]);
   EXPECT_EQ(invalidation.id, id);
@@ -606,17 +614,18 @@ TEST_F(IpcServer, PushIsAckedWhileRequestExecutesAndRetainedUntilResult) {
 
 TEST_F(IpcServer, PushOrderIsIndependentOfUiConsumptionAndRequestTraffic) {
   start();
-  auto connected = app::BackendConnectionHandle::connect(settings());
-  auto connection = std::get<app::BackendConnectionHandle>(std::move(connected));
+  auto connected = app::ConnectionSession::connect(settings());
+  auto connection_session = std::get<std::unique_ptr<app::ConnectionSession>>(std::move(connected));
+  folio::test::BlockingFrontend connection(connection_session);
   const auto first = core::Id::generate(), second = core::Id::generate();
   runtime->publish(app::PushNotification{app::EditLockChangeNotice{first}});
   runtime->publish(app::PushNotification{app::EditLockChangeNotice{second}});
   EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
   ASSERT_TRUE(folio::test::wait_push_notifications(connection, Clock::now() + 1s));
-  auto events = connection.take_push_notifications();
+  auto events = connection.connection_session().take();
   const auto deadline = Clock::now() + 1s;
   while (events.size() < 2 && folio::test::wait_push_notifications(connection, deadline)) {
-    auto more = connection.take_push_notifications();
+    auto more = connection.connection_session().take();
     events.insert(events.end(), more.begin(), more.end());
   }
   ASSERT_EQ(events.size(), 2u);

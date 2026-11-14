@@ -231,9 +231,9 @@ TEST_F(Processes, ExistingVaultIsProtectedButAbsentVaultIsNeverCreated) {
 
 TEST_F(Processes, ProcessOwnershipNeverTouchesMarkerOrIndex) {
   fs::create_directories(paths.application.state);
-  fs::create_directories(paths.application.cache / "index");
+  fs::create_directories(paths.application.state / "index");
   auto marker = paths.application.state / "session.marker";
-  auto index = paths.application.cache / "index/normal.msgpack";
+  auto index = paths.application.state / "index/normal.msgpack";
   touch(marker, "existing session");
   touch(index, "existing index");
   const auto marker_time = fs::last_write_time(marker);

@@ -21,6 +21,7 @@ contract owners, code and verification.
 | --- | --- |
 | Startup, process/connection ownership, shutdown, errors or draining | [Backend lifecycle](contracts/backend-lifecycle.md), including the [thread/call-flow diagram](contracts/backend-lifecycle.md#backend-lifecycle-call-flow--implemented) |
 | IPC messages, admission, queueing or executor boundaries | [IPC](contracts/ipc.md) |
+| Frontend/TUI ownership, UI regions and navigation | [Frontend/TUI architecture](architecture/system.md#frontend-and-tui-organization), [Frontend UI terminology](development/plans/application.md#frontend-ui-terminology--approved) |
 | Browsing, metadata queries or loading content | [Access](contracts/access.md) |
 | Create/Update/Move, locks, failure outcomes or confirmation | [Mutations and editing](contracts/mutations.md), [Storage](contracts/storage.md) |
 | Entry layouts, Catalog/Index consistency or Session Marker | [Storage](contracts/storage.md) |

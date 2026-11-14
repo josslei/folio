@@ -71,7 +71,8 @@ outcomes are implemented in the [Mutation contract](mutations.md#results-and-evi
 
 ## Transport and limits
 
-Methods synchronously exchange one request at a time on each connection, with a
+Typed Frontend methods submit asynchronously; the Request Worker exchanges one
+request at a time on each connection, with a
 bounded admission deadline followed by a separate Accepted acknowledgment and
 final result/error. Accepted queue waiting has no short completion deadline;
 transfer stalls and disconnections remain errors. Frontends schedule these

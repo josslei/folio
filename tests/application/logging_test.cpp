@@ -1,6 +1,7 @@
+#include "frontend/runtime/connection_session.hpp"
 #include <folio/logging/logging.hpp>
 #include <folio/core/types.hpp>
-#include "backend_connection_handle.hpp"
+#include "frontend/runtime/backend_connection_handle.hpp"
 #include "logging/internal/session_file_test_access.hpp"
 #include "runtime/backend_states.hpp"
 #include <spdlog/sinks/basic_file_sink.h>

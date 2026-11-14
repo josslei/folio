@@ -42,6 +42,7 @@ core::Result<ApplicationPaths, ConfigurationError> application_paths() {
     if (account) home = account->pw_dir;
   }
   if (!home.is_absolute()) return invalid("Cannot resolve current user's home directory");
+  const auto support = home / ".folio";
 #if defined(__linux__)
   auto directory = [&](const char* key, const fs::path& fallback) {
     auto root = environment_path(key);
@@ -49,14 +50,10 @@ core::Result<ApplicationPaths, ConfigurationError> application_paths() {
   };
   std::optional<fs::path> runtime;
   if (auto root = environment_path("XDG_RUNTIME_DIR"); !root.empty()) runtime = root / "folio";
-  return ApplicationPaths{directory("XDG_CONFIG_HOME", home / ".config"),
-                          directory("XDG_DATA_HOME", home / ".local/share"),
-                          directory("XDG_STATE_HOME", home / ".local/state"),
-                          directory("XDG_CACHE_HOME", home / ".cache"),
-                          directory("XDG_STATE_HOME", home / ".local/state") / "logs",
-                          runtime};
+  return ApplicationPaths{support / "config", support / "data",
+                          support / "state",  directory("XDG_CACHE_HOME", home / ".cache"),
+                          support / "logs",   runtime};
 #elif defined(__APPLE__)
-  auto support = home / "Library/Application Support/Folio";
   std::optional<fs::path> runtime;
   const auto size = confstr(_CS_DARWIN_USER_TEMP_DIR, nullptr, 0);
   if (size) {
@@ -67,9 +64,9 @@ core::Result<ApplicationPaths, ConfigurationError> application_paths() {
       if (!ec) runtime = root / "folio";
     }
   }
-  return ApplicationPaths{support / "config",          support / "data",
-                          support / "state",           home / "Library/Caches/Folio",
-                          home / "Library/Logs/Folio", runtime};
+  return ApplicationPaths{support / "config", support / "data",
+                          support / "state",  home / "Library/Caches/Folio",
+                          support / "logs",   runtime};
 #endif
 #elif defined(_WIN32)
   auto known = [](REFKNOWNFOLDERID id) -> fs::path {

@@ -1,6 +1,7 @@
 #include <folio/ipc/message_transport.hpp>
 #include "runtime/repository_ownership.hpp"
-#include "backend_connection_handle.hpp"
+#include "blocking_frontend.hpp"
+#include "frontend/runtime/connection_session.hpp"
 #include <gtest/gtest.h>
 
 #include <thread>
@@ -158,11 +159,12 @@ TEST_F(MessageTransport, PublicReadRejectsInvalidAdmissionOrFinalConfirmation) {
   namespace app = folio::application;
   for (int scenario = 0; scenario != 4; ++scenario) {
     auto frontend = std::async(std::launch::async, [&] {
-      auto connected = app::BackendConnectionHandle::connect(
+      auto connected = app::ConnectionSession::connect(
           std::get<ipc::ConnectionSettings>(ipc::connection_settings(paths)));
-      if (!std::holds_alternative<app::BackendConnectionHandle>(connected))
+      if (!std::holds_alternative<std::unique_ptr<app::ConnectionSession>>(connected))
         throw std::runtime_error("Synthetic handshake failed");
-      auto handle = std::get<app::BackendConnectionHandle>(std::move(connected));
+      auto handle_session = std::get<std::unique_ptr<app::ConnectionSession>>(std::move(connected));
+  folio::test::BlockingFrontend handle(handle_session);
       auto result = handle.load_memo(core::Id::generate());
       return std::make_pair(std::move(result), handle.connected());
     });

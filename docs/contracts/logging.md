@@ -30,8 +30,8 @@ entry-thread operations, not concurrent with logging threads.
 
 | Platform | Log root |
 | --- | --- |
-| Linux | `$XDG_STATE_HOME/folio/logs`, default `~/.local/state/folio/logs`; relative XDG overrides are ignored |
-| macOS | `~/Library/Logs/Folio` |
+| Linux | `~/.folio/logs` |
+| macOS | `~/.folio/logs` |
 | Windows | `<LocalAppData>/Folio/Logs`, resolved with Known Folders |
 
 Log roots are platform-derived, not ordinary user-configured storage settings.

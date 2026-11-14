@@ -1,6 +1,7 @@
 #include "process.hpp"
 #include "backend.hpp"
-#include "backend_connection_handle.hpp"
+#include "blocking_frontend.hpp"
+#include "frontend/runtime/connection_session.hpp"
 #include <folio/ipc/ipc.hpp>
 #include "runtime/repository_ownership.hpp"
 #include "storage/catalog_coordinator.hpp"
@@ -106,12 +107,12 @@ protected:
     return result;
   }
 
-  folio::application::BackendConnectionHandle connect() {
+  std::unique_ptr<folio::application::ConnectionSession> connect() {
     auto result = folio::application::connect_or_start_backend(
         std::get<app::ConnectionSettings>(app::connection_settings(paths)),
         [&] { return launch(); }, 8s);
     if (auto* error = std::get_if<app::IpcError>(&result)) throw std::runtime_error(error->message);
-    return std::get<folio::application::BackendConnectionHandle>(std::move(result));
+    return std::get<std::unique_ptr<folio::application::ConnectionSession>>(std::move(result));
   }
 
   fs::path marker() { return paths.application.state / "session.marker"; }
@@ -151,13 +152,14 @@ TEST_F(Backend, OwnershipStopsEndpointBeforeReleasingLocks) {
 
 TEST_F(Backend, StartsOnDemandReadinessRequiresMarkerAndLastDisconnectSaves) {
   {
-    auto connection = connect();
+    auto connection_session = connect();
+  folio::test::BlockingFrontend connection(connection_session);
     EXPECT_TRUE(fs::exists(marker()));
     EXPECT_FALSE(fs::exists(index()));
     EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
-    auto other = folio::application::BackendConnectionHandle::connect(
+    auto other = folio::application::ConnectionSession::connect(
         std::get<app::ConnectionSettings>(app::connection_settings(paths)));
-    ASSERT_TRUE(std::holds_alternative<folio::application::BackendConnectionHandle>(other));
+    ASSERT_TRUE(std::holds_alternative<std::unique_ptr<folio::application::ConnectionSession>>(other));
     EXPECT_EQ(children.size(), 1u);
   }
   ASSERT_TRUE(until([&] { return fs::exists(children[0].result); }));
@@ -167,7 +169,8 @@ TEST_F(Backend, StartsOnDemandReadinessRequiresMarkerAndLastDisconnectSaves) {
 }
 
 TEST_F(Backend, IndependentFrontendAndBackendProcessesHaveSeparateSessionLogs) {
-  auto keeper = connect();
+  auto keeper_session = connect();
+  folio::test::BlockingFrontend keeper(keeper_session);
   const auto control = base / "frontend-control";
   fs::create_directory(control);
   auto launched = app::launch_process(FOLIO_BACKEND_CHILD, {"frontend", base, control});
@@ -198,7 +201,8 @@ TEST_F(Backend, NewFrontendConfigurationDoesNotReconfigureActiveBackend) {
                   "'\n[general.vault_storage]\nuse_default_location = false\npath = '" +
                   paths.vault_root.generic_string() + "'\n");
   {
-    auto first = connect();
+    auto first_session = connect();
+  folio::test::BlockingFrontend first(first_session);
     const auto changed_root = base / "changed-normal";
     write(file, "[general.normal_storage]\nuse_default_location = false\npath = '" +
                     changed_root.generic_string() + "'\n");
@@ -208,9 +212,9 @@ TEST_F(Backend, NewFrontendConfigurationDoesNotReconfigureActiveBackend) {
         std::get<app::ConnectionSettings>(
             app::connection_settings(std::get<folio::config::EffectiveConfig>(settings).paths)),
         [&] { return launch(); }, 8s);
-    ASSERT_TRUE(std::holds_alternative<folio::application::BackendConnectionHandle>(second));
+    ASSERT_TRUE(std::holds_alternative<std::unique_ptr<folio::application::ConnectionSession>>(second));
     EXPECT_TRUE(std::holds_alternative<std::monostate>(
-        std::get<folio::application::BackendConnectionHandle>(second).ping()));
+        folio::test::BlockingFrontend(std::get<std::unique_ptr<folio::application::ConnectionSession>>(second)).ping()));
     EXPECT_TRUE(std::holds_alternative<std::monostate>(first.ping()));
     EXPECT_EQ(children.size(), 1u);
     EXPECT_FALSE(fs::exists(changed_root));
@@ -224,9 +228,11 @@ TEST_F(Backend, OneDisconnectLeavesOtherClientAndReadOnlyIndexUnchanged) {
   clean_cache();
   const auto time = fs::last_write_time(index());
   {
-    auto first = connect();
+    auto first_session = connect();
+  folio::test::BlockingFrontend first(first_session);
     {
-      auto second = connect();
+      auto second_session = connect();
+  folio::test::BlockingFrontend second(second_session);
       EXPECT_TRUE(std::holds_alternative<std::monostate>(second.ping()));
     }
     EXPECT_TRUE(std::holds_alternative<std::monostate>(first.ping()));
@@ -242,15 +248,16 @@ TEST_F(Backend, InitialWindowAllowsConnectionAfterMarkerEstablished) {
   ASSERT_TRUE(until([&] { return fs::exists(marker()); }));
   EXPECT_FALSE(fs::exists(children[0].result));
   {
-    auto result = folio::application::BackendConnectionHandle::connect(
+    auto result = folio::application::ConnectionSession::connect(
         std::get<app::ConnectionSettings>(app::connection_settings(paths)));
-    ASSERT_TRUE(std::holds_alternative<folio::application::BackendConnectionHandle>(result));
+    ASSERT_TRUE(std::holds_alternative<std::unique_ptr<folio::application::ConnectionSession>>(result));
   }
 }
 
 TEST_F(Backend, FailedIndexSaveRetainsMarkerAndReportsFailure) {
   {
-    auto connection = connect();
+    auto connection_session = connect();
+  folio::test::BlockingFrontend connection(connection_session);
     fs::create_directories(paths.application.cache);
     write(paths.application.state / "index", "blocks index directory");
   }
@@ -261,9 +268,11 @@ TEST_F(Backend, FailedIndexSaveRetainsMarkerAndReportsFailure) {
 
 TEST_F(Backend, TwoFrontendsDisconnectBeforeFailedFinalizationReleasesOwnership) {
   {
-    auto first = connect();
+    auto first_session = connect();
+  folio::test::BlockingFrontend first(first_session);
     {
-      auto second = connect();
+      auto second_session = connect();
+  folio::test::BlockingFrontend second(second_session);
       EXPECT_TRUE(std::holds_alternative<std::monostate>(second.ping()));
       fs::create_directories(paths.application.cache);
       write(paths.application.state / "index", "blocks index directory");
@@ -281,11 +290,12 @@ TEST_F(Backend, TwoFrontendsDisconnectBeforeFailedFinalizationReleasesOwnership)
 TEST_F(Backend, CrashReleasesOwnershipAndRestartRebuildsDespiteValidStaleIndex) {
   clean_cache();
   {
-    auto connection = connect();
+    auto connection_session = connect();
+  folio::test::BlockingFrontend connection(connection_session);
     terminate(children[0].id);
     children[0].killed = true;
     ASSERT_TRUE(until([&] { return !connection.connected(); }));
-    EXPECT_TRUE(std::holds_alternative<app::IpcError>(connection.ping()));
+    EXPECT_FALSE(connection.connection_session().submit([](auto&) { return [] {}; }));
     EXPECT_TRUE(fs::exists(marker()));
   }
   storage::NormalRepository repo(paths.normal_root);
@@ -293,7 +303,8 @@ TEST_F(Backend, CrashReleasesOwnershipAndRestartRebuildsDespiteValidStaleIndex) 
                          {std::chrono::system_clock::now(), "UTC", std::nullopt});
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repo.create_memo(memo.snapshot())));
   {
-    auto restarted = connect();
+    auto restarted_session = connect();
+  folio::test::BlockingFrontend restarted(restarted_session);
     EXPECT_TRUE(std::holds_alternative<std::monostate>(restarted.ping()));
   }
   ASSERT_TRUE(until([&] { return fs::exists(children.back().result); }));
@@ -323,13 +334,15 @@ TEST_F(Backend, ValidCacheDoesNotScanMalformedAuthoritativeFile) {
   fs::create_directories(paths.normal_root / "memos");
   write(paths.normal_root / "memos/broken.md", "invalid");
   {
-    auto connection = connect();
+    auto connection_session = connect();
+  folio::test::BlockingFrontend connection(connection_session);
     EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
   }
 }
 
 TEST_F(Backend, InvalidFramesRejectedWithoutTerminatingOtherClient) {
-  auto keeper = connect();
+  auto keeper_session = connect();
+  folio::test::BlockingFrontend keeper(keeper_session);
   auto endpoint = std::get<app::ConnectionSettings>(app::connection_settings(paths)).endpoint;
   for (const auto& bytes :
        {app::encode_message({app::MessageKind::Hello, {}, 2}), std::string("\x04\x00\x00\x01", 4),
@@ -354,7 +367,8 @@ TEST_F(Backend, InvalidFramesRejectedWithoutTerminatingOtherClient) {
 }
 
 TEST_F(Backend, ConcurrentCandidatesDoNotTouchWinnersSession) {
-  auto connection = connect();
+  auto connection_session = connect();
+  folio::test::BlockingFrontend connection(connection_session);
   const auto time = fs::last_write_time(marker());
   ASSERT_TRUE(std::holds_alternative<folio::application::LaunchedProcess>(launch()));
   ASSERT_TRUE(until([&] { return fs::exists(children.back().result); }));
@@ -365,10 +379,12 @@ TEST_F(Backend, ConcurrentCandidatesDoNotTouchWinnersSession) {
 
 TEST_F(Backend, ConnectDuringLastDisconnectCanRetryNewOwner) {
   {
-    auto connection = connect();
+    auto connection_session = connect();
+  folio::test::BlockingFrontend connection(connection_session);
   }
   {
-    auto next = connect();
+    auto next_session = connect();
+  folio::test::BlockingFrontend next(next_session);
     EXPECT_TRUE(std::holds_alternative<std::monostate>(next.ping()));
   }
   ASSERT_TRUE(until([&] { return !fs::exists(marker()); }));
@@ -387,7 +403,8 @@ TEST_F(Backend, StaleSocketReclaimedAndUnsafeEndpointRejected) {
   chmod(endpoint.c_str(), 0600);
   close(fd);
   {
-    auto connection = connect();
+    auto connection_session = connect();
+  folio::test::BlockingFrontend connection(connection_session);
     EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
   }
 }
@@ -395,7 +412,7 @@ TEST_F(Backend, StaleSocketReclaimedAndUnsafeEndpointRejected) {
 TEST_F(Backend, UnsafeRuntimePermissionsAreNotSilentlyAccepted) {
   fs::create_directory(*paths.application.runtime);
   chmod(paths.application.runtime->c_str(), 0777);
-  auto result = folio::application::BackendConnectionHandle::connect(
+  auto result = folio::application::ConnectionSession::connect(
       std::get<app::ConnectionSettings>(app::connection_settings(paths)));
   ASSERT_TRUE(std::holds_alternative<app::IpcError>(result));
   EXPECT_EQ(std::get<app::IpcError>(result).code, app::IpcErrorCode::AccessDenied);

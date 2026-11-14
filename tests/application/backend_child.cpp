@@ -3,7 +3,8 @@
 #include "backend.hpp"
 #include <folio/logging/logging.hpp>
 #include "runtime/backend_states.hpp"
-#include "backend_connection_handle.hpp"
+#include "frontend/runtime/backend_connection_handle.hpp"
+#include "frontend/runtime/connection_session.hpp"
 #include <folio/ipc/ipc.hpp>
 #include <fstream>
 #include <thread>
@@ -61,7 +62,7 @@ int wmain(int argc, wchar_t** argv) {
   report(control / "connected", "ready");
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
   while (!fs::exists(control / "disconnect") && std::chrono::steady_clock::now() < deadline) {
-    if (!std::get<folio::application::BackendConnectionHandle>(connection).connected()) {
+    if (!std::get<std::unique_ptr<folio::application::ConnectionSession>>(connection)->connected()) {
       report(control / "lost", "lost");
       return 1;
     }

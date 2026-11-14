@@ -8,7 +8,7 @@
 #include <future>
 #include "execution/request_coordinator.hpp"
 #include "ipc/ipc_server.hpp"
-#include "backend_connection_handle.hpp"
+#include "frontend/runtime/backend_connection_handle.hpp"
 #include <folio/ipc/message_transport.hpp>
 
 namespace {

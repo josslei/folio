@@ -16,10 +16,13 @@ owns current requirements. Complete TUI integration is not implemented.
   single-use secure capability. Session termination wakes both paths. Per-recipient
   bounded queues and one outstanding acknowledged Push isolate slow Frontends.
   Delivery failures do not cancel accepted work or change authoritative results.
-- `BackendConnectionHandle::PushNotificationReceiver` in `app/src/backend_connection_handle.cpp` continuously validates and ACKs Push without
-  UI consumption. `BackendConnectionHandle` retains synchronous Application calls
-  and adds event-driven wait/drain integration. Request I/O stays on its calling
-  worker; a full Frontend UI Request-worker is deferred to 4.4b.
+- Frontend Push reception now lives in `ConnectionSession::receive_push_notifications()`
+  in `app/src/frontend/runtime/connection_session.cpp`; it validates, retains and ACKs
+  independently of UI consumption. Subsequent Frontend consolidation gives
+  `BackendConnectionHandle` one typed asynchronous API and an owned session with
+  both Request and Push Notification Workers. The original verification below
+  predates that consolidation; current ownership is in the
+  [system architecture](../../architecture/system.md#initial-frontend-runtime).
 - CatalogCoordinator publication observers, CatalogMaintenance scoped publication,
   MutationOrchestrator ownership transitions and Backend Report produce events at
   actual state transitions. They do not use RequestCoordinator completion order.

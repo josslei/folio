@@ -6,8 +6,9 @@ semantics and deferred decisions.
 
 ## Implemented scope
 
-- Blocking `BackendConnectionHandle::check_consistency(DirectoryRef)` and
-  `refresh(RefreshScope)` share protocol-v1 admission and final responses.
+- Check and Refresh share protocol-v1 admission and final responses. Following
+  Frontend consolidation, `BackendConnectionHandle` exposes them asynchronously
+  with a result callback; blocking IPC executes on the session Request Worker.
 - Raw Normal direct-entry counts use Catalog membership counts and fixed layout
   overhead; Browse remains Catalog-only. Check never starts Refresh.
 - Scoped scans reconcile only selected membership. Immediate Roots retain

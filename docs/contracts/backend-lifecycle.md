@@ -50,7 +50,7 @@ TUI/CLI integration remains 4.4b.
 If present anywhere, all other arguments are ignored. The switch is absent from
 help. Otherwise CLI11 parses normal Frontend arguments.
 CLI11 handles help, invalid arguments and parser exit statuses; no separate
-execution parser or request model is maintained. Frontend launch lives in app/src/backend_launcher.cpp, OS process mechanisms in
+execution parser or request model is maintained. Frontend launch lives in app/src/frontend/backend_launcher.cpp, OS process mechanisms in
 app/src/process.cpp, Backend entry in server/src/backend.cpp, and exclusive
 ownership in server/src/runtime/repository_ownership.cpp. Unrecognized/incomplete arguments fail before opening
 the TUI. This argument
@@ -60,9 +60,11 @@ current executable through private OS helpers and starts it with only
 `--backend-process`. Paths come from configuration, never command-line arguments.
 Successful launch means process creation, not ownership or readiness.
 
-`BackendConnectionHandle` and `connect_or_start_backend()` are Frontend Application
-functionality in `backend_connection_handle.hpp/.cpp`, reusable by TUI, CLI, or a future
-GUI. The TUI holds a connection during its lifetime; it does not implement process
+`ConnectionSession::connect()` and `connect_or_start_backend()` establish an owned
+Frontend session in `app/src/frontend/runtime/connection_session.cpp`. `BackendConnectionHandle`
+takes exclusive session ownership and exposes asynchronous typed Application
+calls; its session executes blocking IPC on the Request Worker.
+These Frontend facilities are reusable by a future GUI. The TUI holds a session during its lifetime; it does not implement process
 launching or IPC connection policy. Generic `launch_process()` and
 `current_executable()` declarations and implementations are role-private in app/include/process.hpp and app/src/process.cpp. Tests receive explicit private include access; no
 Frontend implementation source is compiled into tests.

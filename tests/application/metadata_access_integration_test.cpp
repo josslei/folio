@@ -1,5 +1,9 @@
+#include "tui/pages/browser/record_query.hpp"
+#include "frontend/runtime/backend_connection_handle.hpp"
+#include <future>
 #include "push_fixture.hpp"
-#include "backend_connection_handle.hpp"
+#include "blocking_frontend.hpp"
+#include "frontend/runtime/connection_session.hpp"
 #include "process.hpp"
 #include <folio/ipc/application_codec.hpp>
 #include <folio/ipc/message_transport.hpp>
@@ -115,7 +119,7 @@ protected:
     push_receivers.push_back(folio::test::pair_push(settings, *ready));
     return stream;
   }
-  app::BackendConnectionHandle connect() {
+  std::unique_ptr<app::ConnectionSession> connect() {
     auto connection = app::connect_or_start_backend(
         std::get<ipc::ConnectionSettings>(ipc::connection_settings(paths)),
         [&] {
@@ -128,9 +132,9 @@ protected:
           return launched;
         },
         8s);
-    if (!std::holds_alternative<app::BackendConnectionHandle>(connection))
+    if (!std::holds_alternative<std::unique_ptr<app::ConnectionSession>>(connection))
       throw std::runtime_error(std::get<ipc::IpcError>(connection).message);
-    return std::get<app::BackendConnectionHandle>(std::move(connection));
+    return std::get<std::unique_ptr<app::ConnectionSession>>(std::move(connection));
   }
 };
 
@@ -142,7 +146,8 @@ TEST_F(MetadataAccessIntegration, OneBrowseOperationHandlesRootsAndUserDirectori
   member.set_directory_id(directory.id(), time);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(member.snapshot())));
 
-  auto connection = connect();
+  auto connection_session = connect();
+  folio::test::BlockingFrontend connection(connection_session);
   auto root = connection.browse(core::RecordType::Memo);
   ASSERT_TRUE(std::holds_alternative<app::Annotated<app::BrowseResult>>(root));
   const auto& root_contents = std::get<app::Annotated<app::BrowseResult>>(root).value;
@@ -174,11 +179,12 @@ TEST_F(MetadataAccessIntegration, LargeContentAndMetadataMessagesAllowTwoPeersAn
   changed.title = std::string(70 * 1024, 'm');
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.update_memo(changed)));
   {
-    auto first = connect();
-    auto second_result = app::BackendConnectionHandle::connect(
+    auto first_session = connect();
+  folio::test::BlockingFrontend first(first_session);
+    auto second_result = app::ConnectionSession::connect(
         std::get<ipc::ConnectionSettings>(ipc::connection_settings(paths)));
-    ASSERT_TRUE(std::holds_alternative<app::BackendConnectionHandle>(second_result));
-    auto& second = std::get<app::BackendConnectionHandle>(second_result);
+    ASSERT_TRUE(std::holds_alternative<std::unique_ptr<app::ConnectionSession>>(second_result));
+    folio::test::BlockingFrontend second(std::get<std::unique_ptr<app::ConnectionSession>>(second_result));
     auto loaded = first.load_memo(memo.id());
     ASSERT_TRUE(
         std::holds_alternative<folio::application::Annotated<core::Memo::Snapshot>>(loaded));
@@ -195,17 +201,19 @@ TEST_F(MetadataAccessIntegration, LargeContentAndMetadataMessagesAllowTwoPeersAn
     EXPECT_EQ(std::get<core::MemoMetadata>(records[0]).title, changed.title);
     EXPECT_TRUE(std::holds_alternative<std::monostate>(first.ping()));
     EXPECT_TRUE(std::holds_alternative<std::monostate>(second.ping()));
-    EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+    EXPECT_FALSE(fs::exists(paths.application.state / "index/normal.msgpack"));
   }
   ASSERT_TRUE(until([&] { return all_exited(); }));
-  EXPECT_TRUE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+  EXPECT_TRUE(fs::exists(paths.application.state / "index/normal.msgpack"));
   EXPECT_FALSE(fs::exists(paths.application.state / "session.marker"));
 }
 
 TEST_F(MetadataAccessIntegration,
        MissingWrongTypeAndStaleErrorsLeaveConnectionUsableWithoutDiscovery) {
-  auto connection = connect();
-  auto other = connect();
+  auto connection_session = connect();
+  folio::test::BlockingFrontend connection(connection_session);
+  auto other_session = connect();
+  folio::test::BlockingFrontend other(other_session);
   app::RecordQuery invalid;
   invalid.filters.log_date.from = std::chrono::year{2027} / 2 / 30;
   auto rejected = connection.query_records(invalid);
@@ -229,7 +237,7 @@ TEST_F(MetadataAccessIntegration,
   ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(stale));
   EXPECT_EQ(std::get<app::ApplicationError>(stale).reason, app::ErrorReason::StaleLocation);
   EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.ping()));
-  EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+  EXPECT_FALSE(fs::exists(paths.application.state / "index/normal.msgpack"));
   // Request-specific failures must not be broadcast or terminate other sessions.
   auto browsed = other.browse(core::RecordType::Memo);
   ASSERT_TRUE(std::holds_alternative<app::Annotated<app::BrowseResult>>(browsed));
@@ -237,7 +245,8 @@ TEST_F(MetadataAccessIntegration,
   EXPECT_TRUE(std::holds_alternative<std::monostate>(other.ping()));
 }
 TEST_F(MetadataAccessIntegration, LargeQueryRequestUsesOneMessageAndConnectionRemainsUsable) {
-  auto connection = connect();
+  auto connection_session = connect();
+  folio::test::BlockingFrontend connection(connection_session);
   app::RecordQuery query;
   query.type = core::RecordType::Memo;
   query.filters.title_contains = std::string(150000, 'z');
@@ -254,7 +263,8 @@ TEST_F(MetadataAccessIntegration, LargeQueryRequestUsesOneMessageAndConnectionRe
 }
 
 TEST_F(MetadataAccessIntegration, PartialRequestWaitsForCompletionWithoutBlockingOtherConnections) {
-  auto keeper = connect();
+  auto keeper_session = connect();
+  folio::test::BlockingFrontend keeper(keeper_session);
   auto stream = raw_connection();
   const auto request = std::get<std::string>(
       ipc::codec::encode<ipc::OperationRequest>(ipc::LoadMemoRequest{memo.id()}));
@@ -281,7 +291,8 @@ TEST_F(MetadataAccessIntegration, PartialRequestWaitsForCompletionWithoutBlockin
 
 TEST_F(MetadataAccessIntegration,
        PrematureDisconnectAndInvalidMessagesDoNotAffectOtherConnections) {
-  auto keeper = connect();
+  auto keeper_session = connect();
+  folio::test::BlockingFrontend keeper(keeper_session);
   {
     auto stream = raw_connection();
     const auto bytes =
@@ -297,11 +308,12 @@ TEST_F(MetadataAccessIntegration,
     EXPECT_EQ(rejected->kind, ipc::MessageKind::Reject);
   }
   EXPECT_TRUE(std::holds_alternative<std::monostate>(keeper.ping()));
-  EXPECT_FALSE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+  EXPECT_FALSE(fs::exists(paths.application.state / "index/normal.msgpack"));
 }
 
 TEST_F(MetadataAccessIntegration, MalformedCompleteRequestsKeepApplicationErrorSemantics) {
-  auto keeper = connect();
+  auto keeper_session = connect();
+  folio::test::BlockingFrontend keeper(keeper_session);
   for (const auto& payload : {std::string{}, std::string("malformed")}) {
     auto stream = raw_connection();
     ASSERT_TRUE(send(stream, {ipc::MessageKind::Request, ipc::payload_bytes(payload)}));
@@ -322,8 +334,10 @@ TEST_F(MetadataAccessIntegration, MalformedCompleteRequestsKeepApplicationErrorS
 TEST_F(MetadataAccessIntegration,
        MutationOrchestratorAndEditLocksShareExistingConnectionAndBackend) {
   {
-    auto first = connect();
-    auto second = connect();
+    auto first_session = connect();
+  folio::test::BlockingFrontend first(first_session);
+    auto second_session = connect();
+  folio::test::BlockingFrontend second(second_session);
     auto dir_result =
         first.create(app::MutationId::generate(), core::DirectoryKind::Memo, "Projects");
     ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::DirectoryMetadata>>(dir_result));
@@ -396,12 +410,13 @@ TEST_F(MetadataAccessIntegration,
   }
   ASSERT_TRUE(until([&] { return all_exited(); }));
   EXPECT_FALSE(fs::exists(paths.application.state / "session.marker"));
-  EXPECT_TRUE(fs::exists(paths.application.cache / "index/normal.msgpack"));
+  EXPECT_TRUE(fs::exists(paths.application.state / "index/normal.msgpack"));
 }
 
 namespace {
 TEST_F(MetadataAccessIntegration, CheckAndRefreshUseExistingConnectionAndKeepBrowseCatalogOnly) {
-  auto connection = connect();
+  auto connection_session = connect();
+  folio::test::BlockingFrontend connection(connection_session);
   ASSERT_EQ(
       std::get<app::ConsistencyCheckResult>(connection.check_consistency(core::RecordType::Memo)),
       app::ConsistencyCheckResult::NoAnomalyDetected);
@@ -424,7 +439,8 @@ TEST_F(MetadataAccessIntegration, CheckAndRefreshUseExistingConnectionAndKeepBro
       app::ConsistencyCheckResult::NoAnomalyDetected);
   // A second Frontend shares the session observation, even after Refresh and
   // external changes. Repeated navigation must not trigger another disk check.
-  auto second = connect();
+  auto second_session = connect();
+  folio::test::BlockingFrontend second(second_session);
   EXPECT_EQ(std::get<app::ConsistencyCheckResult>(second.check_consistency(core::RecordType::Memo)),
             app::ConsistencyCheckResult::NoAnomalyDetected);
   EXPECT_TRUE(std::holds_alternative<std::monostate>(connection.refresh(app::DirectoryScanScope{
@@ -435,12 +451,14 @@ TEST_F(MetadataAccessIntegration, CheckAndRefreshUseExistingConnectionAndKeepBro
 
 namespace {
 TEST_F(MetadataAccessIntegration, PushReportsMetadataContentMembershipRefreshAndLockChanges) {
-  auto viewer = connect();
-  std::optional<app::BackendConnectionHandle> editor{connect()};
+  auto viewer_session = connect();
+  folio::test::BlockingFrontend viewer(viewer_session);
+  auto editor_session = connect();
+  std::optional<folio::test::BlockingFrontend> editor{std::in_place, editor_session};
   auto await = [&](auto matches) {
     const auto deadline = std::chrono::steady_clock::now() + 3s;
     while (folio::test::wait_push_notifications(viewer, deadline)) {
-      for (const auto& notification : viewer.take_push_notifications())
+      for (const auto& notification : viewer.connection_session().take())
         if (matches(notification)) return true;
     }
     return false;
@@ -484,6 +502,7 @@ TEST_F(MetadataAccessIntegration, PushReportsMetadataContentMembershipRefreshAnd
   EXPECT_TRUE(std::holds_alternative<std::monostate>(editor->acquire_edit(memo.id())));
   EXPECT_TRUE(await(lock_event));
   editor.reset();
+  editor_session.reset();
   EXPECT_TRUE(await(lock_event)); // Prompt cleanup, no unrelated editing request needed.
   EXPECT_TRUE(std::holds_alternative<std::monostate>(viewer.acquire_edit(memo.id())));
   EXPECT_TRUE(await(lock_event)); // Initiator also receives its own invalidation.
@@ -498,9 +517,11 @@ TEST_F(MetadataAccessIntegration, PushReportsMetadataContentMembershipRefreshAnd
   }));
 }
 TEST_F(MetadataAccessIntegration, RequestErrorsAreNotBroadcastAndReconnectDoesNotReplayPush) {
-  auto viewer = connect();
+  auto viewer_session = connect();
+  folio::test::BlockingFrontend viewer(viewer_session);
   {
-    auto editor = connect();
+    auto editor_session = connect();
+  folio::test::BlockingFrontend editor(editor_session);
     auto missing = editor.load_memo(core::Id::generate());
     ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(missing));
     EXPECT_FALSE(
@@ -508,15 +529,161 @@ TEST_F(MetadataAccessIntegration, RequestErrorsAreNotBroadcastAndReconnectDoesNo
     EXPECT_TRUE(std::holds_alternative<std::monostate>(editor.acquire_edit(memo.id())));
     EXPECT_TRUE(
         folio::test::wait_push_notifications(viewer, std::chrono::steady_clock::now() + 3s));
-    viewer.take_push_notifications();
+    viewer.connection_session().take();
   }
   EXPECT_TRUE(folio::test::wait_push_notifications(viewer, std::chrono::steady_clock::now() + 3s));
-  viewer.take_push_notifications();
-  auto reconnected = connect();
+  viewer.connection_session().take();
+  auto reconnected_session = connect();
+  folio::test::BlockingFrontend reconnected(reconnected_session);
   EXPECT_FALSE(
       folio::test::wait_push_notifications(reconnected, std::chrono::steady_clock::now() + 20ms));
-  EXPECT_TRUE(reconnected.take_push_notifications().empty());
+  EXPECT_TRUE(reconnected.connection_session().take().empty());
   EXPECT_TRUE(std::holds_alternative<folio::application::Annotated<core::Memo::Snapshot>>(
       reconnected.load_memo(memo.id())));
 }
 } // namespace
+
+TEST_F(MetadataAccessIntegration, HandleKeepsSingleSlotUntilCompletionIsConsumed) {
+  std::promise<void> release;
+  auto released = release.get_future();
+  std::atomic<bool> woke = false;
+  bool applied = false;
+  app::BackendConnectionHandle runtime(connect(), [&] { woke = true; });
+  ASSERT_TRUE(runtime.connection_session().submit([&](app::ConnectionSession&) {
+    released.wait();
+    return [&] { applied = true; };
+  }));
+  EXPECT_FALSE(runtime.connection_session().submit([](auto&) { return [] {}; }));
+  EXPECT_FALSE(applied);
+  release.set_value();
+  ASSERT_TRUE(until([&] { return woke.load(); }));
+  EXPECT_FALSE(applied);
+  EXPECT_FALSE(runtime.connection_session().submit([](auto&) { return [] {}; }));
+  ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
+  const auto consumed = runtime.take_pending_work();
+  EXPECT_FALSE(consumed.completion);
+  runtime.process_completion();
+  EXPECT_TRUE(applied);
+  EXPECT_TRUE(runtime.connection_session().submit([](auto&) { return [] {}; }));
+  runtime.finish_requests();
+}
+
+TEST_F(MetadataAccessIntegration, HandleTakesExclusiveSessionOwnership) {
+  auto session = connect();
+  auto* transport = session.get();
+  app::BackendConnectionHandle handle(std::move(session), [] {});
+  EXPECT_FALSE(session);
+  EXPECT_EQ(&handle.connection_session(), transport);
+  bool applied = false;
+  ASSERT_TRUE(handle.ping([&](auto result) {
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
+    applied = true;
+  }));
+  ASSERT_TRUE(until([&] { return handle.take_pending_work().completion; }));
+  handle.process_completion();
+  EXPECT_TRUE(applied);
+  handle.finish_requests();
+}
+
+TEST_F(MetadataAccessIntegration, HandleQueryNavigationDiscardsObsoleteCompletion) {
+  app::BackendConnectionHandle runtime(connect(), [] {});
+  folio::tui::RecordQuery queries(runtime);
+  // Keep the slot busy so multiple navigation changes collapse to the latest intent.
+  std::promise<void> release;
+  auto released = release.get_future();
+  ASSERT_TRUE(runtime.connection_session().submit([&](app::ConnectionSession&) {
+    released.wait();
+    return [] {};
+  }));
+  queries.select(core::RecordType::Log);
+  queries.select(core::RecordType::Memo);
+  release.set_value();
+  ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
+  runtime.process_completion();
+  queries.resume_pending(); // Submit Memo, then navigate before applying its result.
+  ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
+  queries.select(core::RecordType::Todo);
+  runtime.process_completion();
+  EXPECT_FALSE(queries.result());
+  EXPECT_TRUE(queries.loading());
+  queries.resume_pending();
+  ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
+  runtime.process_completion();
+  ASSERT_TRUE(queries.result());
+  EXPECT_FALSE(queries.loading());
+  EXPECT_EQ(queries.selected(), core::RecordType::Todo);
+  runtime.finish_requests();
+}
+
+TEST_F(MetadataAccessIntegration, HandleRetainsPushUntilQueryCompletionThenReloads) {
+  auto session = connect();
+  auto* transport = session.get();
+  app::BackendConnectionHandle runtime(std::move(session), [] {});
+  folio::tui::RecordQuery queries(runtime);
+  queries.select(core::RecordType::Memo);
+  // Do not consume completion yet. A separate session changes the Catalog.
+  auto writer_session = connect();
+  folio::test::BlockingFrontend writer(writer_session);
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(writer.acquire_edit(memo.id())));
+  auto changed = writer.update(app::MutationId::generate(), memo.id(),
+                              app::MemoEditableFields{"new title", "body", {}}, time);
+  ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::MemoMetadata>>(changed));
+  ASSERT_TRUE(transport->wait());
+  auto work = runtime.take_pending_work();
+  ASSERT_TRUE(work.completion);
+  runtime.process_completion();
+  EXPECT_TRUE(queries.result());
+  ASSERT_TRUE(work.push_notifications);
+  auto notices = runtime.take_push_notifications();
+  ASSERT_FALSE(notices.empty());
+  queries.invalidate();
+  ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
+  runtime.process_completion();
+  const auto& records = std::get<app::Annotated<std::vector<core::RecordMetadata>>>(*queries.result()).value;
+  ASSERT_EQ(records.size(), 1u);
+  EXPECT_EQ(std::get<core::MemoMetadata>(records.front()).title, "new title");
+  runtime.finish_requests();
+}
+
+TEST_F(MetadataAccessIntegration, HandleRequestExceptionClosesSessionAndReachesMainThread) {
+  app::BackendConnectionHandle runtime(connect(), [] {});
+  ASSERT_TRUE(runtime.connection_session().submit([](app::ConnectionSession&) -> app::ConnectionSession::Completion {
+    throw std::runtime_error("synthetic request failure");
+  }));
+  ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
+  EXPECT_THROW(runtime.process_completion(), std::runtime_error);
+  EXPECT_FALSE(runtime.connected());
+  EXPECT_FALSE(runtime.connection_session().submit([](auto&) { return [] {}; }));
+  EXPECT_NO_THROW(runtime.finish_requests());
+}
+
+TEST_F(MetadataAccessIntegration, TypedHandleCallsDeliverResultsOnlyOnMainThread) {
+  app::BackendConnectionHandle runtime(connect(), [] {});
+  const auto main_thread = std::this_thread::get_id();
+  bool applied = false;
+  app::RecordQuery query;
+  query.type = core::RecordType::Memo;
+  ASSERT_TRUE(runtime.query_records(query, [&](auto result) {
+    EXPECT_EQ(std::this_thread::get_id(), main_thread);
+    const auto* records =
+        std::get_if<app::Annotated<std::vector<core::RecordMetadata>>>(&result);
+    ASSERT_NE(records, nullptr);
+    ASSERT_EQ(records->value.size(), 1u);
+    EXPECT_EQ(std::get<core::MemoMetadata>(records->value.front()).id, memo.id());
+    applied = true;
+  }));
+  EXPECT_FALSE(runtime.ping([](auto) { FAIL() << "Rejected request callback ran"; }));
+  ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
+  EXPECT_FALSE(applied);
+  runtime.process_completion();
+  EXPECT_TRUE(applied);
+  bool acquired = false;
+  ASSERT_TRUE(runtime.acquire_edit(memo.id(), [&](auto result) {
+    EXPECT_EQ(std::this_thread::get_id(), main_thread);
+    acquired = std::holds_alternative<std::monostate>(result);
+  }));
+  ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
+  runtime.process_completion();
+  EXPECT_TRUE(acquired);
+  runtime.finish_requests();
+}

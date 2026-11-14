@@ -200,7 +200,9 @@ Formal Application APIs begin here; private Storage classes/errors/callbacks/han
 
 ```text
 app/                         Frontend-only code
-  include/                   BackendConnectionHandle, launcher and TUI entry
+  include/frontend/          Backend launcher
+    runtime/                 BackendConnectionHandle, ConnectionSession
+  include/tui/               TUI presentation and interaction
   src/                       Frontend implementations
   src/main.cpp               Shared dispatcher (explicit ownership exception)
 server/                      Backend-only code
@@ -345,6 +347,10 @@ mapping to the FTXUI component tree. There are currently no extracted reusable
 Layouts, so `layouts/` has no empty directory. Existing target boundaries remain
 unchanged; no shared UI framework or new build target is introduced.
 
+The Shell provides a one-character horizontal inset for Page content and Bottom
+Bar text, plus a blank row at the top and bottom. The Bottom Bar highlight spans
+the terminal width. Pages may add spacing for their own layouts.
+
 See the [Application plan](../development/plans/application.md#tui-ownership--implemented)
 for current files, feedback ownership and remaining increments. “Bottom Bar” is
 the region's project term; status feedback is one function, and command input is
@@ -377,3 +383,95 @@ adapter/module or a callback framework.
 Coordinator is not a mandatory gateway or forwarding API for every Catalog method.
 Direct operations remain available when their caller does not need to enforce a
 complex cross-module contract.
+
+### Initial Frontend Runtime
+
+UI-independent session, connection and launch code lives under matching
+`app/include/frontend/` and `app/src/frontend/` directories. Their `runtime/`
+subdirectories contain BackendConnectionHandle and ConnectionSession; worker code
+remains inside the session implementation. Backend launching stays directly under
+`frontend/`. Generic process helpers remain at the app root; presentation stays
+under `tui/`.
+
+`app/include/frontend/runtime/backend_connection_handle.hpp` defines UI-independent
+`BackendConnectionHandle`, which owns one `ConnectionSession` and exposes all typed
+asynchronous request APIs. The session owns both connections and workers. There is
+no separate request-sender class or duplicate synchronous Application API.
+
+The TUI calls, for example, `backend.query_records(query, completed)`. The handle
+copies arguments and submits the actual blocking IPC operation to the Request
+Worker. It retains the result until the main thread processes completion and
+invokes `completed(result)`. A false return rejects submission without invoking
+the callback. Application result and Mutation evidence contracts are unchanged.
+
+```text
+BackendConnectionHandle
+└── ConnectionSession (exclusive ownership)
+    ├── Request Worker
+    │   ├── Request Connection
+    │   ├── Single request/completion slot
+    │   └── Request thread → blocking IPC operation
+    ├── Push Notification Worker
+    │   ├── Push Notification Connection
+    │   ├── Retained notices and wakeup state
+    │   └── Push Notification thread → receive, retain, ACK, wake
+    └── Shared lifecycle and Request/Push handoff coordination
+```
+
+Application contracts remain under `lib/include/folio/application/`.
+`ConnectionSession::connect()` and `connect_or_start_backend()` return an owned
+session, transferred to `BackendConnectionHandle`. Completion targets must outlive
+all work using them. Worker scheduling and lifecycle live in the session; the
+handle owns typed request construction and IPC result interpretation. There is no
+Frontend event-dispatch thread.
+
+```text
+Main thread / TUI                 Request Worker          Push Notification Worker
+submit one request ------------> blocking IPC             receive + validate
+consume completion <------------ store + wake             retain + ACK + wake
+consume retained notices <------------------------------- bounded retention
+update TUI state / render
+```
+
+The Request Worker and Push Notification Worker are sibling session-owned execution
+resources. Session declarations and implementation live in
+`app/include/frontend/runtime/connection_session.hpp` and its matching source.
+
+A dedicated FTXUI communication Wakeup event consumes explicit completion, Push
+Notification and session-change flags. Keyboard, mouse, loading timers and rendering
+do not drain communication work. Several flags may be set together. Push work observed
+during an outstanding Request remains deferred until the completion event permits
+result-before-invalidation processing.
+
+The request slot stays occupied until the main thread consumes its completion.
+Completion callbacks run on that thread before retained Push Notifications are
+drained. Wakeup only posts an FTXUI event; it carries no Application payload.
+The handle owns communication state, while `RecordQuery` owns module selection,
+result relevance and the latest deferred query intention. All Browser queries use
+the handle; RecordQuery has no worker or alternative execution path. Integration
+tests exercise navigation generations and retained invalidations.
+Navigation generations discard obsolete query results.
+Invalidations consumed after completion mark the displayed result stale and request
+a new query. Record metadata and Catalog notices invalidate the Browser; availability
+notices reach shared TUI feedback. Edit Lock notices currently have no Browser action.
+
+Shutdown finishes local request work while completion targets remain alive, then
+closes the session. Already Accepted Backend work is never cancelled or replayed.
+**Not Guaranteed:** bounded shutdown under hung IPC/OS operations. **Deferred
+Implementation:** reconnection, Backend cancellation, editor/background-save UI,
+and finer view-specific invalidation. Typed requests include Mutations; their completions must be retained and consumed
+even after navigation. No request FIFO or general event bus exists.
+
+The Push Notification Worker stores received notices in preallocated bounded slots.
+Consumption swaps in replacement storage under a short mutex; allocation and batch
+conversion run on the consuming thread outside that mutex. Wakeup callbacks are
+snapshotted with shared ownership and invoked outside session mutexes. The callback
+contract permits only a short event-loop signal; no UI processing or backlog traversal.
+These are algorithmic bounds, not hard real-time guarantees for the OS scheduler,
+allocator, protocol decoding or event-loop implementation.
+
+A submitted Request callback exception closes the session and is rethrown by
+`process_completion()` on the main thread. The TUI catches it and reports the ended
+connection. No fabricated Mutation outcome or retry results. Completion callback
+exceptions likewise close the session and propagate to the caller. Public shutdown
+can surface an unconsumed failure; destructors close/join safely without throwing.

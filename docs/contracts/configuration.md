@@ -60,9 +60,18 @@ must be specified in the new file before starting against those Entries.
 `application_paths()` retains the platform directory resolver. Resolution alone
 creates nothing. Tests inject temporary application directories.
 
-`ApplicationPaths.logs` is resolved separately from State: Linux uses
-`$XDG_STATE_HOME/folio/logs` (default `~/.local/state/folio/logs`), macOS uses
-`~/Library/Logs/Folio`, and Windows uses `<LocalAppData>/Folio/Logs`.
+On Linux and macOS, Config, Data, State and Logs default to
+`~/.folio/config`, `~/.folio/data`, `~/.folio/state` and `~/.folio/logs`.
+Normal and Vault roots therefore default to `~/.folio/data/normal` and
+`~/.folio/data/vault`. Linux XDG Config/Data/State overrides are not used.
+Cache remains `$XDG_CACHE_HOME/folio` (fallback `~/.cache/folio`) on Linux
+and `~/Library/Caches/Folio` on macOS. Runtime retains secure OS-specific
+resolution. The rebuildable Index lives in Cache, not State; lifecycle and
+ownership files must not be treated as disposable cache.
+Windows paths are unchanged, including `<LocalAppData>/Folio/Logs`.
+No automatic migration or discovery of previous default locations is performed.
+Existing authoritative data must be configured explicitly or relocated deliberately.
+
 Resolution does not create the log directory or initialize Logging. See [Logging](logging.md). Logs must
 remain disjoint from authoritative roots, like the other support directories.
 

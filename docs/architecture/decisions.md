@@ -94,14 +94,14 @@ Status distinguishes implemented contracts from agreed future direction. This re
 - **Consequences:** Implemented StoragePaths separates configurable authoritative roots from explicitly supplied ApplicationPaths; tests inject temporary paths.
 - **Open/Deferred:** Native platform verification; exact paths and resolver APIs are documented in [Configuration](../contracts/configuration.md).
 
-## D11 — Normal Index in Cache
+## D11 — Normal Index in persistent State
 
 - **Status:** Implemented, including platform defaults.
-- **Decision:** Relocate rebuildable Normal Index to Cache; keep local-only, outside Git roots.
+- **Decision:** Keep rebuildable Normal Index in persistent State; keep local-only, outside Git roots.
 - **Motivation:** Index loss is recoverable; durable recovery data is not.
-- **Alternatives considered:** Retaining rebuildable cache in persistent State.
-- **Consequences:** Current location is `<application.cache>/index/normal.msgpack`. Former State indexes are not read, migrated, or deleted. Missing/unusable Cache triggers authoritative rebuilding, with persistence deferred until orderly shutdown.
-- **Open/Deferred:** Native platform verification; current Cache location, defaults and injected effective paths are implemented.
+- **Alternatives considered:** Disposable Cache storage, which may be cleared independently and force expensive rebuilding.
+- **Consequences:** Current location is `<application.state>/index/normal.msgpack`. Former Cache indexes are not read, migrated, or deleted. Missing/unusable Index triggers authoritative rebuilding, with persistence deferred until orderly shutdown.
+- **Open/Deferred:** Native platform verification; current State location, defaults and injected effective paths are implemented.
 
 ## D12 — Durable Session Marker
 

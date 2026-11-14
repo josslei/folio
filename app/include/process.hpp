@@ -12,7 +12,7 @@
 #error "Folio Application process support requires Linux, macOS, or Windows"
 #endif
 
-#include "backend_launcher.hpp"
+#include "frontend/backend_launcher.hpp"
 
 #include <filesystem>
 #include <vector>

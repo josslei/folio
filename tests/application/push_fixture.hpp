@@ -1,5 +1,6 @@
 #pragma once
-#include "backend_connection_handle.hpp"
+#include "blocking_frontend.hpp"
+#include "frontend/runtime/connection_session.hpp"
 #include <folio/ipc/application_codec.hpp>
 #include <condition_variable>
 #include <mutex>
@@ -9,7 +10,7 @@
 namespace folio::test {
 namespace ipc = application::internal;
 /// Test-only time bound: cancel the production indefinite wait if no event arrives.
-inline bool wait_push_notifications(application::BackendConnectionHandle& connection,
+inline bool wait_push_notifications(folio::test::BlockingFrontend& connection,
                                     std::chrono::steady_clock::time_point deadline) {
   std::stop_source stop;
   std::mutex timer_mutex;
@@ -19,7 +20,7 @@ inline bool wait_push_notifications(application::BackendConnectionHandle& connec
     timer_changed.wait_until(lock, timer_stop, deadline, [] { return false; });
     if (!timer_stop.stop_requested()) stop.request_stop();
   });
-  return connection.wait_push_notifications(stop.get_token());
+  return connection.connection_session().wait(stop.get_token());
 }
 /// Raw-protocol test peer: ACK Push without depending on Frontend private classes.
 class PushPeer {

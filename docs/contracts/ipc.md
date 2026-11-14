@@ -205,7 +205,7 @@ short synchronized call on the connection worker; it does not access business
 state. One request coordination thread handles eligibility/reservations/completions,
 with one shared Access pool (default 4, positive worker count), and one
 Mutation worker. No periodic progress polling or per-connection execution queue
-is introduced. Blocking Public APIs and one outstanding request per connection
+is introduced. Blocking worker exchanges and one outstanding request per connection
 are unchanged.
 
 ```text
@@ -334,15 +334,18 @@ proof, safe replay, deduplication or exactly-once execution.
 
 **Implemented:** one logical session owns a Request connection and an independent
 Push/ACK connection. Backend workers are dedicated to their streams. Frontend
-Request I/O stays on the synchronous caller (the future UI IPC worker); a dedicated
-`PushNotificationReceiver` continuously receives Push. No UI thread, Request transfer,
+`ConnectionSession` owns a Request Worker with its Request Connection and a
+Push Notification Worker with its Push Notification Connection. `BackendConnectionHandle`
+exclusively owns the session and exposes typed asynchronous methods. Blocking IPC
+executes internally on the session's Request Worker. The
+Push Notification Worker continuously receives Push. No UI thread, Request transfer,
 query evaluation or notification consumer is needed to issue ACK.
 
 ```text
 FRONTEND                                   BACKEND
 Logical session                            Logical session / Edit Lock identity
   Request caller/worker <---- Request ---->   Request I/O worker
-    blocking Public API                      admission / final-result delivery
+    asynchronous typed API                      admission / final-result delivery
   Push receiver         <---- Push ------>   Push I/O worker
     validate / ACK                           ordered send / receipt deadline
     bounded retained events                  bounded recipient queue
@@ -417,9 +420,9 @@ Push envelopes are rejected above 8192 bytes and ACK messages above 32 body byte
 These smaller bounds do not change the 64 MiB Application message limit.
 
 Coverage lasts for the whole paired session. The receiver ACKs immediately but
-retains invalidations while a synchronous Application request is outstanding.
+retains invalidations while an Application request is outstanding.
 `take_push_notifications()` returns none during that interval. The Frontend integration
-must apply each completed synchronous result before consuming subsequent retained
+must apply each completed request result before consuming subsequent retained
 invalidations on its serialized UI/event path. `wait_push_notifications()` provides an
 event-driven off-UI-thread wait without a deadline; a stop token cancels only
 the wait, and session closure also wakes it. Receipt does not depend on calling it. This closes
@@ -493,9 +496,9 @@ validation remains separate from structural decoding.
 
 Frontend discovery/launching and Backend readiness are separate: successful process
 creation does not prove ownership or Ready. [Process startup and ownership](backend-lifecycle.md#process-startup-and-ownership)
-defines launching and locking. Frontend BackendConnectionHandle owns one established
-connection; current welcome-TUI disconnection handling is not the future UI worker
-or reconnection design.
+defines launching and locking. Frontend BackendConnectionHandle owns the paired
+ConnectionSession and uses its Request Worker for blocking IPC. Automatic
+reconnection remains deferred.
 
 Unix uses a user-owned 0700 directory and 0600 Unix socket, with OS peer UID
 verification. Runtime is preferred; a private State/ipc directory is the fallback.
