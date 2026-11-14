@@ -62,7 +62,7 @@ Element log_columns(std::string date, std::string time, std::string title) {
 }
 
 Element memo_columns(std::string title, std::string tags, std::string modified) {
-  return hbox({column(std::move(title), 24), text("  "), text(std::move(tags)) | xflex, text("  "),
+  return hbox({text(std::move(title)) | xflex, text("  "), column(std::move(tags), 24), text("  "),
                column(std::move(modified), 16)});
 }
 
