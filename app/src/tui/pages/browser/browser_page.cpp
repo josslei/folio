@@ -4,16 +4,19 @@
 namespace folio::tui {
 BrowserPage::BrowserPage(BrowserQueryController& queries, std::function<void()> wake,
                          std::chrono::milliseconds loading_delay,
-                         std::chrono::milliseconds loaded_duration)
-    : queries_(queries), loading_status_(std::make_shared<LoadingStatus>(std::move(wake), loading_delay, loaded_duration)),
-      top_bar_(std::make_shared<TopBar>([this](core::RecordType type) { select(type); })),
-      entries_(std::make_shared<EntriesDisplay>(queries)) {
+                         std::chrono::milliseconds loaded_duration, const ColorScheme& scheme)
+    : scheme_(scheme), queries_(queries), loading_status_(std::make_shared<LoadingStatus>(std::move(wake), loading_delay, loaded_duration)),
+      top_bar_(std::make_shared<TopBar>([this](core::RecordType type) { select(type); }, scheme)),
+      entries_(std::make_shared<EntriesDisplay>(queries, scheme)) {
   navigation_ = ftxui::Container::Vertical({top_bar_, entries_});
   Add(navigation_);
   select(core::RecordType::Log);
 }
 ftxui::Element BrowserPage::feedback() const {
-  if (!feedback_.empty()) return ftxui::text(feedback_);
+  if (!feedback_.empty()) {
+    const bool failed = queries_.result() && std::holds_alternative<application::ApplicationError>(*queries_.result());
+    return ftxui::text(feedback_) | ftxui::color(failed ? scheme_.error() : scheme_.warning());
+  }
   return loading_status_->Render();
 }
 void BrowserPage::select(core::RecordType type) {

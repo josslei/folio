@@ -28,3 +28,6 @@ frontend_push_queue_capacity = 256
 backend_push_queue_capacity = 256
 # Send plus receipt ACK deadline; not UI processing or an idle-wait timeout.
 push_ack_timeout_ms = 30000
+
+[tui]
+theme = "hweiluh-nocturne"

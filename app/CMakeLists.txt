@@ -12,6 +12,7 @@ add_library(folio_frontend STATIC
   src/tui/pages/browser/top_bar.cpp
   src/tui/pages/browser/entries_display.cpp
   src/tui/pages/browser/browser_page.cpp
+  src/tui/theme/color_scheme.cpp
   src/tui/tui.cpp
 )
 target_include_directories(folio_frontend

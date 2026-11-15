@@ -7,9 +7,22 @@
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <iostream>
+#include <folio/config/configuration.hpp>
 
 int folio::tui::run() {
   using namespace ftxui;
+  auto settings = config::load_configuration();
+  if (auto* error = std::get_if<config::ConfigurationError>(&settings)) {
+    std::cerr << error->message << '\n';
+    return 1;
+  }
+  const auto& id = std::get<config::EffectiveConfig>(settings).tui_theme;
+  const auto* theme = find_theme(id);
+  if (!theme) {
+    std::cerr << "Unknown TUI Theme ID: " << id << '\n';
+    return 1;
+  }
+  const auto& scheme = theme->scheme;
   auto connection = application::connect_or_start_backend();
   if (auto* error = std::get_if<application::internal::IpcError>(&connection)) {
     std::cerr << error->message << '\n';
@@ -21,16 +34,17 @@ int folio::tui::run() {
   application::BackendConnectionHandle backend(std::move(session),
                                                [&] { screen.PostEvent(frontend_work); });
   BrowserQueryController queries(backend);
-  auto page = std::make_shared<BrowserPage>(queries, [&] { screen.PostEvent(Event::Custom); });
+  auto page = std::make_shared<BrowserPage>(queries, [&] { screen.PostEvent(Event::Custom); },
+      std::chrono::milliseconds(100), std::chrono::seconds(1), scheme);
   bool available = true;
   auto component = std::make_shared<TuiShell>(
       page,
-      [page, &backend, &available] {
-        if (!backend.connected()) return text("Disconnected");
-        if (!available) return text("Backend unavailable");
+      [page, &backend, &available, &scheme] {
+        if (!backend.connected()) return text("Disconnected") | color(scheme.error());
+        if (!available) return text("Backend unavailable") | color(scheme.error());
         return page->feedback();
       },
-      [&] { screen.Exit(); });
+      [&] { screen.Exit(); }, scheme);
   auto events = CatchEvent(component, [&](Event event) {
     if (event != frontend_work) return false;
     const auto work = backend.take_pending_work();

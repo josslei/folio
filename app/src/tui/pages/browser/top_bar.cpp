@@ -3,7 +3,7 @@
 #include <ftxui/component/mouse.hpp>
 #include <ftxui/dom/elements.hpp>
 namespace folio::tui {
-TopBar::TopBar(std::function<void(core::RecordType)> select) : select_(std::move(select)) {}
+TopBar::TopBar(std::function<void(core::RecordType)> select, const ColorScheme& scheme) : scheme_(scheme), select_(std::move(select)) {}
 void TopBar::activate(int index) {
   if (selected_ == index) return;
   selected_ = index;
@@ -17,7 +17,8 @@ ftxui::Element TopBar::OnRender() {
     const bool focused = i == cursor_ && Focused();
     auto item = text(std::string(focused ? "[     " : "      ") + labels[i] +
                      (focused ? "     ]" : "      "));
-    if (i == selected_) item = item | bgcolor(Color::White) | color(Color::Black);
+    if (i == selected_) item = item | bgcolor(scheme_.primary_container()) | color(scheme_.on_primary_container());
+    else item = item | color(scheme_.text_muted());
     items.push_back(item | reflect(boxes_[i]));
   }
   Elements line;
@@ -26,10 +27,10 @@ ftxui::Element TopBar::OnRender() {
     std::string segment;
     for (std::size_t j = 0; j < width; ++j) segment += "▔";
     auto part = text(segment);
-    if (i == selected_) part = part | color(Color::White);
+    part = part | color(scheme_.primary_container());
     line.push_back(part);
   }
-  line.push_back(separatorCharacter("▔") | flex);
+  line.push_back(separatorCharacter("▔") | color(scheme_.primary_container()) | flex);
   return vbox({hbox(std::move(items)), hbox(std::move(line))});
 }
 bool TopBar::OnEvent(ftxui::Event event) {

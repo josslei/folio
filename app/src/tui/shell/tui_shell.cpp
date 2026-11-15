@@ -2,16 +2,16 @@
 #include <ftxui/component/event.hpp>
 namespace folio::tui {
 TuiShell::TuiShell(ftxui::Component page, std::function<ftxui::Element()> feedback,
-                   std::function<void()> quit)
-    : page_(std::move(page)), feedback_(std::move(feedback)), quit_(std::move(quit)),
-      bottom_bar_(std::make_shared<BottomBar>(feedback_)) {
+                   std::function<void()> quit, const ColorScheme& scheme)
+    : scheme_(scheme), page_(std::move(page)), feedback_(std::move(feedback)), quit_(std::move(quit)),
+      bottom_bar_(std::make_shared<BottomBar>(feedback_, scheme)) {
   Add(page_);
   Add(bottom_bar_);
 }
 ftxui::Element TuiShell::OnRender() {
   using namespace ftxui;
   auto content = hbox({text(" "), page_->Render() | flex, text(" ")});
-  return vbox({text(""), content | flex, bottom_bar_->Render(), text("")});
+  return vbox({text(""), content | flex, bottom_bar_->Render(), text("")}) | bgcolor(scheme_.surface()) | color(scheme_.on_surface());
 }
 bool TuiShell::OnEvent(ftxui::Event event) {
   if (event == ftxui::Event::CtrlQ) {

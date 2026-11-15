@@ -36,6 +36,7 @@ enum class LogLevel { Trace, Debug, Info, Warn, Error, Critical };
 struct EffectiveConfig {
   StoragePaths paths;
   LogLevel log_level;
+  std::string tui_theme;
   // Bounded Access concurrency; defaults come from the factory template.
   std::size_t access_workers = 0;
   std::size_t backend_sessions = 0;

@@ -1,3 +1,4 @@
+#include "tui/theme/color_scheme.hpp"
 #include "tui/layouts/virtual_rows.hpp"
 #include <algorithm>
 #include "tui/logic/browser/browser_query_controller.hpp"
@@ -167,4 +168,63 @@ TEST(TuiVirtualRowsTest, EmptyListDoesNotMaterializeRows) {
   });
   ftxui::Screen screen(80, 24);
   ftxui::Render(screen, rows | ftxui::frame | ftxui::flex);
+}
+
+
+TEST(TuiThemeTest, BuiltinsHaveCompleteSemanticColors) {
+  {
+    const auto* theme = folio::tui::find_theme("hweiluh-nocturne");
+    ASSERT_NE(theme, nullptr);
+    EXPECT_EQ(theme->scheme.primary(), ftxui::Color::RGB(0x58, 0xAE, 0xA4));
+    EXPECT_EQ(theme->scheme.on_primary(), ftxui::Color::RGB(0x07, 0x17, 0x15));
+    EXPECT_EQ(theme->scheme.primary_container(), ftxui::Color::RGB(0x29, 0x56, 0x51));
+    EXPECT_EQ(theme->scheme.on_primary_container(), ftxui::Color::RGB(0xE0, 0xF2, 0xEB));
+    EXPECT_EQ(theme->scheme.secondary(), ftxui::Color::RGB(0x9F, 0xAD, 0xC3));
+    EXPECT_EQ(theme->scheme.on_secondary(), ftxui::Color::RGB(0x12, 0x1A, 0x24));
+    EXPECT_EQ(theme->scheme.tertiary(), ftxui::Color::RGB(0xC4, 0x9B, 0x66));
+    EXPECT_EQ(theme->scheme.on_tertiary(), ftxui::Color::RGB(0x24, 0x18, 0x0C));
+    EXPECT_EQ(theme->scheme.surface(), ftxui::Color::RGB(0x11, 0x15, 0x16));
+    EXPECT_EQ(theme->scheme.surface_container(), ftxui::Color::RGB(0x29, 0x33, 0x34));
+    EXPECT_EQ(theme->scheme.surface_container_high(), ftxui::Color::RGB(0x35, 0x42, 0x44));
+    EXPECT_EQ(theme->scheme.on_surface(), ftxui::Color::RGB(0xE7, 0xE7, 0xDC));
+    EXPECT_EQ(theme->scheme.on_surface_variant(), ftxui::Color::RGB(0xA7, 0xB7, 0xB4));
+    EXPECT_EQ(theme->scheme.outline(), ftxui::Color::RGB(0x63, 0x71, 0x6F));
+    EXPECT_EQ(theme->scheme.outline_variant(), ftxui::Color::RGB(0x39, 0x47, 0x45));
+    EXPECT_EQ(theme->scheme.focus(), ftxui::Color::RGB(0x58, 0xAE, 0xA4));
+    EXPECT_EQ(theme->scheme.on_focus(), ftxui::Color::RGB(0x07, 0x17, 0x15));
+    EXPECT_EQ(theme->scheme.text_muted(), ftxui::Color::RGB(0x8C, 0x99, 0x96));
+    EXPECT_EQ(theme->scheme.success(), ftxui::Color::RGB(0x91, 0xBE, 0x98));
+    EXPECT_EQ(theme->scheme.warning(), ftxui::Color::RGB(0xD5, 0xAF, 0x70));
+    EXPECT_EQ(theme->scheme.error(), ftxui::Color::RGB(0xDE, 0x8E, 0x89));
+    EXPECT_EQ(theme->scheme.info(), ftxui::Color::RGB(0x8E, 0xAE, 0xD4));
+  }
+  {
+    const auto* theme = folio::tui::find_theme("gueidaang-afterglow");
+    ASSERT_NE(theme, nullptr);
+    EXPECT_EQ(theme->scheme.primary(), ftxui::Color::RGB(0xC7, 0xA4, 0x6C));
+    EXPECT_EQ(theme->scheme.on_primary(), ftxui::Color::RGB(0x21, 0x18, 0x0C));
+    EXPECT_EQ(theme->scheme.primary_container(), ftxui::Color::RGB(0x55, 0x45, 0x2E));
+    EXPECT_EQ(theme->scheme.on_primary_container(), ftxui::Color::RGB(0xF0, 0xDF, 0xC0));
+    EXPECT_EQ(theme->scheme.secondary(), ftxui::Color::RGB(0x8C, 0xA7, 0x9A));
+    EXPECT_EQ(theme->scheme.on_secondary(), ftxui::Color::RGB(0x10, 0x1D, 0x17));
+    EXPECT_EQ(theme->scheme.tertiary(), ftxui::Color::RGB(0xC5, 0x8E, 0x82));
+    EXPECT_EQ(theme->scheme.on_tertiary(), ftxui::Color::RGB(0x2A, 0x11, 0x10));
+    EXPECT_EQ(theme->scheme.surface(), ftxui::Color::RGB(0x1A, 0x19, 0x17));
+    EXPECT_EQ(theme->scheme.surface_container(), ftxui::Color::RGB(0x33, 0x30, 0x2A));
+    EXPECT_EQ(theme->scheme.surface_container_high(), ftxui::Color::RGB(0x45, 0x40, 0x37));
+    EXPECT_EQ(theme->scheme.on_surface(), ftxui::Color::RGB(0xEB, 0xE2, 0xD1));
+    EXPECT_EQ(theme->scheme.on_surface_variant(), ftxui::Color::RGB(0xBD, 0xB0, 0x9B));
+    EXPECT_EQ(theme->scheme.outline(), ftxui::Color::RGB(0x75, 0x6B, 0x59));
+    EXPECT_EQ(theme->scheme.outline_variant(), ftxui::Color::RGB(0x48, 0x42, 0x38));
+    EXPECT_EQ(theme->scheme.focus(), ftxui::Color::RGB(0xD3, 0xB5, 0x7F));
+    EXPECT_EQ(theme->scheme.on_focus(), ftxui::Color::RGB(0x21, 0x18, 0x0C));
+    EXPECT_EQ(theme->scheme.text_muted(), ftxui::Color::RGB(0xA6, 0x9B, 0x8A));
+    EXPECT_EQ(theme->scheme.success(), ftxui::Color::RGB(0x9E, 0xBC, 0x96));
+    EXPECT_EQ(theme->scheme.warning(), ftxui::Color::RGB(0xD6, 0xB5, 0x7B));
+    EXPECT_EQ(theme->scheme.error(), ftxui::Color::RGB(0xDE, 0x94, 0x8A));
+    EXPECT_EQ(theme->scheme.info(), ftxui::Color::RGB(0x94, 0xAF, 0xC1));
+  }
+  EXPECT_EQ(&folio::tui::default_color_scheme(), &folio::tui::find_theme("hweiluh-nocturne")->scheme);
+  EXPECT_EQ(folio::tui::find_theme("unknown"), nullptr);
+  EXPECT_EQ(folio::tui::find_theme("Hweiluh-Nocturne"), nullptr);
 }

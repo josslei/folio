@@ -165,3 +165,11 @@ separate configuration hierarchy is established now.
 
 Backend `RuntimeLimits` is constructed explicitly from validated configuration;
 it has no independent defaults. Injected-path startup uses the same factory template.
+
+## TUI theme
+
+`[tui].theme` is a nonempty string, defaulting to `hweiluh-nocturne` in the
+factory template. TUI startup resolves the complete ID and reports unknown IDs
+explicitly before connecting. Shared configuration does not maintain the TUI theme
+registry. See [semantic color themes](../development/plans/application.md#semantic-color-themes--implemented)
+for supported themes, presentation roles and terminal capability boundaries.

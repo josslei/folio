@@ -302,3 +302,61 @@ cover obsolete navigation results and Request/Push handoff through BackendConnec
 Receiver retention uses preallocated slots and wakeup callbacks execute outside
 session mutexes. Request callback exceptions end the session and propagate through
 main-thread completion consumption; they do not invent authoritative outcomes.
+
+### Semantic color themes — implemented
+
+Theme definitions are immutable data: a complete ID, display name, and fixed-size
+`ColorScheme`. They are not subclasses. The TUI-owned implementation lives in
+`app/include/tui/theme/color_scheme.hpp` and its matching source. Explicit RGB
+palette tables are compile-time data; conversion to FTXUI colors occurs once.
+Named getters index a shared internal role enumeration in constant time. Components
+borrow the selected immutable scheme, which must outlive their component tree;
+there is no mutable global theme or per-theme component implementation.
+
+The two equally supported built-ins are **Hweiluh Nocturne**
+(`hweiluh-nocturne`, default) and **Gueidaang Afterglow**
+(`gueidaang-afterglow`). Family names use Gwoyeu Romatzyh: 回路 / Circuit and
+归档 / Archive. IDs are lowercase ASCII `family-variant`: family precedes the
+first hyphen; variant includes everything after it. Display names are independent;
+family/variant fields and theme version numbers are unnecessary.
+
+General roles (`primary`, `on_primary`, containers, secondary, tertiary, surface,
+on-surface and outlines) and Folio interaction/feedback roles (focus,
+muted text, success, warning, error, info) share one scheme. `on_X` is foreground
+for background X. Components choose semantic meaning, never palette RGB literals:
+
+| Presentation | Background | Foreground |
+| --- | --- | --- |
+| Main content | surface | on_surface |
+| Column headers | surface | on_surface_variant |
+| Inactive tab | surface | text_muted |
+| Active tab | primary_container | on_primary_container |
+| Focused tab | Active/inactive background | Active/inactive foreground, with cursor brackets |
+| Cursor row | primary_container | on_primary_container |
+| Top Bar separator | surface | primary_container |
+| Ordinary separators | surface | outline_variant |
+| Bottom Bar | surface_container | on_surface |
+| Future Dialog | surface_container_high | on_surface |
+
+This component mapping is a visual experiment, subject to review.
+
+Focused tabs use brackets without an additional color highlight; focus does not
+change the active module. The Top Bar separator uses primary_container along
+its entire width, connecting it visually to the active tab. Critical meaning
+does not rely on color alone.
+
+Select with `[tui] theme = "gueidaang-afterglow"` in the existing configuration.
+Omission inherits the factory default; invalid value types fail configuration
+validation. Unknown IDs are rejected explicitly by TUI startup before connecting.
+The shared configuration stores the ID, without depending on FTXUI or the TUI
+registry. Selection is resolved once at initialization; no runtime theme mutation.
+
+FTXUI `Color` supports RGB, ANSI palette and terminal-default colors. Semantic data
+does not choose terminal escape sequences or alter terminal presets. Rendering
+uses FTXUI's capability handling; reduced-color terminals may approximate RGB.
+Light, monochrome, terminal-native and other palettes can use the same role model.
+Future third-party palettes must respect their licenses. Non-color attributes
+belong in a future higher-level Theme abstraction if actually needed, not in
+ColorScheme. Live switching, external theme files, automatic dark/light detection,
+Theme Picker and terminal images are **Deferred Implementation**, not requirements
+of this color system.

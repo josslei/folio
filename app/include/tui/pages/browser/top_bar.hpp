@@ -1,4 +1,5 @@
 #pragma once
+#include "tui/theme/color_scheme.hpp"
 #include <folio/core/types.hpp>
 #include <ftxui/component/component_base.hpp>
 #include <ftxui/screen/box.hpp>
@@ -8,11 +9,12 @@ namespace folio::tui {
 /// Browser module selection and its independent keyboard cursor.
 class TopBar : public ftxui::ComponentBase {
 public:
-  explicit TopBar(std::function<void(core::RecordType)> select);
+  explicit TopBar(std::function<void(core::RecordType)> select, const ColorScheme& scheme = default_color_scheme());
   ftxui::Element OnRender() override;
   bool OnEvent(ftxui::Event event) override;
   bool Focusable() const override { return true; }
 private:
+  const ColorScheme& scheme_;
   void activate(int index);
   std::function<void(core::RecordType)> select_;
   int cursor_ = 0;

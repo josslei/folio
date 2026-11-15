@@ -151,7 +151,7 @@ parse_configuration(std::string_view text, const ApplicationPaths& application,
     auto table = toml::parse(text);
     for (const auto& [key, value] : table) {
       if (key != "schema_version" && key != "general" && key != "diagnostics" &&
-          key != "performance" && key != "ipc")
+          key != "performance" && key != "ipc" && key != "tui")
         return invalid_value("Unknown configuration key: " + std::string(key.str()));
     }
     if (table["schema_version"]) {
@@ -199,7 +199,15 @@ parse_configuration(std::string_view text, const ApplicationPaths& application,
     if (!count || *count < 1 || !std::in_range<std::size_t>(*count))
       return invalid_value(
           "performance.access_workers must be a positive integer representable as a worker count");
-    EffectiveConfig config{{{}, {}, application}, *log_level, static_cast<std::size_t>(*count)};
+    auto* tui = table["tui"].as_table();
+    if (table["tui"] && !tui) return invalid_value("tui must be a table");
+    if (tui) for (const auto& [key, value] : *tui)
+      if (key != "theme") return invalid_value("Unknown tui setting: " + std::string(key.str()));
+    const auto* theme = tui ? tui->get("theme") : nullptr;
+    if (!theme && defaults) theme = (*defaults)["tui"]["theme"].node();
+    auto theme_id = theme ? theme->value<std::string>() : std::nullopt;
+    if (!theme_id || theme_id->empty()) return invalid_value("tui.theme must be a nonempty Theme ID string");
+    EffectiveConfig config{{{}, {}, application}, *log_level, *theme_id, static_cast<std::size_t>(*count)};
     auto* ipc = table["ipc"].as_table();
     if (table["ipc"] && !ipc) return invalid_value("ipc must be a table");
     if (ipc) {

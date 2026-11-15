@@ -1,4 +1,5 @@
 #pragma once
+#include "tui/theme/color_scheme.hpp"
 #include "tui/shell/bottom_bar.hpp"
 #include <ftxui/component/component_base.hpp>
 #include <functional>
@@ -9,11 +10,12 @@ namespace folio::tui {
 class TuiShell : public ftxui::ComponentBase {
 public:
   TuiShell(ftxui::Component page, std::function<ftxui::Element()> feedback,
-           std::function<void()> quit);
+           std::function<void()> quit, const ColorScheme& scheme = default_color_scheme());
   ftxui::Element OnRender() override;
   bool OnEvent(ftxui::Event event) override;
 
 private:
+  const ColorScheme& scheme_;
   ftxui::Component page_;
   std::function<ftxui::Element()> feedback_;
   std::function<void()> quit_;

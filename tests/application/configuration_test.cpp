@@ -406,5 +406,17 @@ TEST_F(Configuration, IpcSettingsDefaultOverrideAndValidate) {
       folio::config::load_configuration(application, file)));
 }
 
+TEST_F(Configuration, TuiThemeUsesTemplateDefaultAndValidatesShape) {
+  auto defaults = folio::config::configuration_defaults(application);
+  ASSERT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(defaults));
+  EXPECT_EQ(std::get<folio::config::EffectiveConfig>(defaults).tui_theme, "hweiluh-nocturne");
+  write("[tui]\ntheme = 'gueidaang-afterglow'");
+  auto loaded = folio::config::load_configuration(application, file);
+  ASSERT_TRUE(std::holds_alternative<folio::config::EffectiveConfig>(loaded));
+  EXPECT_EQ(std::get<folio::config::EffectiveConfig>(loaded).tui_theme, "gueidaang-afterglow");
+  for (auto text : {"[tui]\ntheme = 42", "[tui]\ntheme = ''", "tui = 'bad'", "[tui]\nother = true"})
+    expect_error(text, folio::config::ConfigurationErrorCode::InvalidValue);
+}
+
 } // namespace
 } // namespace folio::application::internal

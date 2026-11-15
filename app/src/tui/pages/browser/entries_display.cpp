@@ -81,7 +81,7 @@ Element todo_columns(std::string checkbox, std::string title, std::string priori
 // owns its column layout so module-specific presentation can evolve separately.
 class RecordList : public ComponentBase {
 public:
-  explicit RecordList(const BrowserQueryController& queries) : queries_(queries) {}
+  explicit RecordList(const BrowserQueryController& queries, const ColorScheme& scheme) : queries_(queries), scheme_(scheme) {}
   bool Focusable() const override { return !queries_.loading() && records() && !records()->empty(); }
 
   bool OnEvent(Event event) override {
@@ -107,7 +107,7 @@ public:
     if (const auto* values = queries_.loading() ? nullptr : records()) {
       reconcile_cursor(*values);
       if (values->empty()) {
-        body = text("No Records") | dim;
+        body = text("No Records") | color(scheme_.text_muted());
       } else {
         const bool focused = Focused();
         body = std::make_shared<VirtualRows>(
@@ -116,13 +116,13 @@ public:
               const auto position = static_cast<std::size_t>(index);
               auto rendered = row((*values)[position], position ? &(*values)[position - 1] : nullptr);
               if (position == cursor_ && focused)
-                rendered = rendered | bgcolor(Color::White) | color(Color::Black);
+                rendered = rendered | bgcolor(scheme_.primary_container()) | color(scheme_.on_primary_container());
               return rendered;
             });
       }
     }
     return vbox({// Match the body's one-cell scroll-indicator gutter even when it is hidden.
-                 hbox({header() | xflex | dim, text(" ")}),
+                 hbox({header() | xflex | color(scheme_.on_surface_variant()), text(" ")}),
                  body | vscroll_indicator | frame | flex}) | flex;
   }
 
@@ -160,6 +160,7 @@ private:
   virtual Element row(const core::RecordMetadata& record,
                       const core::RecordMetadata* previous) const = 0;
   const BrowserQueryController& queries_;
+  const ColorScheme& scheme_;
 };
 
 class LogList final : public RecordList {
@@ -239,9 +240,9 @@ private:
 };
 } // namespace
 
-EntriesDisplay::EntriesDisplay(const BrowserQueryController& queries)
-    : queries_(queries), logs_(std::make_shared<LogList>(queries)),
-      memos_(std::make_shared<MemoList>(queries)), todos_(std::make_shared<TodoList>(queries)) {
+EntriesDisplay::EntriesDisplay(const BrowserQueryController& queries, const ColorScheme& scheme)
+    : scheme_(scheme), queries_(queries), logs_(std::make_shared<LogList>(queries, scheme)),
+      memos_(std::make_shared<MemoList>(queries, scheme)), todos_(std::make_shared<TodoList>(queries, scheme)) {
   Add(logs_);
   Add(memos_);
   Add(todos_);
