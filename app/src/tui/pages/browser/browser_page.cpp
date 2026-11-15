@@ -12,7 +12,12 @@ BrowserPage::BrowserPage(BrowserQueryController& queries, std::function<void()> 
   Add(navigation_);
   select(core::RecordType::Log);
 }
-ftxui::Element BrowserPage::feedback() const {
+ftxui::Element BrowserPage::feedback() {
+  if (awaiting_result_ && !queries_.loading()) {
+    loading_status_->received(feedback_generation_);
+    loading_status_->complete(feedback_generation_);
+    awaiting_result_ = false;
+  }
   if (!feedback_.empty()) {
     const bool failed = queries_.result() && std::holds_alternative<application::ApplicationError>(*queries_.result());
     return ftxui::text(feedback_) | ftxui::color(failed ? scheme_.error() : scheme_.warning());
@@ -33,11 +38,6 @@ bool BrowserPage::OnEvent(ftxui::Event event) {
 }
 ftxui::Element BrowserPage::OnRender() {
   using namespace ftxui;
-  if (awaiting_result_ && !queries_.loading()) {
-    loading_status_->received(feedback_generation_);
-    loading_status_->complete(feedback_generation_);
-    awaiting_result_ = false;
-  }
   feedback_.clear();
   auto& message = feedback_;
   if (queries_.result()) {

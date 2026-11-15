@@ -18,7 +18,7 @@ public:
   ftxui::Element OnRender() override;
   bool OnEvent(ftxui::Event event) override;
   /// Shell reads feedback after rendering the page; no Shell ownership here.
-  ftxui::Element feedback() const;
+  ftxui::Element feedback();
 
 private:
   const ColorScheme& scheme_;

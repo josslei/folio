@@ -368,6 +368,21 @@ mapping to the FTXUI component tree. There are currently no extracted reusable
 Layouts, so `layouts/` has no empty directory. Existing target boundaries remain
 unchanged; no shared UI framework or new build target is introduced.
 
+Responsive layout is a presentation concern. The Shell observes available terminal
+dimensions and owns the global minimum-size fallback; it does not define Page
+columns or their priorities. Each Page specifies its content, mandatory elements,
+minimum widths and visibility priorities. A Layout may provide reusable measuring,
+allocation, hiding and truncation mechanisms without knowing the Page's domain.
+Visual order and retention priority are independent. Implement these mechanisms
+incrementally as Pages need them, rather than introducing a breakpoint framework.
+
+The initial Shell minimum is 80 columns by 24 rows. Below that size in either
+dimension a temporary message is centered within the Page Host. The Shell and its
+Bottom Bar remain visible, including Quit guidance. This is a presentation fallback,
+not a navigable Page; the existing Page,
+cursor and asynchronous operations remain alive. Resizing does not navigate or
+change application data. Individual Pages still need their own responsive policies.
+
 The Shell provides a one-character horizontal inset for Page content and Bottom
 Bar text, plus a blank row at the top and bottom. The Bottom Bar highlight spans
 the terminal width. Pages may add spacing for their own layouts.
