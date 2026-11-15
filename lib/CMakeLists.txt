@@ -2,8 +2,8 @@ set(folio_config_template "${PROJECT_SOURCE_DIR}/templates/folio_config.toml")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${folio_config_template}")
 file(READ "${folio_config_template}" folio_config_contents)
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/config_template.hpp"
-  "#pragma once\n#include <string_view>\nnamespace folio::config { inline constexpr std::string_view factory_template = R\"folio(${folio_config_contents})folio\"; }\n")
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/config_template.hpp" CONTENT
+  "#pragma once\n#include <string_view>\nnamespace folio::config { inline constexpr std::string_view factory_template = R\"folio(${folio_config_contents})folio\"; }\n" @ONLY)
 
 # Code and value contracts shared by both runtime roles. No app/server includes.
 add_library(folio_shared STATIC
