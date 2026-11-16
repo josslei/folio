@@ -20,8 +20,8 @@ consumption and reconnection remain Phase 4.4b. The
 | Catalog maintenance | Generic low-cost Check, unified Scoped/Full Refresh, atomic reconciliation, Full Refresh execution sharing |
 | Editing control | Connection-owned Entry Edit Locks with accepted-work lifetime retention |
 | Configuration/Logging/I/O | Shared factory-template Configuration, process spdlog and byte-oriented atomic file operations |
-| Frontend | Welcome TUI and blocking connection API; functional editor and UI/IPC worker integration deferred |
-| Push | Paired independent Request/Push connections, receipt ACKs, bounded invalidations and Report delivery; UI consumption deferred |
+| Frontend | Asynchronous Browser queries, typed Navigation Phase 1 (Shell → Browser → Sections), Logical Cursor, Section restoration, themes and 80×24 fallback; Directory navigation and Record Viewer/Editor remain unfinished |
+| Push | Independent Request/Push connections, receipt ACKs, bounded invalidations and Report delivery; Browser query invalidation integrated, complete editor/UI reactions and reconnection deferred |
 | Not implemented | Persistent Draft/compound Recovery, Delete/Trash, Vault and Git Sync |
 
 ## Verification evidence

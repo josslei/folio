@@ -23,9 +23,9 @@ private:
 void BrowserQueryController::select(core::RecordType type) {
   ++generation_;
   loading_ = true;
-  module_results_[static_cast<std::size_t>(selected_)] = std::move(result_);
-  selected_ = type;
-  result_ = std::move(module_results_[static_cast<std::size_t>(selected_)]);
+  module_results_[static_cast<std::size_t>(query_type_)] = std::move(result_);
+  query_type_ = type;
+  result_ = std::move(module_results_[static_cast<std::size_t>(query_type_)]);
   reload_pending_ = true;
   submit_pending();
 }
@@ -39,7 +39,7 @@ void BrowserQueryController::submit_pending() {
   if (!reload_pending_ || request_active_) return;
   const auto generation = generation_;
   application::RecordQuery query;
-  query.type = selected_;
+  query.type = query_type_;
   if (backend_.query_records(query, QueryCompletion{*this, generation})) {
     reload_pending_ = false;
     request_active_ = true;

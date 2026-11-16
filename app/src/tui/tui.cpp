@@ -34,17 +34,20 @@ int folio::tui::run() {
   application::BackendConnectionHandle backend(std::move(session),
                                                [&] { screen.PostEvent(frontend_work); });
   BrowserQueryController queries(backend);
-  auto page = std::make_shared<BrowserPage>(queries, [&] { screen.PostEvent(Event::Custom); },
-      std::chrono::milliseconds(100), std::chrono::seconds(1), scheme);
+  std::shared_ptr<BrowserPage> page;
   bool available = true;
   auto component = std::make_shared<TuiShell>(
-      page,
-      [page, &backend, &available, &scheme] {
+      Component{},
+      [&page, &backend, &available, &scheme] {
         if (!backend.connected()) return text("Disconnected") | color(scheme.error());
         if (!available) return text("Backend unavailable") | color(scheme.error());
         return page->feedback();
       },
-      [&] { screen.Exit(); }, scheme);
+      [&] { screen.Exit(); }, scheme,
+      BrowserPage::factory(
+          queries, [&] { screen.PostEvent(Event::Custom); }, scheme),
+      BrowserPage::initial_location(queries, scheme));
+  page = std::dynamic_pointer_cast<BrowserPage>(component->page());
   auto events = CatchEvent(component, [&](Event event) {
     if (event != frontend_work) return false;
     const auto work = backend.take_pending_work();

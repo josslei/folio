@@ -1,11 +1,14 @@
 #include "tui/pages/browser/entries_display.hpp"
+#include "tui/pages/browser/top_bar.hpp"
 #include "tui/layouts/virtual_rows.hpp"
+#include "tui/logic/navigation/navigable_component.hpp"
 
 #include <ftxui/component/event.hpp>
 #include <algorithm>
 #include <ctime>
 #include <iomanip>
 #include <sstream>
+#include <stdexcept>
 #include <type_traits>
 
 namespace folio::tui {
@@ -77,12 +80,34 @@ Element todo_columns(std::string checkbox, std::string title, std::string priori
                column(std::move(subtasks), 8, ColumnAlignment::Right)});
 }
 
-// The common frame only handles result availability and scrolling. Each list
-// owns its column layout so module-specific presentation can evolve separately.
-class RecordList : public ComponentBase {
+// The common browser frame handles result availability, cursor and scrolling.
+// Each concrete browser owns its current column layout and record presentation.
+} // namespace
+
+class LogsBrowser;
+class MemosBrowser;
+class TodosBrowser;
+template <> const navigation::Description& navigation::description<LogsBrowser>();
+template <> const navigation::Description& navigation::description<MemosBrowser>();
+template <> const navigation::Description& navigation::description<TodosBrowser>();
+
+class RecordBrowser : public navigation::NavigableComponent {
 public:
-  explicit RecordList(const BrowserQueryController& queries, const ColorScheme& scheme) : queries_(queries), scheme_(scheme) {}
-  bool Focusable() const override { return !queries_.loading() && records() && !records()->empty(); }
+  RecordBrowser(const BrowserQueryController& queries, const ColorScheme& scheme,
+                const navigation::Description& description)
+      : navigation::NavigableComponent(description), queries_(queries), scheme_(scheme) {}
+  BrowserPosition position() {
+    if (!queries_.loading())
+      if (const auto* values = records()) reconcile_cursor(*values);
+    return {cursor_, cursor_id_};
+  }
+  void restore_position(const BrowserPosition& value) {
+    cursor_ = value.index;
+    cursor_id_ = value.entry;
+  }
+  bool Focusable() const override {
+    return !queries_.loading() && records() && !records()->empty();
+  }
 
   bool OnEvent(Event event) override {
     if (!Focused()) return false;
@@ -114,23 +139,26 @@ public:
             static_cast<int>(values->size()), static_cast<int>(cursor_),
             [this, values, focused](int index) {
               const auto position = static_cast<std::size_t>(index);
-              auto rendered = row((*values)[position], position ? &(*values)[position - 1] : nullptr);
+              auto rendered =
+                  row((*values)[position], position ? &(*values)[position - 1] : nullptr);
               if (position == cursor_ && focused)
-                rendered = rendered | bgcolor(scheme_.primary_container()) | color(scheme_.on_primary_container());
+                rendered = rendered | bgcolor(scheme_.primary_container()) |
+                           color(scheme_.on_primary_container());
               return rendered;
             });
       }
     }
     return vbox({// Match the body's one-cell scroll-indicator gutter even when it is hidden.
                  hbox({header() | xflex | color(scheme_.on_surface_variant()), text(" ")}),
-                 body | vscroll_indicator | frame | flex}) | flex;
+                 body | vscroll_indicator | frame | flex}) |
+           flex;
   }
 
 private:
   const application::RecordMetadataList* records() const {
     if (!queries_.result()) return nullptr;
-    const auto* value = std::get_if<application::Annotated<application::RecordMetadataList>>(
-        &*queries_.result());
+    const auto* value =
+        std::get_if<application::Annotated<application::RecordMetadataList>>(&*queries_.result());
     return value ? &value->value : nullptr;
   }
 
@@ -146,8 +174,9 @@ private:
     }
     if (cursor_id_ && cursor_ < values.size() && id(values[cursor_]) == *cursor_id_) return;
     if (cursor_id_) {
-      const auto found = std::find_if(values.begin(), values.end(),
-                                    [&](const auto& record) { return id(record) == *cursor_id_; });
+      const auto found = std::find_if(values.begin(), values.end(), [&](const auto& record) {
+        return id(record) == *cursor_id_;
+      });
       if (found != values.end()) cursor_ = static_cast<std::size_t>(found - values.begin());
     }
     cursor_ = std::min(cursor_, values.size() - 1);
@@ -163,9 +192,15 @@ private:
   const ColorScheme& scheme_;
 };
 
-class LogList final : public RecordList {
+class LogsBrowser final : public RecordBrowser {
 public:
-  using RecordList::RecordList;
+  using NavigationChildren = navigation::Children<>;
+  static navigation::Factory factory(BrowserQueryController& queries, const ColorScheme& scheme) {
+    return [&queries, &scheme] { return std::make_shared<LogsBrowser>(queries, scheme); };
+  }
+
+  LogsBrowser(const BrowserQueryController& queries, const ColorScheme& scheme)
+      : RecordBrowser(queries, scheme, folio::tui::navigation::description<LogsBrowser>()) {}
 
 private:
   Element header() const override { return log_columns("DATE", "TIME", "TITLE"); }
@@ -179,9 +214,15 @@ private:
   }
 };
 
-class MemoList final : public RecordList {
+class MemosBrowser final : public RecordBrowser {
 public:
-  using RecordList::RecordList;
+  using NavigationChildren = navigation::Children<>;
+  static navigation::Factory factory(BrowserQueryController& queries, const ColorScheme& scheme) {
+    return [&queries, &scheme] { return std::make_shared<MemosBrowser>(queries, scheme); };
+  }
+
+  MemosBrowser(const BrowserQueryController& queries, const ColorScheme& scheme)
+      : RecordBrowser(queries, scheme, folio::tui::navigation::description<MemosBrowser>()) {}
 
 private:
   Element header() const override { return memo_columns("NAME / TITLE", "TAGS", "MODIFIED"); }
@@ -196,9 +237,15 @@ private:
   }
 };
 
-class TodoList final : public RecordList {
+class TodosBrowser final : public RecordBrowser {
 public:
-  using RecordList::RecordList;
+  using NavigationChildren = navigation::Children<>;
+  static navigation::Factory factory(BrowserQueryController& queries, const ColorScheme& scheme) {
+    return [&queries, &scheme] { return std::make_shared<TodosBrowser>(queries, scheme); };
+  }
+
+  TodosBrowser(const BrowserQueryController& queries, const ColorScheme& scheme)
+      : RecordBrowser(queries, scheme, folio::tui::navigation::description<TodosBrowser>()) {}
 
 private:
   Element header() const override {
@@ -238,14 +285,68 @@ private:
     return todo.status == core::TodoStatus::Completed ? result | dim : result;
   }
 };
-} // namespace
 
-EntriesDisplay::EntriesDisplay(const BrowserQueryController& queries, const ColorScheme& scheme)
-    : scheme_(scheme), queries_(queries), logs_(std::make_shared<LogList>(queries, scheme)),
-      memos_(std::make_shared<MemoList>(queries, scheme)), todos_(std::make_shared<TodoList>(queries, scheme)) {
-  Add(logs_);
-  Add(memos_);
-  Add(todos_);
+template <> const navigation::Description& navigation::description<LogsBrowser>() {
+  static const auto description = navigation::NavigableComponent::describe<LogsBrowser>();
+  return description;
+}
+template <> const navigation::Description& navigation::description<MemosBrowser>() {
+  static const auto description = navigation::NavigableComponent::describe<MemosBrowser>();
+  return description;
+}
+template <> const navigation::Description& navigation::description<TodosBrowser>() {
+  static const auto description = navigation::NavigableComponent::describe<TodosBrowser>();
+  return description;
+}
+
+navigation::Anchor browser_anchor(BrowserKind browser) {
+  switch (browser) {
+  case BrowserKind::Logs:
+    return navigation::description<LogsBrowser>().anchor;
+  case BrowserKind::Memos:
+    return navigation::description<MemosBrowser>().anchor;
+  case BrowserKind::Todos:
+    return navigation::description<TodosBrowser>().anchor;
+  }
+  throw std::invalid_argument("Unknown Browser kind");
+}
+std::optional<BrowserKind> browser_kind(const navigation::Anchor& anchor) {
+  if (anchor.is<LogsBrowser>()) return BrowserKind::Logs;
+  if (anchor.is<MemosBrowser>()) return BrowserKind::Memos;
+  if (anchor.is<TodosBrowser>()) return BrowserKind::Todos;
+  return {};
+}
+
+EntriesDisplay::EntriesDisplay(BrowserQueryController& queries, std::function<BrowserKind()> active,
+                               const ColorScheme& scheme,
+                               std::shared_ptr<navigation::INavigable> prepared)
+    : active_(std::move(active)), scheme_(scheme), queries_(queries) {
+  if (prepared && prepared->static_description())
+    adopt_browser(prepared->static_description()->anchor, prepared);
+}
+ftxui::Component& EntriesDisplay::browser_slot(BrowserKind kind) {
+  switch (kind) {
+  case BrowserKind::Logs:
+    return logs_;
+  case BrowserKind::Memos:
+    return memos_;
+  case BrowserKind::Todos:
+    return todos_;
+  }
+  throw std::invalid_argument("Unknown Browser kind");
+}
+bool EntriesDisplay::adopt_browser(const navigation::Anchor& anchor,
+                                   const std::shared_ptr<navigation::INavigable>& browser) {
+  const auto kind = browser_kind(anchor);
+  auto component = std::dynamic_pointer_cast<RecordBrowser>(browser);
+  if (!kind || !component || !browser->static_description() ||
+      browser->static_description()->anchor != anchor)
+    return false;
+  auto& slot = browser_slot(*kind);
+  if (slot) return slot.get() == component.get();
+  Add(component);
+  slot = std::move(component);
+  return true;
 }
 
 bool EntriesDisplay::Focusable() const {
@@ -257,27 +358,55 @@ bool EntriesDisplay::Focusable() const {
 }
 
 ftxui::Component EntriesDisplay::ActiveChild() {
-  switch (queries_.selected()) {
-  case core::RecordType::Log: return logs_;
-  case core::RecordType::Memo: return memos_;
-  case core::RecordType::Todo: return todos_;
+  auto& slot = browser_slot(active_());
+  if (!slot) {
+    // A selected child may be displayed while the navigation cursor is still at
+    // Top Bar. Use the same registered factory, not a second constructor list.
+    adopt_browser(browser_anchor(active_()), browser_factory(active_())());
   }
-  return nullptr;
+  return slot;
+}
+
+navigation::Factory EntriesDisplay::browser_factory(BrowserKind kind) const {
+  return browser_factory(kind, queries_, scheme_);
+}
+
+navigation::Factory EntriesDisplay::browser_factory(BrowserKind kind,
+                                                    BrowserQueryController& queries,
+                                                    const ColorScheme& scheme) {
+  switch (kind) {
+  case BrowserKind::Logs:
+    return LogsBrowser::factory(queries, scheme);
+  case BrowserKind::Memos:
+    return MemosBrowser::factory(queries, scheme);
+  case BrowserKind::Todos:
+    return TodosBrowser::factory(queries, scheme);
+  }
+  throw std::logic_error("Unknown Browser kind");
 }
 
 bool EntriesDisplay::OnEvent(ftxui::Event event) {
   return ActiveChild()->OnEvent(event);
 }
 
-ftxui::Element EntriesDisplay::OnRender() {
-  switch (queries_.selected()) {
-  case core::RecordType::Log:
-    return logs_->Render();
-  case core::RecordType::Memo:
-    return memos_->Render();
-  case core::RecordType::Todo:
-    return todos_->Render();
+std::shared_ptr<navigation::INavigable> EntriesDisplay::browser(BrowserKind kind) const {
+  switch (kind) {
+  case BrowserKind::Logs:
+    return std::dynamic_pointer_cast<navigation::INavigable>(logs_);
+  case BrowserKind::Memos:
+    return std::dynamic_pointer_cast<navigation::INavigable>(memos_);
+  case BrowserKind::Todos:
+    return std::dynamic_pointer_cast<navigation::INavigable>(todos_);
   }
-  return ftxui::text("");
+  return nullptr;
+}
+BrowserPosition EntriesDisplay::position() {
+  return static_cast<RecordBrowser&>(*ActiveChild()).position();
+}
+void EntriesDisplay::restore_position(const BrowserPosition& value) {
+  static_cast<RecordBrowser&>(*ActiveChild()).restore_position(value);
+}
+ftxui::Element EntriesDisplay::OnRender() {
+  return ActiveChild()->Render();
 }
 } // namespace folio::tui

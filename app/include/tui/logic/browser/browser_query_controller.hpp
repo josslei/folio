@@ -18,7 +18,7 @@ public:
   /// Main thread, after communication events: retry the latest deferred query.
   void resume_pending();
   bool loading() const { return loading_; }
-  core::RecordType selected() const { return selected_; }
+  core::RecordType query_type() const { return query_type_; }
   const auto& result() const { return result_; }
 
 private:
@@ -31,7 +31,8 @@ private:
   bool loading_ = false;
   std::optional<application::AccessResult<application::Annotated<application::RecordMetadataList>>>
       result_;
-  core::RecordType selected_ = core::RecordType::Log;
+  // Derived request/cache identity, supplied by Browser navigation.
+  core::RecordType query_type_ = core::RecordType::Log;
   std::array<std::optional<application::AccessResult<
                  application::Annotated<application::RecordMetadataList>>>,
              3>

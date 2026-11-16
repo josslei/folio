@@ -360,3 +360,95 @@ belong in a future higher-level Theme abstraction if actually needed, not in
 ColorScheme. Live switching, external theme files, automatic dark/light detection,
 Theme Picker and terminal images are **Deferred Implementation**, not requirements
 of this color system.
+
+### Navigation Phase 1 — required follow-up TODOs
+
+Phase 1 now integrates the typed `navigation::INavigable` interface and Navigation Manager
+with the actual Shell → Browser Page → Top Bar → Logs/Memos/Todos browsers.
+Enter activates a browser while keeping Top Bar focus; Down enters its content;
+Escape from content performs structural Up to Top Bar without clearing the view. See the
+[implemented contract](../../architecture/system.md#navigation--phase-1-concrete-browser-integration)
+for ownership, read-only resolution, destination factories, explicit hosting,
+History invariants, Section restoration and
+Escape behavior. These follow-ups remain deferred:
+
+- **Deferred Implementation — NAV-ANCHOR: Permanent History Anchor.** Phase 1
+  uses the semantic Browser / Logs / Root location as its immutable History Start,
+  separate from the mutable deque (whose selected slot equals Current Location).
+  Revisit this anchor when the future Main Page is designed; evaluate whether Main
+  should become the permanent initial History location. Ordinary Section switches
+  may replace the first History slot, but must not overwrite History Start or create
+  false History Back opportunities. Confirmed-invalid skipping and automatic fallback
+  restoration await an explicit dynamic-destination validity contract; arbitrary
+  construction/Backend failures must not discard historical entries.
+- **Deferred Implementation — NAV-PREFIX: Shared-prefix Location Paths.** Use
+  `std::vector` for Location Paths initially. If paths become substantially deeper
+  or full-vector copying becomes a measured performance cost, evaluate
+  persistent/shared-prefix Location Paths (structural sharing). Do not introduce
+  shared-prefix nodes, reference-counted path structures or specialized allocators
+  in Phase 1.
+
+Both TODOs also appear at their relevant code locations. Locations use vectors
+of owner-defined typed values, without string paths or a global node-type registry.
+Section Roots are semantic Navigation locations; existing Queries still use
+`AllScope`, not Directory-aware Root Browse. Virtual Subtrees and Directory
+Navigation remain the next reviewed increment.
+
+
+Navigation implementation refinement: owner-local
+`using NavigationChildren = navigation::Children<A, B, C>` declarations use child class types
+as static identity (no duplicated child enums). Visitability is a destination
+property. These declarations generate immutable `navigation::Description` data through
+`navigation::NavigableComponent::describe<UI>()`; descriptions do not implement `navigation::INavigable`.
+The single description type contains its own anchor and getters for child
+descriptions. Registered anchors carry direct metadata access for restoration;
+dynamic positions use the same interface and may supply a factory with the target.
+Visual navigation classes share `navigation::NavigableComponent`; the Manager resolves the
+semantic path before preparing visible UI. UI-owned registration binds no-argument
+construction callables to declared children; destination anchors retain them for
+restoration after temporary UI owners are destroyed. The Manager constructs a
+missing target without knowing any Query, theme, wakeup, or Loading dependencies.
+Hosts adopt that instance while preparing necessary visible composition. Shell
+retains a Browser-specific composition factory outside the navigation machinery;
+record browser instances are lazy and reused. Discovery and target construction do
+not require live ancestors. Actual Directory virtual subtrees remain deferred.
+See [the concrete navigation contract](../../architecture/system.md#navigation--phase-1-concrete-browser-integration).
+The reusable composed virtual-subtree capability is implemented; Browser virtual
+position integration, other Page lifecycles and Directory navigation remain deferred.
+
+`navigation::VirtualSubtree<Position>` is owned by composition and implements the
+existing `INavigable` contract. Owner-defined typed positions live in Locations,
+not a shared mutable current-node field. An aliasing retained reference pins the
+containing UI; factories reconstruct the owner and return its capability. Generic
+Manager destination recognition uses `represents()` rather than assuming every
+position equals a static component-class Anchor. Focused behavior tests cover
+shared-object positions, structural Up/Down, Cross History, owner lifetime, and
+restoration after destruction. No Directory/Record UI or query behavior changes
+are included in this foundation.
+
+Navigation naming: `Anchor` replaces `Locator` to distinguish a stable path-step
+reference from a complete `Location` and a declared transition `Target`. Storage
+filesystem locator terminology is unchanged.
+
+**TODO(Navigation) — Virtual-subtree restoration:** Replace provisional
+`BrowserPosition` / `std::any` navigation snapshots with per-browser remembered
+Locations when scope/entry positions join the virtual subtree. Do not extend this
+parallel snapshot system; keep only presentation details local to browsers.
+
+Navigation transition cleanup: `ChildActivation`, `ActivationResult`, and
+`activate_child()` have been removed. `resolve_child()` is read-only;
+`Description::create` constructs the destination; `host()` adopts it. Manager
+prepares History before hosting and commits navigation state before notifying
+Browser logic. `Context` is only a borrowed Location and prefix depth.
+Declaration-issued `navigation::Target` values are now the input to Down and Cross
+operations. Static target helpers constrain children against the owning class's
+type list; dynamic declarations issue the same type. Manager trusts those values
+without enumerating children/Cross declarations or searching description trees.
+Cross destination and mode form one declaration: UI actions call `Manager::cross(target)`
+without choosing the mode again. Distinct Push and Switch actions may target the
+same location; the Manager executes their declared History semantics.
+Resolution returns retained shared pointers (empty means not constructed), and
+Manager locks weak cached references during transitions. Navigation results are
+Changed/Unchanged; contract violations and construction/hosting failures propagate
+as exceptions before navigation-state commit. Confirmed disappearance of future
+dynamic History destinations remains part of the deferred virtual-subtree work.

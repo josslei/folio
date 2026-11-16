@@ -2,8 +2,11 @@
 #include <ftxui/screen/screen.hpp>
 #include "tui/pages/browser/entries_display.hpp"
 #include "tui/pages/browser/top_bar.hpp"
+#include "tui/pages/browser/browser_page.hpp"
+#include "tui/shell/tui_shell.hpp"
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/event.hpp>
+#include <ftxui/component/mouse.hpp>
 #include "tui/logic/browser/browser_query_controller.hpp"
 #include "frontend/runtime/backend_connection_handle.hpp"
 #include <future>
@@ -186,11 +189,12 @@ TEST_F(MetadataAccessIntegration, LargeContentAndMetadataMessagesAllowTwoPeersAn
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.update_memo(changed)));
   {
     auto first_session = connect();
-  folio::test::BlockingFrontend first(first_session);
+    folio::test::BlockingFrontend first(first_session);
     auto second_result = app::ConnectionSession::connect(
         std::get<ipc::ConnectionSettings>(ipc::connection_settings(paths)));
     ASSERT_TRUE(std::holds_alternative<std::unique_ptr<app::ConnectionSession>>(second_result));
-    folio::test::BlockingFrontend second(std::get<std::unique_ptr<app::ConnectionSession>>(second_result));
+    folio::test::BlockingFrontend second(
+        std::get<std::unique_ptr<app::ConnectionSession>>(second_result));
     auto loaded = first.load_memo(memo.id());
     ASSERT_TRUE(
         std::holds_alternative<folio::application::Annotated<core::Memo::Snapshot>>(loaded));
@@ -341,9 +345,9 @@ TEST_F(MetadataAccessIntegration,
        MutationOrchestratorAndEditLocksShareExistingConnectionAndBackend) {
   {
     auto first_session = connect();
-  folio::test::BlockingFrontend first(first_session);
+    folio::test::BlockingFrontend first(first_session);
     auto second_session = connect();
-  folio::test::BlockingFrontend second(second_session);
+    folio::test::BlockingFrontend second(second_session);
     auto dir_result =
         first.create(app::MutationId::generate(), core::DirectoryKind::Memo, "Projects");
     ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::DirectoryMetadata>>(dir_result));
@@ -527,7 +531,7 @@ TEST_F(MetadataAccessIntegration, RequestErrorsAreNotBroadcastAndReconnectDoesNo
   folio::test::BlockingFrontend viewer(viewer_session);
   {
     auto editor_session = connect();
-  folio::test::BlockingFrontend editor(editor_session);
+    folio::test::BlockingFrontend editor(editor_session);
     auto missing = editor.load_memo(core::Id::generate());
     ASSERT_TRUE(std::holds_alternative<app::ApplicationError>(missing));
     EXPECT_FALSE(
@@ -617,7 +621,7 @@ TEST_F(MetadataAccessIntegration, HandleQueryNavigationDiscardsObsoleteCompletio
   runtime.process_completion();
   ASSERT_TRUE(queries.result());
   EXPECT_FALSE(queries.loading());
-  EXPECT_EQ(queries.selected(), core::RecordType::Todo);
+  EXPECT_EQ(queries.query_type(), core::RecordType::Todo);
   runtime.finish_requests();
 }
 
@@ -632,7 +636,7 @@ TEST_F(MetadataAccessIntegration, HandleRetainsPushUntilQueryCompletionThenReloa
   folio::test::BlockingFrontend writer(writer_session);
   ASSERT_TRUE(std::holds_alternative<std::monostate>(writer.acquire_edit(memo.id())));
   auto changed = writer.update(app::MutationId::generate(), memo.id(),
-                              app::MemoEditableFields{"new title", "body", {}}, time);
+                               app::MemoEditableFields{"new title", "body", {}}, time);
   ASSERT_TRUE(std::holds_alternative<app::MutationResponse<core::MemoMetadata>>(changed));
   ASSERT_TRUE(transport->wait());
   auto work = runtime.take_pending_work();
@@ -645,7 +649,8 @@ TEST_F(MetadataAccessIntegration, HandleRetainsPushUntilQueryCompletionThenReloa
   queries.invalidate();
   ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
   runtime.process_completion();
-  const auto& records = std::get<app::Annotated<std::vector<core::RecordMetadata>>>(*queries.result()).value;
+  const auto& records =
+      std::get<app::Annotated<std::vector<core::RecordMetadata>>>(*queries.result()).value;
   ASSERT_EQ(records.size(), 1u);
   EXPECT_EQ(std::get<core::MemoMetadata>(records.front()).title, "new title");
   runtime.finish_requests();
@@ -653,9 +658,10 @@ TEST_F(MetadataAccessIntegration, HandleRetainsPushUntilQueryCompletionThenReloa
 
 TEST_F(MetadataAccessIntegration, HandleRequestExceptionClosesSessionAndReachesMainThread) {
   app::BackendConnectionHandle runtime(connect(), [] {});
-  ASSERT_TRUE(runtime.connection_session().submit([](app::ConnectionSession&) -> app::ConnectionSession::Completion {
-    throw std::runtime_error("synthetic request failure");
-  }));
+  ASSERT_TRUE(runtime.connection_session().submit(
+      [](app::ConnectionSession&) -> app::ConnectionSession::Completion {
+        throw std::runtime_error("synthetic request failure");
+      }));
   ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
   EXPECT_THROW(runtime.process_completion(), std::runtime_error);
   EXPECT_FALSE(runtime.connected());
@@ -671,8 +677,7 @@ TEST_F(MetadataAccessIntegration, TypedHandleCallsDeliverResultsOnlyOnMainThread
   query.type = core::RecordType::Memo;
   ASSERT_TRUE(runtime.query_records(query, [&](auto result) {
     EXPECT_EQ(std::this_thread::get_id(), main_thread);
-    const auto* records =
-        std::get_if<app::Annotated<std::vector<core::RecordMetadata>>>(&result);
+    const auto* records = std::get_if<app::Annotated<std::vector<core::RecordMetadata>>>(&result);
     ASSERT_NE(records, nullptr);
     ASSERT_EQ(records->value.size(), 1u);
     EXPECT_EQ(std::get<core::MemoMetadata>(records->value.front()).id, memo.id());
@@ -698,10 +703,20 @@ TEST_F(MetadataAccessIntegration, BrowserCursorMovesBetweenRegionsWithoutActivat
   app::BackendConnectionHandle runtime(connect(), [] {});
   folio::tui::BrowserQueryController queries(runtime);
   queries.select(core::RecordType::Memo);
-  auto entries = std::make_shared<folio::tui::EntriesDisplay>(queries);
-  auto tabs = std::make_shared<folio::tui::TopBar>([](auto) {
-    ADD_FAILURE() << "Cursor movement must not activate a module";
+  auto entries = std::make_shared<folio::tui::EntriesDisplay>(queries, [&] {
+    switch (queries.query_type()) {
+    case core::RecordType::Log:
+      return folio::tui::BrowserKind::Logs;
+    case core::RecordType::Memo:
+      return folio::tui::BrowserKind::Memos;
+    case core::RecordType::Todo:
+      return folio::tui::BrowserKind::Todos;
+    }
+    return folio::tui::BrowserKind::Logs;
   });
+  auto tabs = std::make_shared<folio::tui::TopBar>(
+      [](auto) { ADD_FAILURE() << "Cursor movement must not activate a module"; },
+      [] { return folio::tui::BrowserKind::Memos; });
   auto page = ftxui::Container::Vertical({tabs, entries});
   EXPECT_FALSE(entries->Focusable());
   ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
@@ -734,8 +749,26 @@ TEST_F(MetadataAccessIntegration, BrowserRendersAndHandlesNavigationWhileRequest
   queries.select(core::RecordType::Memo);
   ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
   runtime.process_completion();
-  auto entries = std::make_shared<folio::tui::EntriesDisplay>(queries);
-  auto tabs = std::make_shared<folio::tui::TopBar>([&](auto type) { queries.select(type); });
+  auto entries = std::make_shared<folio::tui::EntriesDisplay>(queries, [&] {
+    switch (queries.query_type()) {
+    case core::RecordType::Log:
+      return folio::tui::BrowserKind::Logs;
+    case core::RecordType::Memo:
+      return folio::tui::BrowserKind::Memos;
+    case core::RecordType::Todo:
+      return folio::tui::BrowserKind::Todos;
+    }
+    return folio::tui::BrowserKind::Logs;
+  });
+  folio::tui::BrowserKind active = folio::tui::BrowserKind::Memos;
+  auto tabs = std::make_shared<folio::tui::TopBar>(
+      [&](auto section) {
+        active = section;
+        queries.select(section == folio::tui::BrowserKind::Logs    ? core::RecordType::Log
+                       : section == folio::tui::BrowserKind::Memos ? core::RecordType::Memo
+                                                                   : core::RecordType::Todo);
+      },
+      [&] { return active; });
   auto page = ftxui::Container::Vertical({tabs, entries});
   ftxui::Screen initial(100, 24);
   ftxui::Render(initial, page->Render());
@@ -765,12 +798,332 @@ TEST_F(MetadataAccessIntegration, BrowserRendersAndHandlesNavigationWhileRequest
   EXPECT_NE(pending.ToString().find("NAME / TITLE"), std::string::npos);
   EXPECT_TRUE(page->OnEvent(ftxui::Event::ArrowRight));
   EXPECT_TRUE(page->OnEvent(ftxui::Event::Return));
-  EXPECT_EQ(queries.selected(), core::RecordType::Memo);
+  EXPECT_EQ(queries.query_type(), core::RecordType::Memo);
   EXPECT_TRUE(page->OnEvent(ftxui::Event::ArrowRight));
   EXPECT_TRUE(page->OnEvent(ftxui::Event::Return));
-  EXPECT_EQ(queries.selected(), core::RecordType::Todo);
+  EXPECT_EQ(queries.query_type(), core::RecordType::Todo);
   ftxui::Screen todos(100, 24);
   ftxui::Render(todos, page->Render());
   EXPECT_NE(todos.ToString().find("PRIORITY"), std::string::npos);
   EXPECT_TRUE(queries.loading());
+}
+
+TEST_F(MetadataAccessIntegration, NavigationControlsActualBrowserAndRejectsStaleQueries) {
+  using namespace folio::tui;
+  app::BackendConnectionHandle runtime(connect(), [] {});
+  BrowserQueryController queries(runtime);
+  std::shared_ptr<BrowserPage> browser;
+  TuiShell shell(
+      ftxui::Component{}, [&] { return browser->feedback(); }, [] {}, default_color_scheme(),
+      BrowserPage::factory(queries, [] {}),
+      BrowserPage::initial_location(queries, default_color_scheme()));
+  browser = std::dynamic_pointer_cast<BrowserPage>(shell.page());
+  ASSERT_NE(browser, nullptr);
+  auto* navigation = shell.navigation_manager();
+  ASSERT_NE(navigation, nullptr);
+  const auto anchor = navigation->history_start();
+  ASSERT_EQ(anchor.size(), 3u);
+  EXPECT_TRUE(anchor.front().is<BrowserPage>());
+  EXPECT_TRUE(anchor[1].is<TopBar>());
+  EXPECT_EQ(browser_kind(anchor.back()), BrowserKind::Logs);
+  EXPECT_EQ(navigation->current_location().size(), 2u); // Initial Top Bar focus.
+  EXPECT_EQ(queries.query_type(), core::RecordType::Log);
+  const auto children = browser->children({anchor, 1});
+  ASSERT_EQ(children.size(), 1u);
+  auto top_bar = browser->resolve_child(children.front().destination().back(), {anchor, 1});
+  ASSERT_NE(top_bar, nullptr);
+  auto top = top_bar;
+  const auto browsers = top->children({anchor, 2});
+  ASSERT_EQ(browsers.size(), 3u);
+  EXPECT_EQ(browser_kind(browsers[1].destination().back()), BrowserKind::Memos);
+  // Lookup must not construct or select a lazy browser.
+  EXPECT_EQ(top->resolve_child(browsers[1].destination().back(), {anchor, 2}), nullptr);
+  EXPECT_EQ(top->resolve_child(browsers[1].destination().back(), {anchor, 2}), nullptr);
+  EXPECT_EQ(browser->active_browser(), BrowserKind::Logs);
+  EXPECT_EQ(queries.query_type(), core::RecordType::Log);
+
+  EXPECT_TRUE(top->cross_targets({anchor, 2}).empty());
+  auto memos_location = browsers[1].destination();
+  EXPECT_THROW(navigation->cross(browsers[1]), std::logic_error);
+  EXPECT_EQ(navigation->current_location().size(), 2u);
+  EXPECT_EQ(top->resolve_child(navigation::Anchor{core::RecordType::Memo}, {anchor, 2}), nullptr);
+  EXPECT_EQ(navigation->up(), navigation::Result::Unchanged); // Browser Page is not visitable.
+
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::ArrowRight));
+  EXPECT_EQ(browser->active_browser(), BrowserKind::Logs);
+  EXPECT_EQ(navigation->history().size(), 1u);
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::Return));
+  EXPECT_EQ(browser->active_browser(), BrowserKind::Memos);
+  EXPECT_EQ(navigation->current_location(), memos_location); // Structural Down.
+  EXPECT_EQ(queries.query_type(), core::RecordType::Memo);
+  EXPECT_EQ(navigation->history_back(), navigation::Result::Unchanged);
+  EXPECT_EQ(navigation->history_start(), anchor);
+  EXPECT_EQ(navigation->history().front(), navigation->current_location());
+  // Initial Logs request may complete after switching. It must never populate Memos.
+  ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
+  runtime.process_completion();
+  EXPECT_FALSE(queries.result());
+  EXPECT_TRUE(queries.loading());
+  queries.resume_pending();
+  ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
+  runtime.process_completion();
+  ftxui::Screen memos(100, 24);
+  ftxui::Render(memos, browser->Render());
+  EXPECT_NE(memos.ToString().find("NAME / TITLE"), std::string::npos);
+  EXPECT_NE(memos.ToString().find("Long memo"), std::string::npos);
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::ArrowDown));
+  EXPECT_EQ(navigation->current_location().size(), 3u);
+  EXPECT_TRUE(shell.OnEvent(ftxui::Event::Escape));
+  EXPECT_EQ(navigation->current_location().size(), 2u);
+  EXPECT_EQ(browser->active_browser(), BrowserKind::Memos);
+  EXPECT_FALSE(queries.loading()); // Up is presentation navigation, not another Query.
+  const auto top_bar_location = navigation->current_location();
+  const auto top_bar_history = navigation->history();
+  const auto top_bar_history_cursor = navigation->history_cursor();
+  for (int repeat = 0; repeat < 2; ++repeat) {
+    EXPECT_TRUE(shell.OnEvent(ftxui::Event::Escape));
+    EXPECT_EQ(navigation->current_location(), top_bar_location);
+    EXPECT_EQ(navigation->history(), top_bar_history);
+    EXPECT_EQ(navigation->history_cursor(), top_bar_history_cursor);
+    EXPECT_EQ(browser->active_browser(), BrowserKind::Memos);
+  }
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::ArrowDown));
+  EXPECT_EQ(navigation->current_location().size(), 3u);
+  EXPECT_FALSE(queries.loading());
+  EXPECT_TRUE(shell.OnEvent(ftxui::Event::Escape));
+  // Escape returned structurally Up to Top Bar; Right now targets Todos.
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::ArrowRight));
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::Return));
+  EXPECT_EQ(browser->active_browser(), BrowserKind::Todos);
+  EXPECT_EQ(queries.query_type(), core::RecordType::Todo);
+  ftxui::Screen todos(100, 24);
+  ftxui::Render(todos, browser->Render());
+  EXPECT_NE(todos.ToString().find("PRIORITY"), std::string::npos);
+  EXPECT_EQ(navigation->history().size(), 1u);
+  runtime.finish_requests();
+}
+
+TEST_F(MetadataAccessIntegration, NavigationRestoresEntryCursorAndMousePreservesTabCursor) {
+  using namespace folio::tui;
+  core::Memo second{"Second memo", "body", time};
+  ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(second.snapshot())));
+  app::BackendConnectionHandle runtime(connect(), [] {});
+  BrowserQueryController queries(runtime);
+  auto browser = std::make_shared<BrowserPage>(queries, [] {});
+  TuiShell shell(browser, [browser] { return browser->feedback(); }, [] {});
+  auto complete = [&] {
+    if (!until([&] { return runtime.take_pending_work().completion; })) return false;
+    runtime.process_completion();
+    queries.resume_pending();
+    return true;
+  };
+  ASSERT_TRUE(complete());
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::ArrowRight));
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::Return));
+  ASSERT_TRUE(complete());
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::Tab));
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::ArrowDown));
+  auto* manager = shell.navigation_manager();
+  const auto* saved = manager->restored_position();
+  ASSERT_NE(saved, nullptr);
+  const auto position = std::any_cast<BrowserPosition>(*saved);
+  ASSERT_EQ(position.index, 1u);
+  ASSERT_TRUE(position.entry);
+  EXPECT_TRUE(shell.OnEvent(ftxui::Event::Escape));
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::ArrowRight));
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::Return));
+  ASSERT_TRUE(complete());
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::ArrowLeft));
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::Return));
+  ASSERT_TRUE(complete());
+  ftxui::Screen screen(100, 24);
+  ftxui::Render(screen, browser->Render());
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::Tab));
+  // Restored second entry: one Up stays in the list; the next Up reaches Top Bar.
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::ArrowUp));
+  EXPECT_FALSE(browser->OnEvent(ftxui::Event::ArrowRight));
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::ArrowUp));
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::ArrowRight));
+  EXPECT_EQ(browser->active_browser(), BrowserKind::Memos);
+  // Top Bar cursor now targets Todos. Mouse activates Logs without moving it.
+  ftxui::Screen before_mouse(100, 24);
+  ftxui::Render(before_mouse, browser->Render());
+  ftxui::Mouse click;
+  click.button = ftxui::Mouse::Left;
+  click.motion = ftxui::Mouse::Pressed;
+  click.x = 5;
+  click.y = 0;
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::Mouse("", click)));
+  EXPECT_EQ(browser->active_browser(), BrowserKind::Logs);
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::Return));
+  EXPECT_EQ(browser->active_browser(), BrowserKind::Todos);
+  ASSERT_TRUE(complete());
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::ArrowLeft));
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::Return));
+  ASSERT_TRUE(complete());
+  // Leave the Top Bar cursor on Logs while Memos remains active.
+  if (queries.loading()) ASSERT_TRUE(complete());
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::ArrowLeft));
+  ftxui::Render(screen, browser->Render());
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::Tab));
+  ASSERT_TRUE(shell.OnEvent(ftxui::Event::Escape));
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::Return));
+  EXPECT_EQ(browser->active_browser(), BrowserKind::Memos);
+  // Tab returning from content follows the same rule as Escape.
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::ArrowLeft));
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::Tab));
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::Tab));
+  ASSERT_TRUE(browser->OnEvent(ftxui::Event::Return));
+  EXPECT_EQ(browser->active_browser(), BrowserKind::Memos);
+  runtime.finish_requests();
+}
+TEST_F(MetadataAccessIntegration, RegisteredBrowserFactoryNeedsNoAncestorInstances) {
+  using namespace folio::tui;
+  app::BackendConnectionHandle runtime(connect(), [] {});
+  BrowserQueryController queries(runtime);
+  std::weak_ptr<BrowserPage> declaring_page;
+  const auto declared = [&] {
+    auto owner = BrowserPage::factory(queries, [] {})({});
+    declaring_page = owner;
+    const navigation::Location prefix{navigation::Anchor::of<BrowserPage>(),
+                                      navigation::Anchor::of<TopBar>()};
+    auto top = owner->resolve_child(prefix.back(), {prefix, 1});
+    return top->children({prefix, 2})[1];
+  }();
+  ASSERT_TRUE(declaring_page.expired());
+  const auto destination = declared.destination().back();
+  auto prepared = destination.construct();
+  ASSERT_NE(prepared, nullptr);
+  EXPECT_EQ(prepared->static_description()->anchor, destination);
+  std::weak_ptr<navigation::INavigable> lifetime = prepared;
+
+  // Only now construct the visible composition, adopting the existing target.
+  auto page = BrowserPage::factory(queries, [] {})(prepared);
+  const navigation::Location location{navigation::Anchor::of<BrowserPage>(),
+                                      navigation::Anchor::of<TopBar>(), destination};
+  auto top_result = page->resolve_child(location[1], {location, 1});
+  ASSERT_NE(top_result, nullptr);
+  auto mounted_top = top_result;
+  auto mounted = mounted_top->resolve_child(destination, {location, 2});
+  ASSERT_NE(mounted, nullptr);
+  EXPECT_EQ(mounted, prepared);
+  EXPECT_FALSE(queries.loading()); // Construction itself submits no request.
+  prepared.reset();
+  EXPECT_FALSE(lifetime.expired()); // Page/EntriesDisplay retains ownership.
+  page.reset();
+  EXPECT_FALSE(lifetime.expired()); // Resolution itself retains the destination.
+  mounted.reset();
+  mounted_top.reset();
+  top_result.reset();
+  EXPECT_TRUE(lifetime.expired());
+  runtime.finish_requests();
+}
+
+TEST_F(MetadataAccessIntegration, HistoryFactoryPrecedesHostingAndFailurePreservesLocation) {
+  using namespace folio::tui;
+  app::BackendConnectionHandle runtime(connect(), [] {});
+  BrowserQueryController queries(runtime);
+  std::vector<std::string> events;
+  bool fail = false;
+  std::weak_ptr<navigation::INavigable> created;
+  bool throw_factory = false;
+  auto logs = navigation::description<TopBar>().children.front()();
+  const auto create_logs =
+      EntriesDisplay::browser_factory(BrowserKind::Logs, queries, default_color_scheme());
+  logs.create = [&] {
+    events.push_back("destination");
+    if (throw_factory) throw std::runtime_error("Factory failure");
+    auto result = fail ? std::shared_ptr<navigation::INavigable>{} : create_logs();
+    created = result;
+    return result;
+  };
+  const navigation::Location anchor{navigation::Anchor::of<BrowserPage>(),
+                                    navigation::Anchor::of<TopBar>(),
+                                    browser_anchor(BrowserKind::Logs)};
+  auto memos = anchor;
+  memos.back() = browser_anchor(BrowserKind::Memos)
+                     .with_factory(EntriesDisplay::browser_factory(BrowserKind::Memos, queries,
+                                                                   default_color_scheme()));
+
+  // Logic-only host double; destinations and their composition are real UI classes.
+  class Host final : public navigation::INavigable {
+  public:
+    const navigation::Location& destination;
+    std::vector<std::string>& events;
+    std::shared_ptr<BrowserPage> page;
+    BrowserPage::Factory compose;
+    bool fail_host = false;
+    Host(const navigation::Location& destination, std::vector<std::string>& events,
+         BrowserPage::Factory compose)
+        : destination(destination), events(events), compose(std::move(compose)) {}
+    std::vector<navigation::Target> children(const navigation::Context& context) const override {
+      return {target(navigation::description<BrowserPage>().anchor, context)};
+    }
+    std::vector<navigation::Target>
+    cross_targets(const navigation::Context& context) const override {
+      return {target(destination, navigation::CrossMode::Push, context)};
+    }
+    navigation::Location initial(const navigation::Location& location,
+                                 navigation::Factory factory) const {
+      return target(location.back(), std::move(factory), {location, location.size() - 1})
+          .destination();
+    }
+    std::shared_ptr<navigation::INavigable>
+    resolve_child(const navigation::Anchor& anchor, const navigation::Context&) const override {
+      if (!anchor.is<BrowserPage>()) return {};
+      return page;
+    }
+    void host(const std::shared_ptr<navigation::INavigable>& prepared,
+              const navigation::Context&) override {
+      if (page) throw std::logic_error("Page already hosted");
+      if (fail_host) throw std::runtime_error("Host failure");
+      events.push_back("host");
+      page = compose(prepared);
+      if (!page) throw std::logic_error("Empty page");
+    }
+  } host(memos, events, BrowserPage::factory(queries, [] {}));
+  navigation::Manager manager(host, host.initial(anchor, logs.create));
+  EXPECT_EQ(events, (std::vector<std::string>{"destination", "host"}));
+  ASSERT_EQ(manager.cross(host.cross_targets({manager.current_location(), 0}).front()),
+            navigation::Result::Changed);
+  std::weak_ptr<BrowserPage> old_page = host.page;
+  host.page.reset();
+  ASSERT_TRUE(old_page.expired());
+  events.clear();
+  fail = true;
+  EXPECT_THROW(manager.history_back(), std::logic_error);
+  EXPECT_EQ(manager.current_location(), memos);
+  EXPECT_EQ(manager.history_cursor(), 1u);
+  EXPECT_EQ(host.page, nullptr);
+  EXPECT_EQ(events, (std::vector<std::string>{"destination"}));
+  fail = false;
+  host.fail_host = true;
+  events.clear();
+  EXPECT_THROW(manager.history_back(), std::runtime_error);
+  EXPECT_EQ(manager.current_location(), memos);
+  EXPECT_EQ(manager.history_cursor(), 1u);
+  EXPECT_EQ(host.page, nullptr);
+  EXPECT_TRUE(created.expired()); // A rejected destination has no retained owner.
+  EXPECT_EQ(events, (std::vector<std::string>{"destination"}));
+  host.fail_host = false;
+  throw_factory = true;
+  EXPECT_THROW(manager.history_back(), std::runtime_error);
+  EXPECT_EQ(manager.current_location(), memos);
+  EXPECT_EQ(manager.history_cursor(), 1u);
+  EXPECT_EQ(host.page, nullptr);
+  throw_factory = false;
+  events.clear();
+  ASSERT_EQ(manager.history_back(), navigation::Result::Changed);
+  EXPECT_EQ(manager.current_location(), anchor);
+  EXPECT_EQ(events, (std::vector<std::string>{"destination", "host"}));
+  ASSERT_EQ(manager.history_forward(), navigation::Result::Changed);
+  EXPECT_EQ(manager.current_location(), memos);
+  const auto before = events.size();
+  ASSERT_EQ(manager.up(), navigation::Result::Changed);
+  auto top_instance = host.page->resolve_child(memos[1], {memos, 1});
+  const auto declared = top_instance->children({manager.current_location(), 2});
+  ASSERT_EQ(manager.down(declared[1]), navigation::Result::Changed);
+  EXPECT_EQ(events.size(), before); // Reuse the hosted child, not its factory.
+  EXPECT_FALSE(queries.loading());
+  runtime.finish_requests();
 }

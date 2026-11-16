@@ -321,7 +321,7 @@ matching `app/include/tui/` and `app/src/tui/`), even without FTXUI calls.
 | --- | --- |
 | `logic/` | Substantial TUI-specific state and behavior, independent of rendering: Browser query selection, relevance, invalidation and deferred reload |
 | `shell/` | Application-wide composition: active page, persistent Bottom Bar, global Quit handling and future overlays; no Record-specific rules |
-| `pages/` | Major navigation contexts and their local state/controls: Browser, Record and future Settings |
+| `pages/` | Major navigation contexts and their local state/controls: Browser and Record; Settings is a future Browser Section |
 | `layouts/` | Reusable composition/arrangement rules extracted when independently useful; no navigation ownership implied |
 | `components/` | Reusable localized UI elements; elements used only by one page stay beside that page |
 
@@ -341,8 +341,8 @@ or queue. Presentation depends on TUI logic, which uses the shared Frontend runt
 for Backend Application requests. Components need not pass through every layer.
 The communication runtime remains independent of FTXUI and UI state.
 
-`BrowserQueryController` owns Browser selection, cached results, relevance
-generations and deferred reload intentions. It lives under `tui/logic/browser/`.
+`BrowserQueryController` owns derived query/cache identity, cached results, relevance
+generations and deferred reload intentions. Navigation Manager owns the active Section. It lives under `tui/logic/browser/`.
 Navigation, Browser and future Editor/Draft state belong to the TUI, with one
 owner rather than copies synchronized with the communication runtime. Push
 relevance and reload decisions are TUI behavior, not transport responsibilities.
@@ -367,6 +367,357 @@ class/file. The source tree follows responsibility and locality, not a one-to-on
 mapping to the FTXUI component tree. There are currently no extracted reusable
 Layouts, so `layouts/` has no empty directory. Existing target boundaries remain
 unchanged; no shared UI framework or new build target is introduced.
+
+### Navigation — Phase 1 concrete Browser integration
+
+The navigation subsystem lives in `folio::tui::navigation`. Callers qualify its
+types (`navigation::Anchor`, `navigation::Manager`, `navigation::Description`,
+`navigation::Context`, `navigation::Result`) rather than importing the whole
+namespace. Concrete Pages and components remain in `folio::tui`.
+
+The navigation vocabulary distinguishes identity, position and action:
+
+- **Anchor:** an owner-interpreted, stable reference to one path step, optionally
+  carrying metadata/factory access. It is not a live tree-node instance. Identity
+  comparison ignores construction capabilities.
+- **Location:** a complete vector of Anchors describing the encountered structural
+  path. It remains meaningful after temporary UI objects are destroyed.
+- **Target:** an owner-declared transition from a source Location to a destination
+  Location. Structural targets request Down; Cross targets also carry their
+  declared Push/Switch mode. An Anchor alone is not a navigation request.
+- **Description:** class-owned relationship metadata, not a navigable object.
+- **Context:** a borrowed Location and owner-prefix depth for one discovery or
+  transition call, not another stored Current Location.
+- **INavigable / NavigableComponent:** the live relationship/hosting contract and
+  its shared FTXUI integration, respectively.
+- **Manager:** the coordinator outside the hierarchy, owning Current Location,
+  History and transition commitment rather than owning UI components.
+
+These navigation Anchors are unrelated to Storage's filesystem locators. The
+permanent History anchor is a complete initial Location, not a single Anchor.
+
+A Cross declaration pairs a destination with its `CrossMode::Push` or
+`CrossMode::Switch`. The originating UI passes that complete action to
+`Manager::cross(const Target&)`; it does not select or supply the mode again.
+Two declared actions may share a destination while using different modes.
+The Manager applies the declared mode's History behavior. Structural Down remains
+separate through `Manager::down(const Target&)`.
+
+**Implemented:** `navigation::INavigable` separates discovery, lookup and hosting:
+
+```cpp
+std::vector<navigation::Target> children(const navigation::Context&) const;
+std::vector<navigation::Target> cross_targets(const navigation::Context&) const;
+std::shared_ptr<navigation::INavigable>
+resolve_child(const navigation::Anchor&, const navigation::Context&) const;
+void host(const std::shared_ptr<navigation::INavigable>& destination,
+          const navigation::Context&);
+```
+
+Discovery and lookup remain pure virtual; hosting defaults to unsupported for
+objects that do not host UI. Visual classes inherit `navigation::NavigableComponent`,
+which combines FTXUI implementation and this interface once. Its constructor
+copies class-owned `navigation::Description` data and binds session factories for
+its declared children. Only live navigable objects implement the interface. Each description
+contains its own anchor, visitability, child-description getters and an optional
+destination factory. There is no separate child-description or child-activation type.
+Shell, Browser Page, Top Bar and the actual browser components expose navigation. The concrete navigation hierarchy is:
+
+```text
+TuiShell
+  BrowserPage
+    TopBar
+      LogsBrowser
+      MemosBrowser
+      TodosBrowser
+```
+
+Each type-specific browser owns its browsing presentation and inherits common
+cursor/frame behavior from `RecordBrowser`. Lists are their current presentation,
+not their identity. The FTXUI composition still arranges Top Bar above Entries
+Display; the navigation hierarchy need not mirror that layout component tree.
+Navigation declarations live under `app/include/tui/logic/navigation/`:
+`navigation.hpp` groups semantic anchors, static description data, paths, targets, transition results and
+`navigation::INavigable` as the common navigation contract. `navigation_manager.hpp` declares
+transition/history coordination. `navigable_component.hpp` groups the shared
+FTXUI adapter with metaprogramming that generates the class-owned descriptions. The adapter remains
+FTXUI-dependent; placing it here groups navigation integration without making all
+TUI Logic dependent on presentation. The matching Manager implementation is
+`app/src/tui/logic/navigation/navigation_manager.cpp`.
+
+Owning headers declare `using NavigationChildren = navigation::Children<A, B, C>` using the
+actual child class names. Class types identify static children, so there are no
+additional child enums or `NavigationChild` declarations. Visitability belongs to
+the destination: it defaults to true; Browser Page declares
+`navigation_visitable = false` because only its descendants are visitable.
+`navigation::Children<...>` is a compile-time type list; `std::vector<navigation::Target>` is the runtime list
+returned by discovery. `navigation::NavigableComponent::describe<UI>()` generates relationship
+data from the class-owned declarations. These declarations do not implicitly
+declare Cross targets. The class-specific `navigation::description<UI>()` accessor
+provides process-lifetime immutable data without constructing UI.
+Forward declarations allow the concrete browsers to remain source-private.
+Descriptions contain no live component pointers, captured UI state or mutable
+current position. Future dynamic subtree capabilities use the same `navigation::INavigable`
+operations with the supplied logical position; they are not implemented yet.
+
+Requests use declaration-issued `navigation::Target` values rather than arbitrary
+Anchors. The protected `target<Owner, Child>(context)` helper requires Child to
+belong to Owner's declared `NavigationChildren` at compile time. For example,
+Top Bar's `target(BrowserKind, Context)` dispatches to that constrained helper.
+Dynamic implementations declare runtime relationships with the protected
+`INavigable::target()` helpers, issuing the same Target type, optionally supplying
+a destination factory. Cross declarations issue a Target containing an absolute
+destination and Push/Switch mode. These helpers prevent accidental undeclared use;
+they are not a security boundary against deliberately incorrect custom classes.
+Manager trusts issued relationships and never enumerates children or Cross targets
+to authorize a transition. A stale source context or wrong operation mode is a
+programming error. Target construction is private; `down(Anchor)` is not an API.
+
+Manager retains weak object references alongside the durable Location path.
+During transitions it locks and retains shared references, including every child
+returned by lookup, so releasing an owner's reference cannot destroy an object
+being used. Only the stable Shell is borrowed by reference. Down resolves the current
+object's child. Up uses the saved ancestor context. Cross and History restoration
+reuse a live common prefix and prepare only the missing destination suffix.
+Registered Anchors carry direct metadata access, so neither Down nor restoration
+searches child-description lists for a factory. Plain `Anchor::of<T>()` identifies
+a type; `Anchor::registered<T>()` also attaches its class-owned metadata accessor.
+Dynamic positions remain subject to live lookup and may carry an owner-supplied
+factory instead of static metadata. Dynamic implementations may omit
+metadata or override the common interface's discovery/lookup behavior using
+`navigation::Context`; actual Directory virtual subtrees remain deferred.
+Top Bar requests Down directly from the Manager; Browser Page receives the
+post-commit change notification for query and presentation updates.
+Destination construction is bound by UI-owned registration code using
+`navigation::Factory = std::function<std::shared_ptr<INavigable>()>`.
+`navigation::NavigableComponent::describe<UI>()` generates static relationships;
+`bind_child<Owner, Child>(factory)` supplies a session-bound factory only for a
+declared child. Issued targets retain that callable in their destination anchor.
+Factories capture their explicit session-lived services and settings, never a
+temporary parent UI. Navigation interfaces and Manager know none of those types
+or values: there is no common UI dependency bag or service registry. Static
+relationships remain class-owned and are not redefined by the bindings.
+Browser Page owns its separate composition factory, which can adopt an already
+prepared destination. Shell retains that UI-specific callable for remounting;
+it is not passed into Manager or general navigation interfaces.
+
+For a registered missing destination, Manager invokes its factory directly before
+asking for missing visible ancestors. An already-hosted immediate child is reused.
+The Manager passes the prepared destination explicitly to `host()`, which retains
+that exact instance. `navigation::Context` contains only a borrowed `const Location&`
+and the owner's prefix depth; it carries no construction or activation payload. The Shell constructs Browser Page using its
+own registered factory only when that visible composition is missing; Browser
+Page can adopt an independently prepared Top Bar, and Entries Display can adopt an
+independently prepared record browser. Hosts retain ownership, while the Manager
+retains only weak resolved references after commit. Factories returning null or a
+destination with mismatched metadata violate the programming contract. Exceptions
+propagate before Current/History commit.
+The separate Shell-specific Page factory callback has been removed.
+
+The three record browsers are now lazy rather than eagerly constructed together.
+Displaying a child while focus remains at Top Bar uses the same registered
+factory. Construction itself submits no Backend request. Only ancestors needed for
+visible composition are constructed; this is separate from resolving a hierarchy
+through static data. No global factory registry, general dependency-injection
+framework, or additional lifecycle service is introduced. Dynamic locations still
+resolve through the same `navigation::INavigable` operations when static factories
+do not describe them; Directory virtual subtrees are not implemented here.
+
+`navigation::Anchor` holds an owner-defined, copyable equality-comparable value through
+`std::any` and a typed equality function. `navigation::Anchor::of<UI>()` creates a
+static class identity without constructing UI; `is<UI>()` tests it. It also accepts
+owner-defined by-value positions for future dynamic subtrees. `BrowserKind`
+remains presentation/query context, translated at the Browser boundary; it is
+not the navigation identity. Navigation identity contains
+no `RecordType`, strings, globally assigned node IDs, global node-type variant or
+persistent UI pointers. The Browser translates its Section to `RecordType` only
+when requesting the existing Backend query. `Location` is a vector of anchors,
+owned by Navigation Manager along with History. No global owner registry is needed:
+Shell interprets the first anchor, Browser Page the next, and Top Bar the third. These actual
+owners define the relationships, not another hierarchy tree in the Manager.
+`std::any` may allocate; there is no allocation-free path guarantee.
+
+`children()` is discovery. `resolve_child()` looks up one known child without
+construction, mounting, selection changes, or enumeration of dynamic collections.
+It returns a retained shared pointer, or an empty pointer when no instance exists.
+A missing instance can still have a valid registered destination factory. The
+Manager uses that factory directly; lookup never calls constructors. One object
+may resolve multiple logical positions, with `visitable(Context)` deciding whether
+each position can be visited. Directory virtual subtrees themselves remain deferred.
+
+The transition pipeline is explicit: read-only resolution; direct destination
+construction if needed; History/storage allocation; hosting; Current Location and
+History commit; post-commit notification. `host()` composes missing visible UI and
+retains the prepared destination, without choosing a new Current Location. Success
+must leave the full destination path resolvable to that exact object. Lookup uses
+pre-reserved storage afterward; no deferred activation callbacks remain. A broken
+host contract raises a programming error before navigation-state commit. Resolver,
+factory and host exceptions preserve Current Location and History. Normal navigation
+results are only `Changed` and `Unchanged`; there is no Invalid/Unavailable status.
+Factory exceptions
+propagate before hosting. Host implementations must leave current presentation
+intact on failure. Current Browser hosts add only missing composition/children;
+replacement of other Page types remains outside this phase.
+
+After commitment, the Shell notifies the active Browser Page to update its query,
+feedback and cursor context. Backend queries remain asynchronous. A query failure
+is an operation outcome, not evidence that the navigation destination is invalid.
+
+The Shell either hosts Browser or obtains it from Browser Page's registered factory. Browser Page is structural but not
+visitable; Top Bar and its three browsers are visitable. Each browser represents
+its semantic Section Root. Active content reads the committed Location. The Manager's
+change callback drives query/feedback updates and restores saved entry cursor
+state. Top Bar requests structural Down to its browser child; switching from an
+already-current browser ascends to Top Bar with Up before Down to its sibling.
+Moving the Logical Cursor does not activate a browser. Enter activates the requested browser but keeps keyboard
+focus on Top Bar. Down (or Tab) enters the displayed browser. Mouse activation
+preserves the Logical Cursor. Active destination and keyboard focus remain
+separate: after tab activation Current may identify the activated browser while
+focus stays on its Top Bar ancestor.
+
+Cross targets use the same `navigation::Target` as structural children, with an
+absolute destination and a Push/Switch mode. They describe jumps outside structural Up/Down traversal. Top Bar has
+no Cross targets: its browsers are structural children. Browser Page exposes only
+Top Bar, not a second list of browsers. Manager trusts targets issued by these owners;
+it does not independently define or rediscover these relationships. Current Cross discovery is
+small and concrete; virtual-location positions and large dynamic target sets
+are not designed or implemented here.
+
+Only Shell is assumed stable. Missing path suffixes are resolved through actual owners; Manager does not retain child pointers in Current, History or
+restoration state. Shell's change callback accesses its currently owned Page,
+not a captured permanent Browser pointer. Page and browser ownership stays with the
+existing TUI objects; Top Bar retains the Entries Display that hosts its browsers.
+Production starts without a Page; the initial target is constructed directly and
+then adopted into the composition hosted by Shell. Other Page types and their
+unmounting policies remain deferred.
+
+History is a `std::deque<Location>` and an index cursor, separate from each vector-based
+structural path. After every committed transition, `history[cursor] == current_location`.
+History Start is a separate immutable fallback declaration, currently Browser / Top Bar /
+Logs Root; it is not a protected slot in the mutable History sequence. The application
+declares its semantic path as `static const`; session factories are attached to a copy,
+never stored in process-wide data. Existing `std::any`/`std::function` path values are
+not constexpr-compatible. The Manager retains that bound copy as const.
+
+| Operation | History side effect after successful activation |
+|---|---|
+| Down / Up | Replace current slot; discard Forward; do not append |
+| Cross Push | Preserve actual source in current slot; discard Forward; append destination and advance cursor |
+| Cross Switch | Replace current slot; discard Forward; no new return level |
+| History Back / Forward | Restore adjacent saved location and move cursor; preserve Forward |
+| Semantic focus movement | Update restoration snapshot only; preserve History and Forward |
+| Rejected/failed transition | No History or Current Location commit |
+
+An unchanged Cross Switch also discards Forward. An Up with no visitable parent is a
+no-op. Browser content → Top Bar is structural Up (including Escape/Tab), not a
+focus-only change; ordinary Top Bar cursor movement remains focus-only.
+Contextual Back inherits the policy of the actual operation it performs, not a
+global History Back policy. Section switching creates no artificial Back step.
+Contextual Back is exclusively the user's Escape behavior, not a navigation
+capability registered or invoked by UI components. Existing TUI event routing
+handles the innermost interaction first; a consumed Escape must not propagate.
+Shell receives Escape and calls `Manager::contextual_back()`. Manager centrally
+selects and executes the contextual action; Pages do not independently dispatch
+Escape into navigation operations.
+Buttons and mouse actions request their explicit operations independently; they
+do not invoke or configure Contextual Back. Its explicit Manager entry point is
+reserved for Shell's user-Escape handling, not component navigation controls.
+Deferred Escape priority is: active Dialog/overlay consumes the key first; otherwise
+an Editor requests safe exit to Viewer (confirming unsaved Drafts); otherwise a
+Record Viewer returns through its Cross Push History; otherwise Browser content
+performs structural Up, including Root to Top Bar under the current design;
+otherwise Top Bar consumes Escape as a no-op. Dialog/Editor/Viewer handling awaits
+those components; it is not implemented by hypothetical navigation scaffolding.
+History Start remains available independently even when slot zero is replaced.
+
+Deque supports indexed traversal and end growth without relocating all entries;
+future front retention is possible. It is a pragmatic choice, not a claim of universal
+speed superiority or constant-time middle erasure. Structural paths remain vectors.
+History is prepared before hosting and committed only after hosting succeeds;
+hosts must preserve presentation if they throw. No durable History identity owns UI
+pointers. Confirmed-invalid destination skipping and automatic History Start recovery
+remain deferred until dynamic destinations have an explicit validity contract.
+Back/Forward currently attempt the adjacent entry; exceptions preserve History and
+must not be interpreted as confirmed deletion or swallowed as fallback triggers.
+No History keyboard shortcuts or controls are added.
+
+Structural Up uses saved visitability of the path's ancestors, skipping
+non-visitable containers, and reuses the live resolved ancestor when available.
+It needs neither reverse parent links nor a global parent registry. Escape from
+browser content performs actual Up to Top Bar and moves focus there. At Top Bar,
+Escape does nothing; it never implicitly invokes History Back. Up on the first
+entry and Tab also synchronize the transition back to Top Bar. Returning from
+browser content focuses that browser's corresponding tab, rather than restoring
+an unrelated previously focused tab. The browser's entry position is retained
+independently; mouse activation still does not move the Logical Cursor.
+
+Manager currently retains provisional per-Location entry cursor snapshots (UUID plus fallback index).
+The Top Bar location also retains its displayed `BrowserKind` in Manager-owned
+restoration context, so Up preserves the content instead of defaulting to Logs.
+Returning Down restores the entry cursor without issuing another query. Startup
+preserves Top Bar focus and starts Current and its History slot at Top Bar, while
+History Start remains the full Browser / Top Bar / Logs Root path. Ordinary focus movement
+adds no Cross History level. No independent active-browser field is kept in Page,
+Top Bar or the communication runtime. FTXUI retains low-level focus/event routing.
+On returning to a browser, its cursor reconciles against query results, using the
+nearest remaining index if the UUID vanished.
+**Deferred Implementation — TODO(Navigation):** With virtual-subtree navigation,
+replace the parallel `BrowserPosition` / `std::any` navigation snapshots with
+Locations representing scope and targeted entry. Manager should remember each
+browser's last Location; browser-local state should retain presentation details
+such as scroll offset, not a competing navigation position. Do not expand the
+provisional snapshot mechanism before that replacement.
+The query controller retains generation checks, cached results, deferred reloads,
+Push handoff and the one-request-slot behavior. Queries remain non-blocking.
+
+**Current limitation:** a Section represents semantic Root navigation, but its
+existing query still uses `AllScope`, which includes all Records of that type.
+This is not Directory-aware Root browsing. Directory Browse, Browser virtual positions,
+Record Pages, Settings destinations and Breadcrumb/History presentation are Phase
+2 or later work. No synthetic Root node or extra Root anchor is added.
+
+**Implemented foundation — composed virtual subtrees:**
+`navigation::VirtualSubtree<Position>` is a nonvisual member capability, not an
+FTXUI base, Provider interface, separate tree, or second Navigation Manager. It
+implements `INavigable`; static components continue using `NavigableComponent`.
+Owners supply relationship callbacks and optional local visitability rules.
+`child(position, context)` issues a known structural target without enumeration;
+`cross(destination, mode, context)` issues a source-declared Cross action with its
+Push/Switch policy already attached. These helpers declare actions; they do not
+perform transitions or consult a global registry.
+
+An owner-specific, copyable/equality-comparable `Position` value identifies a
+virtual step in the existing `vector<Anchor>` Location. `position(context)` reads
+the step at the supplied prefix depth. There is no mutable current-node field.
+Different positions can resolve to the same capability without constructing a
+component for each position. `INavigable::represents()` separates semantic position
+recognition from static class registration during destination reconstruction.
+
+The owner publishes its member with `VirtualSubtree::retained(owner, &Owner::member)`.
+The returned aliasing `shared_ptr<INavigable>` owns the UI's control block, so a
+retained capability keeps its containing UI alive; its internal self-reference is
+weak and cannot form an ownership cycle. Reconstruction factories return this
+alias on a newly created owner, capturing session services rather than the old UI.
+Hosts remain responsible for mounting that owner/capability in presentation.
+Manager pins transition references and sees only the common interface, including
+when several path levels refer to the same implementation object.
+
+This increment supplies and tests the reusable capability only. Existing browser
+queries, cursor snapshots and visible navigation remain unchanged. Connecting
+Browser scope/entry Positions, replacing provisional snapshots, Directory-aware
+Browse, and future Record Page/reference jumps remain separate integration work.
+No synchronous Backend validation, virtual-node registry, new worker, or event
+loop is introduced. Discovery callbacks may enumerate available children only
+when requested; direct issuance/resolution does not need that enumeration.
+
+**Deferred Implementation — TODO(Navigation), NAV-ANCHOR:** Revisit the permanent
+Browser/Logs/Root History anchor when Main Page is designed; evaluate Main as the
+permanent initial location. The matching code TODO is at Manager initialization.
+
+**Deferred Implementation — TODO(Navigation), NAV-PREFIX:** If paths become
+substantially deeper or vector copying becomes a measured cost, evaluate
+persistent/shared-prefix Location Paths. Use vectors now; the matching code TODO
+is beside `Location` in the Navigation header.
 
 Responsive layout is a presentation concern. The Shell observes available terminal
 dimensions and owns the global minimum-size fallback; it does not define Page
