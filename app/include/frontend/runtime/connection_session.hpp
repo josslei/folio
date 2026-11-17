@@ -2,6 +2,7 @@
 #include <folio/ipc/ipc.hpp>
 #include <folio/application/push_notification.hpp>
 #include <condition_variable>
+#include <exception>
 #include <optional>
 #include <functional>
 #include <mutex>
