@@ -26,11 +26,13 @@ BrowserPage::Factory BrowserPage::factory(BrowserQueryController& queries,
                                           std::chrono::milliseconds loaded_duration) {
   return [&queries, wake = std::move(wake), &scheme, loading_delay,
           loaded_duration](const std::shared_ptr<navigation::INavigable>& prepared) {
-    return std::make_shared<BrowserPage>(queries, wake, loading_delay, loaded_duration, scheme,
-                                         prepared);
+    auto page = std::make_shared<BrowserPage>(ConstructionKey{}, queries, wake, loading_delay,
+                                            loaded_duration, scheme, prepared);
+    page->bind_browser_context(page);
+    return page;
   };
 }
-BrowserPage::BrowserPage(BrowserQueryController& queries, std::function<void()> wake,
+BrowserPage::BrowserPage(ConstructionKey, BrowserQueryController& queries, std::function<void()> wake,
                          std::chrono::milliseconds loading_delay,
                          std::chrono::milliseconds loaded_duration, const ColorScheme& scheme,
                          std::shared_ptr<navigation::INavigable> prepared)
@@ -39,17 +41,30 @@ BrowserPage::BrowserPage(BrowserQueryController& queries, std::function<void()> 
       queries_(queries), loading_status_(std::make_shared<LoadingStatus>(
                              std::move(wake), loading_delay, loaded_duration)),
       entries_(std::make_shared<EntriesDisplay>(
-          queries, [this] { return active_browser(); }, scheme, prepared)),
+          queries, [] { return std::optional<BrowserKind>{}; }, scheme, prepared)),
       top_bar_(std::dynamic_pointer_cast<TopBar>(prepared)) {
   if (!top_bar_)
-    top_bar_ = std::make_shared<TopBar>([this](BrowserKind) { remember_position(); },
-                                        [this] { return active_browser(); }, scheme, entries_);
+    top_bar_ = std::make_shared<TopBar>([](BrowserKind) {},
+                                        [] { return std::optional<BrowserKind>{}; }, scheme, entries_);
   else
-    top_bar_->set_browser_context([this](BrowserKind) { remember_position(); },
-                                  [this] { return active_browser(); }, entries_);
+    top_bar_->set_browser_context([](BrowserKind) {},
+                                  [] { return std::optional<BrowserKind>{}; }, entries_);
   navigation_ = ftxui::Container::Vertical({top_bar_, entries_});
   Add(navigation_);
   bind_child<BrowserPage, TopBar>(TopBar::factory(scheme));
+}
+BrowserPage::~BrowserPage() {
+  top_bar_->set_navigation_manager(nullptr);
+}
+void BrowserPage::bind_browser_context(std::weak_ptr<BrowserPage> weak) {
+  auto active = [weak]() -> std::optional<BrowserKind> {
+    if (auto owner = weak.lock()) return owner->active_browser();
+    return std::nullopt;
+  };
+  entries_->set_browser_context(active);
+  top_bar_->set_browser_context([weak](BrowserKind) {
+    if (auto owner = weak.lock()) owner->remember_position();
+  }, active, entries_);
 }
 ftxui::Element BrowserPage::feedback() {
   if (awaiting_result_ && !queries_.loading()) {
@@ -95,20 +110,20 @@ BrowserKind BrowserPage::active_browser() const {
     if (const auto browser = browser_kind(location.back())) return *browser;
     // Up moves the navigation cursor to Top Bar without clearing its content.
     // The Manager owns this parent context, not a second Page selection field.
-    if (const auto* saved = manager_->restored_position())
-      if (const auto* browser = std::any_cast<BrowserKind>(saved)) return *browser;
+    const auto saved = manager_->restored_position();
+    if (const auto* browser = std::any_cast<BrowserKind>(&saved)) return *browser;
   }
   return BrowserKind::Logs; // Before Shell binds the initial navigation::Location only.
 }
 void BrowserPage::navigation_changed(const navigation::Location& location,
-                                     const std::any* position) {
+                                     const std::any& position) {
   const auto target_browser = browser_kind(location.back());
   const auto browser = target_browser ? *target_browser : active_browser();
   // Focus-only Up/Down must not start another Backend query or reset feedback.
   if (queries_.query_type() != query_type(browser) || (!queries_.loading() && !queries_.result()))
     select(browser);
   if (target_browser) {
-    const auto* cursor = position ? std::any_cast<BrowserPosition>(position) : nullptr;
+    const auto* cursor = std::any_cast<BrowserPosition>(&position);
     entries_->restore_position(cursor ? *cursor : BrowserPosition{});
     if (manager_) remember_position();
   } else {

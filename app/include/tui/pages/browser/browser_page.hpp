@@ -12,6 +12,9 @@ namespace folio::tui {
 /// Browser-specific header, content and feedback. Borrows query state;
 /// caller keeps it alive beyond the page and its child components.
 class BrowserPage : public navigation::NavigableComponent {
+  // Factory-only construction ensures weak parent callbacks are always bound.
+  struct ConstructionKey {};
+
 public:
   using NavigationChildren = navigation::Children<TopBar>;
   /// UI-owned composition factory; captures only session-lived services and values.
@@ -26,7 +29,7 @@ public:
                                                const ColorScheme& scheme);
 
   static constexpr bool navigation_visitable = false;
-  BrowserPage(BrowserQueryController& queries, std::function<void()> wake,
+  BrowserPage(ConstructionKey, BrowserQueryController& queries, std::function<void()> wake,
               std::chrono::milliseconds loading_delay = std::chrono::milliseconds(100),
               std::chrono::milliseconds loaded_duration = std::chrono::seconds(1),
               const ColorScheme& scheme = default_color_scheme(),
@@ -39,10 +42,13 @@ public:
   resolve_child(const navigation::Anchor& child, const navigation::Context& context) const override;
   /// Shell binds its manager; unbind before Shell destruction.
   void set_navigation_manager(navigation::Manager* manager);
-  void navigation_changed(const navigation::Location& location, const std::any* position);
+  void navigation_changed(const navigation::Location& location, const std::any& position);
   BrowserKind active_browser() const;
+  ~BrowserPage() override;
 
 private:
+  /// Bind weak parent callbacks only after shared ownership is established.
+  void bind_browser_context(std::weak_ptr<BrowserPage> owner);
   Factory factory_;
   const ColorScheme& scheme_;
   void select(BrowserKind section);

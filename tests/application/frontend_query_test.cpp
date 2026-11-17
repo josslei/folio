@@ -499,7 +499,13 @@ TEST(TuiNavigationTest, StructuralDownClearsForwardWithoutAddingHistoryAndUpUses
   const auto size_after = manager.history().size();
   manager.remember_position(42);
   EXPECT_EQ(manager.history().size(), size_after); // Focus/cursor snapshots add no steps.
-  EXPECT_EQ(*std::any_cast<int>(manager.restored_position()), 42);
+  EXPECT_EQ(std::any_cast<int>(manager.restored_position()), 42);
+  const auto snapshot = manager.restored_position();
+  manager.remember_position(99);
+  for (int i = 0; i < 128; ++i)
+    manager.remember_position({navigation::Anchor{i}}, i);
+  EXPECT_EQ(std::any_cast<int>(snapshot), 42);
+  EXPECT_EQ(std::any_cast<int>(manager.restored_position()), 99);
   manager.cross(parent.child->declared_cross(destination, navigation::CrossMode::Push,
                                              {manager.current_location(), 1}));
   ASSERT_EQ(manager.history_back(), navigation::Result::Changed);
@@ -524,7 +530,7 @@ TEST(TuiNavigationTest, ResolvedObjectSurvivesOwnerReleaseAndCacheDoesNotOwnIt) 
   bool alive_at_commit = false;
   navigation::Manager second(
       owner, {navigation::Anchor{TestChild::First}},
-      [&](const navigation::Location&, const std::any*) { alive_at_commit = !lifetime.expired(); });
+      [&](const navigation::Location&, const std::any&) { alive_at_commit = !lifetime.expired(); });
   lifetime = owner.leaf;
   owner.release_during_lookup = true;
   second.cross(owner.declared_cross(TestChild::Second, navigation::CrossMode::Switch,

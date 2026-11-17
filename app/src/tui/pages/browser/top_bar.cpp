@@ -15,7 +15,7 @@ navigation::Factory TopBar::factory(const ColorScheme& scheme) {
   };
 }
 void TopBar::set_browser_context(std::function<void(BrowserKind)> select,
-                                 std::function<BrowserKind()> active,
+                                 std::function<std::optional<BrowserKind>()> active,
                                  std::shared_ptr<EntriesDisplay> browsers) {
   select_ = std::move(select);
   active_ = std::move(active);
@@ -24,7 +24,7 @@ void TopBar::set_browser_context(std::function<void(BrowserKind)> select,
   bind_child<TopBar, MemosBrowser>(browsers_->browser_factory(BrowserKind::Memos));
   bind_child<TopBar, TodosBrowser>(browsers_->browser_factory(BrowserKind::Todos));
 }
-TopBar::TopBar(std::function<void(BrowserKind)> select, std::function<BrowserKind()> active,
+TopBar::TopBar(std::function<void(BrowserKind)> select, std::function<std::optional<BrowserKind>()> active,
                const ColorScheme& scheme, std::shared_ptr<EntriesDisplay> browsers)
     : navigation::NavigableComponent(folio::tui::navigation::description<TopBar>()),
       browsers_(std::move(browsers)), scheme_(scheme), select_(std::move(select)),
@@ -56,6 +56,7 @@ void TopBar::host(const std::shared_ptr<navigation::INavigable>& destination,
     throw std::logic_error("Top Bar could not retain its declared browser");
 }
 void TopBar::activate(int index) {
+  if (!active_()) return; // Detached child has no Page navigation context.
   const auto section = static_cast<BrowserKind>(index);
   if (active_() == section) return;
   const bool content_focused = browsers_ && browsers_->Focused();

@@ -591,6 +591,18 @@ Production starts without a Page; the initial target is constructed directly and
 then adopted into the composition hosted by Shell. Other Page types and their
 unmounting policies remain deferred.
 
+Browser Page factories bind child callbacks after shared construction. The callbacks
+hold weak Page references, lock them only during invocation, and expose no active
+browser context after Page destruction. Retained child components therefore cannot
+call a destroyed Page; Page teardown also unbinds Top Bar's borrowed Manager.
+BrowserQueryController is shared-owned and asynchronous Query completions hold only
+weak references to it. Destruction abandons UI delivery, not the Backend request;
+live completions still apply generation checks on the TUI thread. Backend and theme
+services remain session-lived dependencies and must outlive components borrowing them.
+Manager restoration reads return an owned `std::any` snapshot (one payload copy),
+not a pointer into its growable position storage. Change callbacks borrow this local
+snapshot, so saving another position cannot invalidate it.
+
 History is a `std::deque<Location>` and an index cursor, separate from each vector-based
 structural path. After every committed transition, `history[cursor] == current_location`.
 History Start is a separate immutable fallback declaration, currently Browser / Top Bar /
@@ -814,8 +826,10 @@ BackendConnectionHandle
 
 Application contracts remain under `lib/include/folio/application/`.
 `ConnectionSession::connect()` and `connect_or_start_backend()` return an owned
-session, transferred to `BackendConnectionHandle`. Completion targets must outlive
-all work using them. Worker scheduling and lifecycle live in the session; the
+session, transferred to `BackendConnectionHandle`. Callbacks borrowing targets must
+keep them alive through delivery or explicitly guard their lifetime. Browser Query
+completions use weak controller references and skip delivery after destruction.
+Worker scheduling and lifecycle live in the session; the
 handle owns typed request construction and IPC result interpretation. There is no
 Frontend event-dispatch thread.
 

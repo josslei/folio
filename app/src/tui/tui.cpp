@@ -33,7 +33,8 @@ int folio::tui::run() {
   const auto frontend_work = Event::Special("folio.frontend.work");
   application::BackendConnectionHandle backend(std::move(session),
                                                [&] { screen.PostEvent(frontend_work); });
-  BrowserQueryController queries(backend);
+  auto query_owner = std::make_shared<folio::tui::BrowserQueryController>(backend);
+  auto& queries = *query_owner;
   std::shared_ptr<BrowserPage> page;
   bool available = true;
   auto component = std::make_shared<TuiShell>(

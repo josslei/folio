@@ -21,7 +21,7 @@ public:
   /// Bind the session-lived theme; no parent UI instance is captured.
   static navigation::Factory factory(const ColorScheme& scheme);
 
-  TopBar(std::function<void(BrowserKind)> select, std::function<BrowserKind()> active,
+  TopBar(std::function<void(BrowserKind)> select, std::function<std::optional<BrowserKind>()> active,
          const ColorScheme& scheme = default_color_scheme(),
          std::shared_ptr<EntriesDisplay> browsers = {});
   std::shared_ptr<navigation::INavigable>
@@ -32,7 +32,7 @@ public:
   bool OnEvent(ftxui::Event event) override;
   /// Bind Page-owned composition after independent factory construction.
   void set_browser_context(std::function<void(BrowserKind)> select,
-                           std::function<BrowserKind()> active,
+                           std::function<std::optional<BrowserKind>()> active,
                            std::shared_ptr<EntriesDisplay> browsers);
   void set_navigation_manager(navigation::Manager* manager) { manager_ = manager; }
   bool Focusable() const override { return true; }
@@ -46,7 +46,7 @@ private:
   const ColorScheme& scheme_;
   void activate(int index);
   std::function<void(BrowserKind)> select_;
-  std::function<BrowserKind()> active_;
+  std::function<std::optional<BrowserKind>()> active_;
   int cursor_ = 0;
   std::array<ftxui::Box, 3> boxes_{};
 };

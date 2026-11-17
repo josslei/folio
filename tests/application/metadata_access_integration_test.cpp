@@ -595,9 +595,56 @@ TEST_F(MetadataAccessIntegration, HandleTakesExclusiveSessionOwnership) {
   handle.finish_requests();
 }
 
+TEST_F(MetadataAccessIntegration, QueryCompletionDoesNotRetainDestroyedController) {
+  app::BackendConnectionHandle runtime(connect(), [] {});
+  auto queries = std::make_shared<folio::tui::BrowserQueryController>(runtime);
+  std::weak_ptr<folio::tui::BrowserQueryController> lifetime = queries;
+  queries->select(core::RecordType::Log);
+  // Destroy the target before consuming completion, even if IPC is still running.
+  queries.reset();
+  EXPECT_TRUE(lifetime.expired());
+  ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
+  EXPECT_NO_THROW(runtime.process_completion());
+  bool delivered = false;
+  ASSERT_TRUE(runtime.query_records({}, [&](auto) { delivered = true; }));
+  ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
+  runtime.process_completion();
+  EXPECT_TRUE(delivered); // Abandoned delivery still releases the single request slot.
+  runtime.finish_requests();
+}
+
+TEST_F(MetadataAccessIntegration, RetainedBrowserChildrenLoseParentContextSafely) {
+  using namespace folio::tui;
+  app::BackendConnectionHandle runtime(connect(), [] {});
+  auto queries = std::make_shared<BrowserQueryController>(runtime);
+  std::shared_ptr<TopBar> top;
+  ftxui::Component entries;
+  std::weak_ptr<BrowserPage> lifetime;
+  {
+    TuiShell shell({}, [] { return ftxui::text(""); }, [] {}, default_color_scheme(),
+                   BrowserPage::factory(*queries, [] {}),
+                   BrowserPage::initial_location(*queries, default_color_scheme()));
+    auto page = std::dynamic_pointer_cast<BrowserPage>(shell.page());
+    lifetime = page;
+    auto location = shell.navigation_manager()->current_location();
+    top = std::dynamic_pointer_cast<TopBar>(page->resolve_child(location.back(), {location, 1}));
+    ASSERT_TRUE(top);
+    entries = page->ChildAt(0)->ChildAt(1);
+  }
+  EXPECT_TRUE(lifetime.expired());
+  ASSERT_TRUE(entries);
+  EXPECT_FALSE(entries->Focusable());
+  EXPECT_FALSE(entries->OnEvent(ftxui::Event::ArrowDown));
+  EXPECT_NO_THROW(entries->Render());
+  EXPECT_NO_THROW(top->Render());
+  EXPECT_NO_THROW(top->OnEvent(ftxui::Event::Return));
+  runtime.finish_requests();
+}
+
 TEST_F(MetadataAccessIntegration, HandleQueryNavigationDiscardsObsoleteCompletion) {
   app::BackendConnectionHandle runtime(connect(), [] {});
-  folio::tui::BrowserQueryController queries(runtime);
+  auto query_owner = std::make_shared<folio::tui::BrowserQueryController>(runtime);
+  auto& queries = *query_owner;
   // Keep the slot busy so multiple navigation changes collapse to the latest intent.
   std::promise<void> release;
   auto released = release.get_future();
@@ -629,7 +676,8 @@ TEST_F(MetadataAccessIntegration, HandleRetainsPushUntilQueryCompletionThenReloa
   auto session = connect();
   auto* transport = session.get();
   app::BackendConnectionHandle runtime(std::move(session), [] {});
-  folio::tui::BrowserQueryController queries(runtime);
+  auto query_owner = std::make_shared<folio::tui::BrowserQueryController>(runtime);
+  auto& queries = *query_owner;
   queries.select(core::RecordType::Memo);
   // Do not consume completion yet. A separate session changes the Catalog.
   auto writer_session = connect();
@@ -701,7 +749,8 @@ TEST_F(MetadataAccessIntegration, TypedHandleCallsDeliverResultsOnlyOnMainThread
 
 TEST_F(MetadataAccessIntegration, BrowserCursorMovesBetweenRegionsWithoutActivatingTabs) {
   app::BackendConnectionHandle runtime(connect(), [] {});
-  folio::tui::BrowserQueryController queries(runtime);
+  auto query_owner = std::make_shared<folio::tui::BrowserQueryController>(runtime);
+  auto& queries = *query_owner;
   queries.select(core::RecordType::Memo);
   auto entries = std::make_shared<folio::tui::EntriesDisplay>(queries, [&] {
     switch (queries.query_type()) {
@@ -745,7 +794,8 @@ TEST_F(MetadataAccessIntegration, BrowserCursorMovesBetweenRegionsWithoutActivat
 
 TEST_F(MetadataAccessIntegration, BrowserRendersAndHandlesNavigationWhileRequestIsBlocked) {
   app::BackendConnectionHandle runtime(connect(), [] {});
-  folio::tui::BrowserQueryController queries(runtime);
+  auto query_owner = std::make_shared<folio::tui::BrowserQueryController>(runtime);
+  auto& queries = *query_owner;
   queries.select(core::RecordType::Memo);
   ASSERT_TRUE(until([&] { return runtime.take_pending_work().completion; }));
   runtime.process_completion();
@@ -811,7 +861,8 @@ TEST_F(MetadataAccessIntegration, BrowserRendersAndHandlesNavigationWhileRequest
 TEST_F(MetadataAccessIntegration, NavigationControlsActualBrowserAndRejectsStaleQueries) {
   using namespace folio::tui;
   app::BackendConnectionHandle runtime(connect(), [] {});
-  BrowserQueryController queries(runtime);
+  auto query_owner = std::make_shared<folio::tui::BrowserQueryController>(runtime);
+  auto& queries = *query_owner;
   std::shared_ptr<BrowserPage> browser;
   TuiShell shell(
       ftxui::Component{}, [&] { return browser->feedback(); }, [] {}, default_color_scheme(),
@@ -908,8 +959,9 @@ TEST_F(MetadataAccessIntegration, NavigationRestoresEntryCursorAndMousePreserves
   core::Memo second{"Second memo", "body", time};
   ASSERT_TRUE(std::holds_alternative<std::monostate>(repository.create_memo(second.snapshot())));
   app::BackendConnectionHandle runtime(connect(), [] {});
-  BrowserQueryController queries(runtime);
-  auto browser = std::make_shared<BrowserPage>(queries, [] {});
+  auto query_owner = std::make_shared<folio::tui::BrowserQueryController>(runtime);
+  auto& queries = *query_owner;
+  auto browser = BrowserPage::factory(queries, [] {})({});
   TuiShell shell(browser, [browser] { return browser->feedback(); }, [] {});
   auto complete = [&] {
     if (!until([&] { return runtime.take_pending_work().completion; })) return false;
@@ -924,9 +976,9 @@ TEST_F(MetadataAccessIntegration, NavigationRestoresEntryCursorAndMousePreserves
   ASSERT_TRUE(browser->OnEvent(ftxui::Event::Tab));
   ASSERT_TRUE(browser->OnEvent(ftxui::Event::ArrowDown));
   auto* manager = shell.navigation_manager();
-  const auto* saved = manager->restored_position();
-  ASSERT_NE(saved, nullptr);
-  const auto position = std::any_cast<BrowserPosition>(*saved);
+  const auto saved = manager->restored_position();
+  ASSERT_TRUE(saved.has_value());
+  const auto position = std::any_cast<BrowserPosition>(saved);
   ASSERT_EQ(position.index, 1u);
   ASSERT_TRUE(position.entry);
   EXPECT_TRUE(shell.OnEvent(ftxui::Event::Escape));
@@ -980,7 +1032,8 @@ TEST_F(MetadataAccessIntegration, NavigationRestoresEntryCursorAndMousePreserves
 TEST_F(MetadataAccessIntegration, RegisteredBrowserFactoryNeedsNoAncestorInstances) {
   using namespace folio::tui;
   app::BackendConnectionHandle runtime(connect(), [] {});
-  BrowserQueryController queries(runtime);
+  auto query_owner = std::make_shared<folio::tui::BrowserQueryController>(runtime);
+  auto& queries = *query_owner;
   std::weak_ptr<BrowserPage> declaring_page;
   const auto declared = [&] {
     auto owner = BrowserPage::factory(queries, [] {})({});
@@ -1022,7 +1075,8 @@ TEST_F(MetadataAccessIntegration, RegisteredBrowserFactoryNeedsNoAncestorInstanc
 TEST_F(MetadataAccessIntegration, HistoryFactoryPrecedesHostingAndFailurePreservesLocation) {
   using namespace folio::tui;
   app::BackendConnectionHandle runtime(connect(), [] {});
-  BrowserQueryController queries(runtime);
+  auto query_owner = std::make_shared<folio::tui::BrowserQueryController>(runtime);
+  auto& queries = *query_owner;
   std::vector<std::string> events;
   bool fail = false;
   std::weak_ptr<navigation::INavigable> created;

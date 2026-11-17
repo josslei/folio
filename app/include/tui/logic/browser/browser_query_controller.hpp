@@ -4,14 +4,18 @@
 #include <folio/application/error.hpp>
 #include <folio/application/query.hpp>
 #include <array>
+#include <memory>
 #include <optional>
 
 namespace folio::tui {
 /// TUI-thread Browser query state. The Backend handle owns request execution.
-/// Finish handle requests before destroying this completion target.
-class BrowserQueryController {
+/// Destroyed controllers safely abandon Query completions; Backend must outlive live users.
+/// Construct with shared ownership before submitting requests. All access is on the TUI thread.
+class BrowserQueryController : public std::enable_shared_from_this<BrowserQueryController> {
 public:
   explicit BrowserQueryController(application::BackendConnectionHandle& backend) : backend_(backend) {}
+  BrowserQueryController(const BrowserQueryController&) = delete;
+  BrowserQueryController& operator=(const BrowserQueryController&) = delete;
   /// Main thread: invalidate current results and defer a replacement if busy.
   void invalidate();
   void select(core::RecordType type);

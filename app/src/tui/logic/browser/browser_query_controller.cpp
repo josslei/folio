@@ -1,22 +1,24 @@
 #include "tui/logic/browser/browser_query_controller.hpp"
 
 namespace folio::tui {
-/// Main-thread callback; owner must outlive the outstanding request.
+/// Main-thread callback; locking pins a live controller only during delivery.
 class BrowserQueryController::QueryCompletion {
 public:
-  QueryCompletion(BrowserQueryController& owner, std::size_t generation)
-      : owner_(owner), generation_(generation) {}
+  QueryCompletion(std::weak_ptr<BrowserQueryController> owner, std::size_t generation)
+      : owner_(std::move(owner)), generation_(generation) {}
 
   void operator()(application::AccessResult<application::Annotated<application::RecordMetadataList>>
                       result) const {
-    owner_.request_active_ = false;
-    if (generation_ != owner_.generation_) return;
-    owner_.result_ = std::move(result);
-    owner_.loading_ = false;
+    auto owner = owner_.lock();
+    if (!owner) return;
+    owner->request_active_ = false;
+    if (generation_ != owner->generation_) return;
+    owner->result_ = std::move(result);
+    owner->loading_ = false;
   }
 
 private:
-  BrowserQueryController& owner_;
+  std::weak_ptr<BrowserQueryController> owner_;
   std::size_t generation_;
 };
 
@@ -40,7 +42,7 @@ void BrowserQueryController::submit_pending() {
   const auto generation = generation_;
   application::RecordQuery query;
   query.type = query_type_;
-  if (backend_.query_records(query, QueryCompletion{*this, generation})) {
+  if (backend_.query_records(query, QueryCompletion{shared_from_this(), generation})) {
     reload_pending_ = false;
     request_active_ = true;
   }

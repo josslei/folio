@@ -19,7 +19,7 @@ public:
   /// changed runs after successful commit, including initial activation. It may
   /// initiate asynchronous queries, but must not initiate another transition.
   Manager(INavigable& shell, Location history_start,
-          std::function<void(const Location&, const std::any*)> changed = {});
+          std::function<void(const Location&, const std::any&)> changed = {});
   const Location& current_location() const { return current_; }
   /// Immutable session-bound realization of the application's History Start declaration.
   const Location& history_start() const { return history_start_; }
@@ -41,7 +41,9 @@ public:
   void remember_position(std::any position);
   /// Save owner-defined context at an ancestor (e.g. its displayed browser).
   void remember_position(const Location& location, std::any position);
-  const std::any* restored_position() const;
+  /// Owned snapshot; remains valid across remember_position() updates and storage growth.
+  /// Empty when no position is saved. Copies only the current snapshot payload.
+  std::any restored_position() const;
 
 private:
   Result transition(Location target, std::optional<CrossMode> mode = {},
@@ -58,6 +60,6 @@ private:
   std::size_t cursor_ = 0;
   std::vector<bool> navigable_ancestors_;
   std::vector<std::pair<Location, std::any>> positions_;
-  std::function<void(const Location&, const std::any*)> changed_;
+  std::function<void(const Location&, const std::any&)> changed_;
 };
 } // namespace folio::tui::navigation

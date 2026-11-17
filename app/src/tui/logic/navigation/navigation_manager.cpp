@@ -4,7 +4,7 @@
 
 namespace folio::tui::navigation {
 Manager::Manager(INavigable& shell, Location history_start,
-                 std::function<void(const Location&, const std::any*)> changed)
+                 std::function<void(const Location&, const std::any&)> changed)
     : shell_(shell), history_start_(std::move(history_start)), history_{history_start_},
       changed_(std::move(changed)) {
   // TODO(Navigation): Revisit the permanent Browser/Logs/Root history anchor when
@@ -91,7 +91,10 @@ Result Manager::transition(Location target, std::optional<CrossMode> mode,
   current_.swap(target);
   history_.swap(history);
   cursor_ = cursor;
-  if (changed_ && (changed || prepared)) changed_(current_, restored_position());
+  if (changed_ && (changed || prepared)) {
+    const auto position = restored_position();
+    changed_(current_, position);
+  }
   return changed ? Result::Changed : Result::Unchanged;
 }
 Result Manager::down(const Target& target) {
@@ -152,9 +155,9 @@ void Manager::remember_position(const Location& target, std::any position) {
     }
   positions_.emplace_back(target, std::move(position));
 }
-const std::any* Manager::restored_position() const {
+std::any Manager::restored_position() const {
   for (const auto& [location, saved] : positions_)
-    if (location == current_) return &saved;
-  return nullptr;
+    if (location == current_) return saved;
+  return {};
 }
 } // namespace folio::tui::navigation

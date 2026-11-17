@@ -8,7 +8,7 @@ namespace folio::tui {
 /// Presentation of query results only; owns no Backend or request state.
 class EntriesDisplay : public ftxui::ComponentBase {
 public:
-  EntriesDisplay(BrowserQueryController& queries, std::function<BrowserKind()> active,
+  EntriesDisplay(BrowserQueryController& queries, std::function<std::optional<BrowserKind>()> active,
                  const ColorScheme& scheme = default_color_scheme(),
                  std::shared_ptr<navigation::INavigable> prepared = {});
   bool adopt_browser(const navigation::Anchor& anchor,
@@ -24,9 +24,12 @@ public:
   ftxui::Component ActiveChild() override;
   bool OnEvent(ftxui::Event event) override;
   bool Focusable() const override;
+  void set_browser_context(std::function<std::optional<BrowserKind>()> active) {
+    active_ = std::move(active);
+  }
 
 private:
-  std::function<BrowserKind()> active_;
+  std::function<std::optional<BrowserKind>()> active_;
   const ColorScheme& scheme_;
   BrowserQueryController& queries_;
   ftxui::Component& browser_slot(BrowserKind kind);

@@ -317,7 +317,7 @@ std::optional<BrowserKind> browser_kind(const navigation::Anchor& anchor) {
   return {};
 }
 
-EntriesDisplay::EntriesDisplay(BrowserQueryController& queries, std::function<BrowserKind()> active,
+EntriesDisplay::EntriesDisplay(BrowserQueryController& queries, std::function<std::optional<BrowserKind>()> active,
                                const ColorScheme& scheme,
                                std::shared_ptr<navigation::INavigable> prepared)
     : active_(std::move(active)), scheme_(scheme), queries_(queries) {
@@ -350,7 +350,7 @@ bool EntriesDisplay::adopt_browser(const navigation::Anchor& anchor,
 }
 
 bool EntriesDisplay::Focusable() const {
-  return !queries_.loading() && queries_.result() &&
+  return active_() && !queries_.loading() && queries_.result() &&
          std::holds_alternative<application::Annotated<application::RecordMetadataList>>(
              *queries_.result()) &&
          !std::get<application::Annotated<application::RecordMetadataList>>(*queries_.result())
@@ -358,11 +358,13 @@ bool EntriesDisplay::Focusable() const {
 }
 
 ftxui::Component EntriesDisplay::ActiveChild() {
-  auto& slot = browser_slot(active_());
+  const auto active = active_();
+  if (!active) return {};
+  auto& slot = browser_slot(*active);
   if (!slot) {
     // A selected child may be displayed while the navigation cursor is still at
     // Top Bar. Use the same registered factory, not a second constructor list.
-    adopt_browser(browser_anchor(active_()), browser_factory(active_())());
+    adopt_browser(browser_anchor(*active), browser_factory(*active)());
   }
   return slot;
 }
@@ -386,7 +388,8 @@ navigation::Factory EntriesDisplay::browser_factory(BrowserKind kind,
 }
 
 bool EntriesDisplay::OnEvent(ftxui::Event event) {
-  return ActiveChild()->OnEvent(event);
+  auto child = ActiveChild();
+  return child && child->OnEvent(event);
 }
 
 std::shared_ptr<navigation::INavigable> EntriesDisplay::browser(BrowserKind kind) const {
@@ -401,12 +404,14 @@ std::shared_ptr<navigation::INavigable> EntriesDisplay::browser(BrowserKind kind
   return nullptr;
 }
 BrowserPosition EntriesDisplay::position() {
-  return static_cast<RecordBrowser&>(*ActiveChild()).position();
+  auto child = ActiveChild();
+  return child ? static_cast<RecordBrowser&>(*child).position() : BrowserPosition{};
 }
 void EntriesDisplay::restore_position(const BrowserPosition& value) {
-  static_cast<RecordBrowser&>(*ActiveChild()).restore_position(value);
+  if (auto child = ActiveChild()) static_cast<RecordBrowser&>(*child).restore_position(value);
 }
 ftxui::Element EntriesDisplay::OnRender() {
-  return ActiveChild()->Render();
+  auto child = ActiveChild();
+  return child ? child->Render() : ftxui::text("");
 }
 } // namespace folio::tui

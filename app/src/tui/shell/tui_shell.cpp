@@ -40,7 +40,7 @@ TuiShell::TuiShell(ftxui::Component page, std::function<ftxui::Element()> feedba
       initial_location = top->children({prefix, 2}).front().destination();
     }
     navigation_.emplace(*this, std::move(initial_location),
-                        [this](const navigation::Location& location, const std::any* position) {
+                        [this](const navigation::Location& location, const std::any& position) {
                           if (auto* active = dynamic_cast<BrowserPage*>(page_.get())) {
                             if (navigation_) active->set_navigation_manager(&*navigation_);
                             active->navigation_changed(location, position);
